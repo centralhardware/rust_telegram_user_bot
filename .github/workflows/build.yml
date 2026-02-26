@@ -1,0 +1,93 @@
+name: Build and Publish Docker image
+
+on:
+  push:
+    branches: [ "master" ]
+    tags: [ "v*.*.*" ]
+  pull_request:
+    branches: [ "**" ]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build on PRs (no push)
+        if: github.event_name == 'pull_request'
+        run: cargo build --release
+
+      - name: Set up Docker Buildx
+        if: github.event_name != 'pull_request'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image name and tags
+        if: github.event_name != 'pull_request'
+        id: meta
+        shell: bash
+        run: |
+          REPO_LOWER="${GITHUB_REPOSITORY,,}"
+          IMAGE="ghcr.io/${REPO_LOWER}"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          TAGS="${IMAGE}:sha-${GITHUB_SHA::7}"
+          if [[ "$GITHUB_REF" == "refs/heads/main" || "$GITHUB_REF" == "refs/heads/master" ]]; then
+            TAGS="${TAGS},${IMAGE}:latest"
+          fi
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAGS="${TAGS},${IMAGE}:${GITHUB_REF_NAME}"
+          fi
+          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Trigger Coolify deployment
+        if: github.event_name != 'pull_request'
+        env:
+          COOLIFY_DEPLOY_HOOK_URL: ${{ secrets.COOLIFY_DEPLOY_HOOK_URL }}
+          COOLIFY_DEPLOY_BEARER_TOKEN: ${{ secrets.COOLIFY_DEPLOY_BEARER_TOKEN }}
+        shell: bash
+        run: |
+          if [[ -z "$COOLIFY_DEPLOY_HOOK_URL" ]]; then
+            echo "Coolify deploy hook URL is not set. Skip Coolify deploy. Provide secrets.COOLIFY_DEPLOY_HOOK_URL to enable."
+            exit 0
+          fi
+          echo "Triggering Coolify deployment via webhook..."
+          AUTH_HEADER=()
+          if [[ -n "$COOLIFY_DEPLOY_BEARER_TOKEN" ]]; then
+            echo "Using Bearer authorization for Coolify trigger."
+            AUTH_HEADER=(-H "Authorization: Bearer $COOLIFY_DEPLOY_BEARER_TOKEN")
+          fi
+          http_code=$(curl -fsS -o /tmp/coolify_resp.txt -w "%{http_code}" -X POST "${AUTH_HEADER[@]}" "$COOLIFY_DEPLOY_HOOK_URL") || true
+          echo "Coolify response (HTTP $http_code):"
+          cat /tmp/coolify_resp.txt || true
+          if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
+            echo "Coolify deploy trigger succeeded."
+            exit 0
+          else
+            echo "Coolify deploy trigger failed with HTTP $http_code" >&2
+            exit 1
+          fi
