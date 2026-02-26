@@ -1,3 +1,5 @@
+mod handlers;
+
 use grammers_client::client::UpdatesConfiguration;
 use grammers_client::update::Update;
 use grammers_client::{Client, SenderPool, SignInError};
@@ -79,12 +81,7 @@ async fn main() -> Result<()> {
                             );
                         }
 
-                        if message.peer_id().bare_id() == 1633660171
-                            && message.text().starts_with("#грбн") {
-                            let reply = message.reply("/start@y9catbot").await?;
-                            message.delete().await?;
-                            reply.delete().await?;
-                        }
+                        handlers::handle_auto_cat(&message).await?;
                     }
                     _ => {}
                 }
@@ -93,7 +90,7 @@ async fn main() -> Result<()> {
     }
 }
 
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn prompt(message: &str) -> Result<String> {
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
