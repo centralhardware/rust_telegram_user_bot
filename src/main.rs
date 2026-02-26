@@ -7,8 +7,6 @@ use std::io::{BufRead, Write};
 use std::sync::Arc;
 use std::{env, io};
 
-const SESSION_FILE: &str = "echo.session";
-
 #[tokio::main]
 async fn main() -> Result<()> {
     pretty_env_logger::init();
@@ -18,7 +16,7 @@ async fn main() -> Result<()> {
         .parse()
         .expect("TG_ID invalid");
 
-    let session = Arc::new(SqliteSession::open(SESSION_FILE).await?);
+    let session = Arc::new(SqliteSession::open(&env::var("SESSION").expect("sdf")).await?);
 
     let SenderPool {
         runner,
