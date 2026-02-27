@@ -31,7 +31,7 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
             .map(|p| p.name().unwrap_or_default().to_string())
             .unwrap_or_default();
         let text = message.text();
-        let preview: String = text.chars().take(80).collect();
+        let preview = text;
         let reply_part = message.reply_to_message_id()
             .map(|id| format!(" reply to {id}"))
             .unwrap_or_default();
