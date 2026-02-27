@@ -36,7 +36,7 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
             .map(|id| format!(" reply to {id}"))
             .unwrap_or_default();
         println!(
-            "\x1b[32m{:<15} {:>5} {:<25} {}{}\x1b[0m",
+            "\x1b[92m{:<15} {:>5} {:<25} {}{}\x1b[0m",
             "incoming", message.id(), chat_name, preview, reply_part
         );
     }

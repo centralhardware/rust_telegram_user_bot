@@ -71,7 +71,7 @@ pub async fn save_edited(
         .unwrap_or_default();
 
     println!(
-        "\x1b[33m{:<15} {:>5} {:<25}\n{}\x1b[0m",
+        "\x1b[93m{:<15} {:>5} {:<25}\n{}\x1b[0m",
         "edited",
         message.id(),
         &chat_name[..chat_name.len().min(25)],
