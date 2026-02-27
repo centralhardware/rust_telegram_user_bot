@@ -45,7 +45,6 @@ async fn log_sessions(client: &Client, client_id: u64) -> Result<(), Box<dyn std
         .invoke(&tl::functions::account::GetAuthorizations {})
         .await?;
 
-    info!("Active sessions (TTL {} days):", result.authorization_ttl_days);
     let mut insert = clickhouse_client.insert::<TelegramSession>("user_sessions").await?;
     for auth in &result.authorizations {
         let tl::enums::Authorization::Authorization(session) = auth;
