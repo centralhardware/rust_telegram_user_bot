@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
 
     println!("Listening for messages...");
 
-    schedulers::start(client.clone(), client.get_me().await?.id().bare_id() as u64);
+    schedulers::start(client.clone(), client.get_me().await?.id().bare_id().unwrap() as u64);
 
     loop {
         tokio::select! {

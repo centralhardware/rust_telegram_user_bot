@@ -1,7 +1,7 @@
 use clickhouse::{Client as ClickhouseClient, Row};
 use grammers_client::Client;
 use grammers_tl_types as tl;
-use log::{error, info};
+use log::error;
 use std::time::Duration;
 use serde::Serialize;
 
