@@ -84,6 +84,11 @@ async fn main() -> Result<()> {
                         }
                         handlers::handle_auto_cat(&message).await?;
                     }
+                    Update::MessageDeleted(deletion) => {
+                        if let Err(e) = handlers::save_deleted(&deletion, client_id).await {
+                            eprintln!("Failed to save deleted message: {}", e);
+                        }
+                    }
                     _ => {}
                 }
             }
