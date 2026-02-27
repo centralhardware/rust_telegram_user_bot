@@ -174,11 +174,7 @@ async fn log_admin_actions(
     client: &Client,
     _client_id: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let clickhouse_client = ClickhouseClient::default()
-        .with_url(std::env::var("CLICKHOUSE_URL")?)
-        .with_user(std::env::var("CLICKHOUSE_USER")?)
-        .with_password(std::env::var("CLICKHOUSE_PASSWORD")?)
-        .with_database(std::env::var("CLICKHOUSE_DATABASE")?);
+    let clickhouse_client = super::clickhouse_client()?;
 
     let chat_ids_str = std::env::var("TELEGRAM_CHAT_IDS")?;
     let chat_ids: Vec<i64> = chat_ids_str

@@ -1,4 +1,4 @@
-use clickhouse::{Client as ClickhouseClient, Row};
+use clickhouse::Row;
 use grammers_client::Client;
 use grammers_tl_types as tl;
 use log::error;
@@ -35,11 +35,7 @@ struct TelegramSession {
 }
 
 async fn log_sessions(client: &Client, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
-    let clickhouse_client = ClickhouseClient::default()
-        .with_url(std::env::var("CLICKHOUSE_URL")?)
-        .with_user(std::env::var("CLICKHOUSE_USER")?)
-        .with_password(std::env::var("CLICKHOUSE_PASSWORD")?)
-        .with_database(std::env::var("CLICKHOUSE_DATABASE")?);
+    let clickhouse_client = super::clickhouse_client()?;
 
     let tl::enums::account::Authorizations::Authorizations(result) = client
         .invoke(&tl::functions::account::GetAuthorizations {})

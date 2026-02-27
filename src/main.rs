@@ -59,7 +59,7 @@ async fn main() -> Result<()> {
         .stream_updates(
             updates,
             UpdatesConfiguration {
-                catch_up: true,
+                catch_up: false,
                 ..Default::default()
             },
         )
@@ -67,7 +67,8 @@ async fn main() -> Result<()> {
 
     println!("Listening for messages...");
 
-    schedulers::start(client.clone(), client.get_me().await?.id().bare_id().unwrap() as u64);
+    let client_id = client.get_me().await?.id().bare_id().unwrap() as u64;
+    schedulers::start(client.clone(), client_id);
 
     loop {
         tokio::select! {
@@ -75,21 +76,9 @@ async fn main() -> Result<()> {
                 let update = update?;
                 match update {
                     Update::NewMessage(message) => {
-                        if !message.outgoing() {
-                            let chat_name = message.peer()
-                                .map(|p| p.name().unwrap_or_default().to_string())
-                                .unwrap_or_default();
-                            let text = message.text();
-                            let preview: String = text.chars().take(80).collect();
-                            let reply_part = message.reply_to_message_id()
-                                .map(|id| format!(" reply to {id}"))
-                                .unwrap_or_default();
-                            println!(
-                                "\x1b[32m{:<15} {:>5} {:<25} {}{}\x1b[0m",
-                                "incoming", message.id(), chat_name, preview, reply_part
-                            );
+                        if let Err(e) = handlers::save_incoming(&message, client_id).await {
+                            eprintln!("Failed to save incoming message: {}", e);
                         }
-
                         handlers::handle_auto_cat(&message).await?;
                     }
                     _ => {}
