@@ -1,5 +1,5 @@
 mod handlers;
-mod scheduler;
+mod schedulers;
 
 use grammers_client::client::UpdatesConfiguration;
 use grammers_client::update::Update;
@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
 
     println!("Listening for messages...");
 
-    scheduler::start(client.clone(), client.get_me().await?.id().bare_id() as u64);
+    schedulers::start(client.clone(), client.get_me().await?.id().bare_id() as u64);
 
     loop {
         tokio::select! {
@@ -76,11 +76,17 @@ async fn main() -> Result<()> {
                 match update {
                     Update::NewMessage(message) => {
                         if !message.outgoing() {
+                            let chat_name = message.peer()
+                                .map(|p| p.name().unwrap_or_default().to_string())
+                                .unwrap_or_default();
+                            let text = message.text();
+                            let preview: String = text.chars().take(80).collect();
+                            let reply_part = message.reply_to_message_id()
+                                .map(|id| format!(" reply to {id}"))
+                                .unwrap_or_default();
                             println!(
-                                "New message from {}: {}",
-                                message.peer().map(|p| p.name().unwrap_or_default().to_string())
-                                    .unwrap_or_default(),
-                                message.text()
+                                "\x1b[32m{:<15} {:>5} {:<25} {}{}\x1b[0m",
+                                "incoming", message.id(), chat_name, preview, reply_part
                             );
                         }
 

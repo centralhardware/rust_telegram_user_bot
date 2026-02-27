@@ -47,13 +47,12 @@ async fn log_sessions(client: &Client, client_id: u64) -> Result<(), Box<dyn std
 
     info!("Active sessions (TTL {} days):", result.authorization_ttl_days);
     let mut insert = clickhouse_client.insert::<TelegramSession>("user_sessions").await?;
-        for auth in &result.authorizations {
+    for auth in &result.authorizations {
         let tl::enums::Authorization::Authorization(session) = auth;
 
         if session.current {
             continue;
         }
-
 
         insert.write(&TelegramSession {
             hash: session.hash,
@@ -74,22 +73,8 @@ async fn log_sessions(client: &Client, client_id: u64) -> Result<(), Box<dyn std
             client_id,
         }).await?;
 
-        info!(
-            "  {} | {} {} | {} {} | {} | {} {} | active: {}{}",
-            if session.current { ">> CURRENT" } else { "  " },
-            session.app_name,
-            session.app_version,
-            session.device_model,
-            session.system_version,
-            session.platform,
-            session.ip,
-            session.country,
-            session.date_active,
-            if session.official_app { " [official]" } else { "" },
-        );
     }
     insert.end().await?;
-    info!("Total sessions: {}", result.authorizations.len());
 
     Ok(())
 }
