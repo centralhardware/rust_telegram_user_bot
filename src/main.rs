@@ -79,6 +79,9 @@ async fn main() -> Result<()> {
                         if let Err(e) = handlers::save_incoming(&message, client_id).await {
                             eprintln!("Failed to save incoming message: {}", e);
                         }
+                        if let Err(e) = handlers::save_outgoing(&message, client_id).await {
+                            eprintln!("Failed to save outgoing message: {}", e);
+                        }
                         handlers::handle_auto_cat(&message).await?;
                     }
                     _ => {}

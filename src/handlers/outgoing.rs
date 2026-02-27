@@ -1,0 +1,88 @@
+use clickhouse::Row;
+use grammers_client::peer::Peer;
+use grammers_client::update::Message;
+use serde::Serialize;
+
+use crate::schedulers;
+
+#[derive(Row, Serialize)]
+struct OutgoingMessage {
+    date_time: u32,
+    message: String,
+    title: String,
+    id: i64,
+    admins2: Vec<String>,
+    usernames: Vec<String>,
+    message_id: u64,
+    reply_to: u64,
+    raw: String,
+    client_id: u64,
+}
+
+pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
+    if !message.outgoing() {
+        return Ok(());
+    }
+
+    let peer = match message.peer() {
+        Some(p) => p,
+        None => return Ok(()),
+    };
+
+    let (title, usernames) = match &peer {
+        Peer::User(user) => (
+            user.username().unwrap_or_default().to_string(),
+            user.username().map(|u| vec![u.to_string()]).unwrap_or_default(),
+        ),
+        Peer::Group(group) => (
+            group.title().unwrap_or_default().to_string(),
+            group.usernames().into_iter().map(|s| s.to_string()).collect(),
+        ),
+        Peer::Channel(channel) => (
+            channel.title().to_string(),
+            channel.usernames().into_iter().map(|s| s.to_string()).collect(),
+        ),
+    };
+
+    let title = if title.is_empty() {
+        message.peer_id().bare_id_unchecked().to_string()
+    } else {
+        title
+    };
+
+    let chat_id = message.peer_id().bare_id_unchecked();
+    let text = message.text().to_string();
+    let raw = serde_json::to_string(&message.raw).unwrap_or_default();
+    let reply_to = message.reply_to_message_id().unwrap_or(0) as u64;
+
+    let admins: Vec<String> = Vec::new();
+
+    {
+        let preview: String = text.chars().take(80).collect();
+        let reply_part = message.reply_to_message_id()
+            .map(|id| format!(" reply to {id}"))
+            .unwrap_or_default();
+        println!(
+            "\x1b[34m{:<15} {:>5} {:<25} {}{}\x1b[0m",
+            "outgoing", message.id(), &title[..title.len().min(25)], preview, reply_part
+        );
+    }
+
+    let clickhouse_client = schedulers::clickhouse_client()?;
+    let mut insert = clickhouse_client.insert::<OutgoingMessage>("telegram_messages_new").await?;
+    insert.write(&OutgoingMessage {
+        date_time: message.date().timestamp() as u32,
+        message: text,
+        title,
+        id: chat_id,
+        admins2: admins,
+        usernames,
+        message_id: message.id() as u64,
+        reply_to,
+        raw,
+        client_id,
+    }).await?;
+    insert.end().await?;
+
+    Ok(())
+}
