@@ -1,10 +1,10 @@
 mod handlers;
+mod scheduler;
 
 use grammers_client::client::UpdatesConfiguration;
 use grammers_client::update::Update;
 use grammers_client::{Client, SenderPool, SignInError};
 use grammers_session::storages::SqliteSession;
-use grammers_tl_types as tl;
 use std::io::{BufRead, Write};
 use std::sync::Arc;
 use std::{env, io};
@@ -66,6 +66,9 @@ async fn main() -> Result<()> {
         .await;
 
     println!("Listening for messages...");
+
+    scheduler::start(client.clone(), client.get_me().await?.id().bare_id() as u64);
+
     loop {
         tokio::select! {
             update = updates.next() => {
