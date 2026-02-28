@@ -50,7 +50,7 @@ fn message_text(msg: &tl::enums::Message) -> String {
     }
 }
 
-fn format_log_output(action: &tl::enums::ChannelAdminLogEventAction) -> String {
+fn format_log_output(action: &tl::enums::ChannelAdminLogEventAction, user_title: &str) -> String {
     match action {
         tl::enums::ChannelAdminLogEventAction::EditMessage(a) => {
             let prev = message_text(&a.prev_message);
@@ -70,15 +70,15 @@ fn format_log_output(action: &tl::enums::ChannelAdminLogEventAction) -> String {
             diff
         }
         tl::enums::ChannelAdminLogEventAction::DeleteMessage(a) => {
-            let text = message_text(&a.message);
-            if !text.is_empty() {
-                return text;
-            }
-            format!("{:?}", a.message)
+            message_text(&a.message)
         }
-        tl::enums::ChannelAdminLogEventAction::ParticipantJoin
-        | tl::enums::ChannelAdminLogEventAction::ParticipantLeave => String::new(),
-        other => format!("{:?}", other),
+        tl::enums::ChannelAdminLogEventAction::ParticipantJoin => {
+            format!("{} joined", user_title)
+        }
+        tl::enums::ChannelAdminLogEventAction::ParticipantLeave => {
+            format!("{} left", user_title)
+        }
+        _ => String::new(),
     }
 }
 
@@ -116,36 +116,6 @@ fn extract_user_info(
     (String::new(), Vec::new())
 }
 
-fn extract_chat_info(
-    chats: &[tl::enums::Chat],
-    chat_id: i64,
-) -> (String, Vec<String>) {
-    for c in chats {
-        match c {
-            tl::enums::Chat::Channel(channel) if channel.id == chat_id => {
-                let title = channel.title.clone();
-                let mut usernames = Vec::new();
-                if let Some(ref username) = channel.username {
-                    usernames.push(username.clone());
-                }
-                if let Some(ref unames) = channel.usernames {
-                    for un in unames {
-                        let tl::enums::Username::Username(u) = un;
-                        if u.active {
-                            usernames.push(u.username.clone());
-                        }
-                    }
-                }
-                return (title, usernames);
-            }
-            tl::enums::Chat::Chat(chat) if chat.id == chat_id => {
-                return (chat.title.clone(), Vec::new());
-            }
-            _ => {}
-        }
-    }
-    (String::new(), Vec::new())
-}
 
 async fn resolve_channel(
     client: &Client,
@@ -202,6 +172,16 @@ async fn log_admin_actions(
             }
         };
         let channel_title = peer.name().unwrap_or("unknown").to_string();
+        let channel_usernames: Vec<String> = {
+            let mut unames = Vec::new();
+            if let Some(u) = peer.username() {
+                unames.push(u.to_string());
+            }
+            for u in peer.usernames() {
+                unames.push(u.to_string());
+            }
+            unames
+        };
 
         let chat_id_u64 = *chat_id as u64;
         let min_id = get_last_event_id(&clickhouse_client, chat_id_u64).await? as i64;
@@ -234,7 +214,6 @@ async fn log_admin_actions(
                 let tl::enums::ChannelAdminLogEvent::Event(ev) = event;
 
                 let (user_title, usernames) = extract_user_info(&result.users, ev.user_id);
-                let (chat_title, chat_usernames) = extract_chat_info(&result.chats, *chat_id);
 
                 let log = &AdminAction {
                     date: ev.date as u32,
@@ -243,10 +222,10 @@ async fn log_admin_actions(
                     action_type: action_type_name(&ev.action),
                     user_id: ev.user_id as u64,
                     message: action_message_json(&ev.action),
-                    log_output: format_log_output(&ev.action),
+                    log_output: format_log_output(&ev.action, &user_title),
                     usernames,
-                    chat_usernames,
-                    chat_title,
+                    chat_usernames: channel_usernames.clone(),
+                    chat_title: channel_title.clone(),
                     user_title,
                 };
 
