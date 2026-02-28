@@ -3,11 +3,9 @@ use grammers_client::Client;
 use log::info;
 
 use crate::db::EditedMessage;
-use crate::handlers::{get_topic_id, get_topic_name};
 
 pub async fn save_edited(
     message: &Message,
-    client: &Client,
     client_id: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let chat_id = message.peer_id().bare_id_unchecked();
@@ -74,19 +72,11 @@ pub async fn save_edited(
         .unwrap_or_default();
 
     let chat_name_short: String = chat_name.chars().take(25).collect();
-    let topic_part = match get_topic_id(message) {
-        Some(id) => {
-            let name = get_topic_name(client, message, id).await;
-            format!(" [{name}]")
-        }
-        None => String::new(),
-    };
     info!(
-        "\x1b[93m{:<15} {:>5} {:<25}{}\n{}\x1b[0m",
+        "\x1b[93m{:<15} {:>5} {:<25}\n{}\x1b[0m",
         "edited",
         message.id(),
         chat_name_short,
-        topic_part,
         diff,
     );
 

@@ -94,16 +94,16 @@ async fn main() -> Result<()> {
                 let update = update?;
                 match update {
                     Update::NewMessage(message) => {
-                        if let Err(e) = handlers::save_incoming(&message, &client, client_id).await {
+                        if let Err(e) = handlers::save_incoming(&message, client_id).await {
                             error!("Failed to save incoming message: {:?}", e);
                         }
-                        if let Err(e) = handlers::save_outgoing(&message, &client, client_id).await {
+                        if let Err(e) = handlers::save_outgoing(&message, client_id).await {
                             error!("Failed to save outgoing message: {:?}", e);
                         }
                         handlers::handle_auto_cat(&message).await?;
                     }
                     Update::MessageEdited(message) => {
-                        if let Err(e) = handlers::save_edited(&message, &client, client_id).await {
+                        if let Err(e) = handlers::save_edited(&message, client_id).await {
                             error!("Failed to save edited message: {:?}", e);
                         }
                     }

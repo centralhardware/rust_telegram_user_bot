@@ -4,9 +4,8 @@ use grammers_client::Client;
 use log::info;
 
 use crate::db::OutgoingMessage;
-use crate::handlers::{get_topic_id, get_topic_name};
 
-pub async fn save_outgoing(message: &Message, client: &Client, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
     if !message.outgoing() {
         return Ok(());
     }
@@ -44,27 +43,15 @@ pub async fn save_outgoing(message: &Message, client: &Client, client_id: u64) -
 
     let admins: Vec<String> = Vec::new();
 
-    let topic_id = get_topic_id(message);
-    let topic_name = match topic_id {
-        Some(id) => get_topic_name(client, message, id).await,
-        None => String::new(),
-    };
-
     {
         let preview: String = text.chars().take(80).collect();
         let title_short: String = title.chars().take(25).collect();
         let reply_part = message.reply_to_message_id()
-            .filter(|id| topic_id != Some(*id))
             .map(|id| format!(" reply to {id}"))
             .unwrap_or_default();
-        let topic_part = if topic_name.is_empty() {
-            String::new()
-        } else {
-            format!(" [{topic_name}]")
-        };
         info!(
-            "\x1b[95m{:<15} {:>5} {:<25}{} {}{}\x1b[0m",
-            "outgoing", message.id(), title_short, topic_part, preview, reply_part
+            "\x1b[95m{:<15} {:>5} {:<25} {}{}\x1b[0m",
+            "outgoing", message.id(), title_short, preview, reply_part
         );
     }
 
@@ -80,8 +67,6 @@ pub async fn save_outgoing(message: &Message, client: &Client, client_id: u64) -
         reply_to,
         raw,
         client_id,
-        topic_id: topic_id.unwrap_or(0),
-        topic_name,
     }).await?;
     insert.end().await?;
 
