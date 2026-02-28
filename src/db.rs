@@ -107,6 +107,8 @@ pub struct OutgoingMessage {
     pub reply_to: u64,
     pub raw: String,
     pub client_id: u64,
+    pub topic_id: i32,
+    pub topic_name: String,
 }
 
 #[derive(Row, Serialize)]
