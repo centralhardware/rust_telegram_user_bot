@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 env_logger = "0.11"
 chrono = "0.4"
+chrono-tz = "0.10"
 log = "0.4"
 grammers-client = { git = "https://codeberg.org/Lonami/grammers.git" }
 grammers-tl-types = { git = "https://codeberg.org/Lonami/grammers.git", features = ["impl-serde"] }

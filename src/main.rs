@@ -12,11 +12,16 @@ use std::{env, io};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let tz: chrono_tz::Tz = env::var("TZ")
+        .unwrap_or_else(|_| "UTC".to_string())
+        .parse()
+        .expect("TZ invalid");
+
     env_logger::Builder::from_default_env()
         .write_style(env_logger::WriteStyle::Always)
-        .format(|buf, record| {
+        .format(move |buf, record| {
             use std::io::Write;
-            let now = chrono::Local::now();
+            let now = chrono::Utc::now().with_timezone(&tz);
             writeln!(buf, "[{}] {}", now.format("%H:%M:%S"), record.args())
         })
         .init();
