@@ -1,10 +1,9 @@
-use clickhouse::Client as ClickhouseClient;
-use clickhouse::Row;
 use grammers_client::Client;
 use grammers_tl_types as tl;
 use log::{error, info};
-use serde::{Deserialize, Serialize};
 use std::time::Duration;
+
+use crate::db::AdminAction;
 
 pub fn start(client: Client, client_id: u64) {
     tokio::spawn(async move {
@@ -16,26 +15,6 @@ pub fn start(client: Client, client_id: u64) {
             }
         }
     });
-}
-
-#[derive(Row, Serialize)]
-struct AdminAction {
-    date: u32,
-    event_id: u64,
-    chat_id: u64,
-    action_type: String,
-    user_id: u64,
-    message: String,
-    log_output: String,
-    usernames: Vec<String>,
-    chat_usernames: Vec<String>,
-    chat_title: String,
-    user_title: String,
-}
-
-#[derive(Row, Deserialize)]
-struct MaxEventId {
-    max_id: u64,
 }
 
 fn action_type_name(action: &tl::enums::ChannelAdminLogEventAction) -> String {
@@ -129,22 +108,22 @@ async fn resolve_channel(
 }
 
 async fn get_last_event_id(
-    clickhouse_client: &ClickhouseClient,
     chat_id: u64,
 ) -> Result<u64, Box<dyn std::error::Error>> {
-    let result = clickhouse_client
-        .query("SELECT max(event_id) as max_id FROM admin_actions2 WHERE chat_id = ?")
+    let max_id: u64 = crate::db::clickhouse()
+        .query("SELECT max(event_id) FROM admin_actions2 WHERE chat_id = ?")
         .bind(chat_id)
-        .fetch_optional::<MaxEventId>()
-        .await?;
-    Ok(result.map(|r| r.max_id).unwrap_or(0))
+        .fetch_one()
+        .await
+        .unwrap_or(0);
+    Ok(max_id)
 }
 
 async fn log_admin_actions(
     client: &Client,
     _client_id: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let clickhouse_client = super::clickhouse_client()?;
+    let ch = crate::db::clickhouse();
 
     let chat_ids_str = std::env::var("TELEGRAM_CHAT_IDS")?;
     let chat_ids: Vec<i64> = chat_ids_str
@@ -184,7 +163,7 @@ async fn log_admin_actions(
         };
 
         let chat_id_u64 = *chat_id as u64;
-        let min_id = get_last_event_id(&clickhouse_client, chat_id_u64).await? as i64;
+        let min_id = get_last_event_id(chat_id_u64).await? as i64;
         let mut max_id: i64 = 0;
         let mut total_inserted: usize = 0;
         let mut new_last_id: u64 = 0;
@@ -208,7 +187,7 @@ async fn log_admin_actions(
                 break;
             }
 
-            let mut insert = clickhouse_client.insert::<AdminAction>("admin_actions2").await?;
+            let mut insert = ch.insert::<AdminAction>("admin_actions2").await?;
 
             for event in &result.events {
                 let tl::enums::ChannelAdminLogEvent::Event(ev) = event;

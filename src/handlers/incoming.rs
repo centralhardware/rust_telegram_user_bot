@@ -1,28 +1,10 @@
-use clickhouse::Row;
 use grammers_client::peer::Peer;
 use grammers_client::update::Message;
 use grammers_client::Client;
 use log::info;
-use serde::Serialize;
 
+use crate::db::IncomingMessage;
 use crate::handlers::{get_topic_id, get_topic_name};
-use crate::schedulers;
-
-#[derive(Row, Serialize)]
-struct IncomingMessage {
-    date_time: u32,
-    message: String,
-    chat_title: String,
-    chat_id: i64,
-    username: Vec<String>,
-    first_name: String,
-    second_name: String,
-    user_id: u64,
-    message_id: i64,
-    chat_usernames: Vec<String>,
-    reply_to: u64,
-    client_id: u64,
-}
 
 pub async fn save_incoming(message: &Message, client: &Client, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
     if message.outgoing() {
@@ -43,13 +25,13 @@ pub async fn save_incoming(message: &Message, client: &Client, client_id: u64) -
         let topic_part = match topic_id {
             Some(id) => {
                 let name = get_topic_name(client, message, id).await;
-                format!(" [topic {name}]")
+                format!(" [{name}]")
             }
             None => String::new(),
         };
         info!(
-            "\x1b[92m{:<15} {:>5} {:<25} {}{}{}\x1b[0m",
-            "incoming", message.id(), chat_name, preview, reply_part, topic_part
+            "\x1b[92m{:<15} {:>5} {:<25}{} {}{}\x1b[0m",
+            "incoming", message.id(), chat_name, topic_part, preview, reply_part
         );
     }
 
@@ -101,8 +83,7 @@ pub async fn save_incoming(message: &Message, client: &Client, client_id: u64) -
 
     let reply_to = message.reply_to_message_id().unwrap_or(0) as u64;
 
-    let clickhouse_client = schedulers::clickhouse_client()?;
-    let mut insert = clickhouse_client.insert::<IncomingMessage>("chats_log").await?;
+    let mut insert = crate::db::clickhouse().insert::<IncomingMessage>("chats_log").await?;
     insert.write(&IncomingMessage {
         date_time: message.date().timestamp() as u32,
         message: msg_content,

@@ -1,9 +1,9 @@
-use clickhouse::Row;
 use grammers_client::Client;
 use grammers_tl_types as tl;
 use log::error;
 use std::time::Duration;
-use serde::Serialize;
+
+use crate::db::TelegramSession;
 
 pub fn start(client: Client, client_id: u64) {
     tokio::spawn(async move {
@@ -17,31 +17,12 @@ pub fn start(client: Client, client_id: u64) {
     });
 }
 
-#[derive(Row, Serialize)]
-struct TelegramSession {
-    hash: i64,
-    device_model: String,
-    platform: String,
-    system_version: Option<String>,
-    app_name: String,
-    app_version: Option<String>,
-    ip: Option<String>,
-    country: String,
-    region: String,
-    date_created: u32,
-    date_active: u32,
-    updated_at: u32,
-    client_id: u64,
-}
-
 async fn log_sessions(client: &Client, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
-    let clickhouse_client = super::clickhouse_client()?;
-
     let tl::enums::account::Authorizations::Authorizations(result) = client
         .invoke(&tl::functions::account::GetAuthorizations {})
         .await?;
 
-    let mut insert = clickhouse_client.insert::<TelegramSession>("user_sessions").await?;
+    let mut insert = crate::db::clickhouse().insert::<TelegramSession>("user_sessions").await?;
     for auth in &result.authorizations {
         let tl::enums::Authorization::Authorization(session) = auth;
 

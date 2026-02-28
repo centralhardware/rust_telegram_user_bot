@@ -1,18 +1,8 @@
-use clickhouse::Row;
 use grammers_client::update::MessageDeletion;
 use log::info;
-use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::schedulers;
-
-#[derive(Row, Serialize)]
-struct DeletedMessage {
-    date_time: u32,
-    chat_id: i64,
-    message_id: i64,
-    client_id: u64,
-}
+use crate::db::DeletedMessage;
 
 pub async fn save_deleted(
     deletion: &MessageDeletion,
@@ -27,10 +17,10 @@ pub async fn save_deleted(
         .duration_since(UNIX_EPOCH)?
         .as_secs() as u32;
 
-    let clickhouse_client = schedulers::clickhouse_client()?;
+    let ch = crate::db::clickhouse();
 
     for &msg_id in deletion.messages() {
-        let chat_title = clickhouse_client
+        let chat_title = ch
             .query(
                 "SELECT chat_title FROM chats_log WHERE chat_id = ? ORDER BY date_time DESC LIMIT 1",
             )
@@ -39,7 +29,7 @@ pub async fn save_deleted(
             .await
             .unwrap_or_else(|_| channel_id.to_string());
 
-        let message = clickhouse_client
+        let message = ch
             .query(
                 "SELECT message FROM edited_log WHERE chat_id = ? AND message_id = ? ORDER BY date_time DESC LIMIT 1",
             )
@@ -54,7 +44,7 @@ pub async fn save_deleted(
 
         let message = match message {
             Ok(m) => m,
-            Err(_) => clickhouse_client
+            Err(_) => ch
                 .query(
                     "SELECT message FROM chats_log WHERE chat_id = ? AND message_id = ? ORDER BY date_time DESC LIMIT 1",
                 )
@@ -74,7 +64,7 @@ pub async fn save_deleted(
             message,
         );
 
-        let mut insert = clickhouse_client
+        let mut insert = ch
             .insert::<DeletedMessage>("deleted_log")
             .await?;
         insert

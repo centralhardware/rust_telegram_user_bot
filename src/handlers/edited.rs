@@ -1,23 +1,9 @@
-use clickhouse::Row;
 use grammers_client::update::Message;
 use grammers_client::Client;
 use log::info;
-use serde::Serialize;
 
+use crate::db::EditedMessage;
 use crate::handlers::{get_topic_id, get_topic_name};
-use crate::schedulers;
-
-#[derive(Row, Serialize)]
-struct EditedMessage {
-    date_time: u32,
-    chat_id: i64,
-    message_id: i64,
-    original_message: String,
-    message: String,
-    diff: String,
-    user_id: i64,
-    client_id: u64,
-}
 
 pub async fn save_edited(
     message: &Message,
@@ -32,10 +18,10 @@ pub async fn save_edited(
         return Ok(());
     }
 
-    let clickhouse_client = schedulers::clickhouse_client()?;
+    let ch = crate::db::clickhouse();
 
     // Try to get the original from edited_log first, then from chats_log
-    let original = clickhouse_client
+    let original = ch
         .query(
             "SELECT message FROM edited_log WHERE chat_id = ? AND message_id = ? ORDER BY date_time DESC LIMIT 1",
         )
@@ -47,7 +33,7 @@ pub async fn save_edited(
 
     let original = match original {
         Some(o) if !o.is_empty() => o,
-        _ => clickhouse_client
+        _ => ch
             .query(
                 "SELECT message FROM chats_log WHERE chat_id = ? AND message_id = ? ORDER BY date_time DESC LIMIT 1",
             )
@@ -78,7 +64,7 @@ pub async fn save_edited(
     let topic_part = match get_topic_id(message) {
         Some(id) => {
             let name = get_topic_name(client, message, id).await;
-            format!(" [topic {name}]")
+            format!(" [{name}]")
         }
         None => String::new(),
     };
@@ -95,7 +81,7 @@ pub async fn save_edited(
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs() as u32;
 
-    let mut insert = clickhouse_client
+    let mut insert = ch
         .insert::<EditedMessage>("edited_log")
         .await?;
     insert

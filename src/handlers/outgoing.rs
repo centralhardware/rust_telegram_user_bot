@@ -1,26 +1,10 @@
-use clickhouse::Row;
 use grammers_client::peer::Peer;
 use grammers_client::update::Message;
 use grammers_client::Client;
 use log::info;
-use serde::Serialize;
 
+use crate::db::OutgoingMessage;
 use crate::handlers::{get_topic_id, get_topic_name};
-use crate::schedulers;
-
-#[derive(Row, Serialize)]
-struct OutgoingMessage {
-    date_time: u32,
-    message: String,
-    title: String,
-    id: i64,
-    admins2: Vec<String>,
-    usernames: Vec<String>,
-    message_id: u64,
-    reply_to: u64,
-    raw: String,
-    client_id: u64,
-}
 
 pub async fn save_outgoing(message: &Message, client: &Client, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
     if !message.outgoing() {
@@ -71,18 +55,17 @@ pub async fn save_outgoing(message: &Message, client: &Client, client_id: u64) -
         let topic_part = match topic_id {
             Some(id) => {
                 let name = get_topic_name(client, message, id).await;
-                format!(" [topic {name}]")
+                format!(" [{name}]")
             }
             None => String::new(),
         };
         info!(
-            "\x1b[95m{:<15} {:>5} {:<25} {}{}{}\x1b[0m",
-            "outgoing", message.id(), title_short, preview, reply_part, topic_part
+            "\x1b[95m{:<15} {:>5} {:<25}{} {}{}\x1b[0m",
+            "outgoing", message.id(), title_short, topic_part, preview, reply_part
         );
     }
 
-    let clickhouse_client = schedulers::clickhouse_client()?;
-    let mut insert = clickhouse_client.insert::<OutgoingMessage>("telegram_messages_new").await?;
+    let mut insert = crate::db::clickhouse().insert::<OutgoingMessage>("telegram_messages_new").await?;
     insert.write(&OutgoingMessage {
         date_time: message.date().timestamp() as u32,
         message: text,
