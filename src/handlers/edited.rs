@@ -81,7 +81,7 @@ pub async fn save_edited(
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs() as u32;
 
-    crate::db::edited_buffer().push(EditedMessage {
+    crate::db::EDITED_BUF.push(EditedMessage {
         date_time: now,
         chat_id,
         message_id: msg_id,
@@ -90,7 +90,7 @@ pub async fn save_edited(
         diff,
         user_id,
         client_id,
-    });
+    }).await;
 
     Ok(())
 }

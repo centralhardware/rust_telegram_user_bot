@@ -64,12 +64,12 @@ pub async fn save_deleted(
             message,
         );
 
-        crate::db::deleted_buffer().push(DeletedMessage {
+        crate::db::DELETED_BUF.push(DeletedMessage {
             date_time: now,
             chat_id: channel_id,
             message_id: msg_id as i64,
             client_id,
-        });
+        }).await;
     }
 
     Ok(())

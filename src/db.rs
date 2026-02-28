@@ -1,8 +1,7 @@
 use clickhouse::{Client, Row};
 use serde::Serialize;
 use std::sync::LazyLock;
-use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 
 static CLICKHOUSE: LazyLock<Client> = LazyLock::new(|| {
     Client::default()
@@ -17,7 +16,8 @@ pub fn clickhouse() -> &'static Client {
 }
 
 pub struct WriteBuffer<T: Send + 'static> {
-    tx: mpsc::UnboundedSender<T>,
+    table: &'static str,
+    buffer: Mutex<Vec<T>>,
 }
 
 impl<T> WriteBuffer<T>
@@ -25,72 +25,48 @@ where
     T: Serialize + Send + 'static,
     for<'a> T: Row<Value<'a> = T>,
 {
-    pub fn new(table: &'static str) -> Self {
-        let (tx, rx) = mpsc::unbounded_channel();
-        tokio::spawn(Self::flush_loop(rx, table));
-        Self { tx }
-    }
-
-    pub fn push(&self, row: T) {
-        let _ = self.tx.send(row);
-    }
-
-    async fn flush_loop(mut rx: mpsc::UnboundedReceiver<T>, table: &str) {
-        let mut interval = tokio::time::interval(Duration::from_secs(10));
-        let mut buffer: Vec<T> = Vec::new();
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {
-                    if !buffer.is_empty() {
-                        Self::flush(&mut buffer, table).await;
-                    }
-                }
-                item = rx.recv() => {
-                    match item {
-                        Some(row) => buffer.push(row),
-                        None => {
-                            if !buffer.is_empty() {
-                                Self::flush(&mut buffer, table).await;
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
+    pub const fn new(table: &'static str) -> Self {
+        Self {
+            table,
+            buffer: Mutex::const_new(Vec::new()),
         }
     }
 
-    async fn flush(buffer: &mut Vec<T>, table: &str) {
-        let count = buffer.len();
-        match clickhouse().insert::<T>(table).await {
+    pub async fn push(&self, row: T) {
+        self.buffer.lock().await.push(row);
+    }
+
+    pub async fn flush(&self) {
+        let rows: Vec<T> = {
+            let mut buf = self.buffer.lock().await;
+            if buf.is_empty() {
+                return;
+            }
+            std::mem::take(&mut *buf)
+        };
+        let count = rows.len();
+        match clickhouse().insert::<T>(self.table).await {
             Ok(mut insert) => {
-                for row in buffer.drain(..) {
+                for row in rows {
                     if let Err(e) = insert.write(&row).await {
-                        log::error!("buffer write to {table}: {e}");
+                        log::error!("buffer write to {}: {e}", self.table);
                         return;
                     }
                 }
                 if let Err(e) = insert.end().await {
-                    log::error!("buffer flush to {table}: {e}");
+                    log::error!("buffer flush to {}: {e}", self.table);
                 } else {
-                    log::info!("flushed {count} rows to {table}");
+                    log::info!("flushed {count} rows to {}", self.table);
                 }
             }
-            Err(e) => log::error!("buffer insert to {table}: {e}"),
+            Err(e) => log::error!("buffer insert to {}: {e}", self.table),
         }
     }
 }
 
-static INCOMING_BUF: LazyLock<WriteBuffer<IncomingMessage>> =
-    LazyLock::new(|| WriteBuffer::new("chats_log"));
-static EDITED_BUF: LazyLock<WriteBuffer<EditedMessage>> =
-    LazyLock::new(|| WriteBuffer::new("edited_log"));
-static DELETED_BUF: LazyLock<WriteBuffer<DeletedMessage>> =
-    LazyLock::new(|| WriteBuffer::new("deleted_log"));
-
-pub fn incoming_buffer() -> &'static WriteBuffer<IncomingMessage> { &INCOMING_BUF }
-pub fn edited_buffer() -> &'static WriteBuffer<EditedMessage> { &EDITED_BUF }
-pub fn deleted_buffer() -> &'static WriteBuffer<DeletedMessage> { &DELETED_BUF }
+pub static INCOMING_BUF: WriteBuffer<IncomingMessage> = WriteBuffer::new("chats_log");
+pub static EDITED_BUF: WriteBuffer<EditedMessage> = WriteBuffer::new("edited_log");
+pub static DELETED_BUF: WriteBuffer<DeletedMessage> = WriteBuffer::new("deleted_log");
 
 #[derive(Row, Serialize)]
 pub struct IncomingMessage {
