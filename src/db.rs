@@ -61,6 +61,7 @@ where
     }
 
     async fn flush(buffer: &mut Vec<T>, table: &str) {
+        let count = buffer.len();
         match clickhouse().insert::<T>(table).await {
             Ok(mut insert) => {
                 for row in buffer.drain(..) {
@@ -71,6 +72,8 @@ where
                 }
                 if let Err(e) = insert.end().await {
                     log::error!("buffer flush to {table}: {e}");
+                } else {
+                    log::info!("flushed {count} rows to {table}");
                 }
             }
             Err(e) => log::error!("buffer insert to {table}: {e}"),
