@@ -24,8 +24,14 @@ static TOPIC_NAMES: LazyLock<Mutex<HashMap<(i64, i32), String>>> =
 pub(crate) fn get_topic_id(message: &Message) -> Option<i32> {
     match &message.deref().raw {
         tl::enums::Message::Message(msg) => match &msg.reply_to {
-            Some(tl::enums::MessageReplyHeader::Header(header)) if header.forum_topic => {
-                header.reply_to_top_id.or(header.reply_to_msg_id)
+            Some(tl::enums::MessageReplyHeader::Header(header)) => {
+                if header.forum_topic {
+                    header.reply_to_top_id.or(header.reply_to_msg_id)
+                } else {
+                    // outgoing messages may not have forum_topic flag,
+                    // but reply_to_top_id still points to the topic
+                    header.reply_to_top_id
+                }
             }
             _ => None,
         },
