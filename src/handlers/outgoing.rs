@@ -59,12 +59,13 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
 
     {
         let preview: String = text.chars().take(80).collect();
+        let title_short: String = title.chars().take(25).collect();
         let reply_part = message.reply_to_message_id()
             .map(|id| format!(" reply to {id}"))
             .unwrap_or_default();
         println!(
             "\x1b[95m{:<15} {:>5} {:<25} {}{}\x1b[0m",
-            "outgoing", message.id(), &title[..title.len().min(25)], preview, reply_part
+            "outgoing", message.id(), title_short, preview, reply_part
         );
     }
 

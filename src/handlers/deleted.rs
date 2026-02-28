@@ -65,11 +65,12 @@ pub async fn save_deleted(
         };
 
         let preview: String = message.chars().take(80).collect();
+        let title_short: String = chat_title.chars().take(25).collect();
         println!(
             "\x1b[91m{:<15} {:>5} {:<25} {}\x1b[0m",
             "deleted",
             msg_id,
-            &chat_title[..chat_title.len().min(25)],
+            title_short,
             preview,
         );
 

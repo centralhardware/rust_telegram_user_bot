@@ -70,11 +70,12 @@ pub async fn save_edited(
         .map(|p| p.name().unwrap_or_default().to_string())
         .unwrap_or_default();
 
+    let chat_name_short: String = chat_name.chars().take(25).collect();
     println!(
         "\x1b[93m{:<15} {:>5} {:<25}\n{}\x1b[0m",
         "edited",
         message.id(),
-        &chat_name[..chat_name.len().min(25)],
+        chat_name_short,
         diff,
     );
 
