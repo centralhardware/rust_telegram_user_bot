@@ -11,7 +11,7 @@ pub async fn handle_auto_cat(message: &Message) -> Result<()> {
     }
 
     let reply: grammers_client::message::Message = message.reply("/start@y9catbot").await?;
-    tokio::try_join!(message.delete(), reply.delete())?;
+    reply.delete().await?;
 
     Ok(())
 }
