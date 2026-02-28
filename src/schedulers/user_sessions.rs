@@ -11,7 +11,7 @@ pub fn start(client: Client, client_id: u64) {
         loop {
             interval.tick().await;
             if let Err(e) = log_sessions(&client, client_id).await {
-                error!("Failed to fetch sessions: {}", e);
+                error!("Failed to fetch sessions: {:?}", e);
             }
         }
     });

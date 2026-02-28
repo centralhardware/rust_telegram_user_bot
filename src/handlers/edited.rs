@@ -1,5 +1,6 @@
 use clickhouse::Row;
 use grammers_client::update::Message;
+use log::info;
 use serde::Serialize;
 
 use crate::schedulers;
@@ -71,7 +72,7 @@ pub async fn save_edited(
         .unwrap_or_default();
 
     let chat_name_short: String = chat_name.chars().take(25).collect();
-    println!(
+    info!(
         "\x1b[93m{:<15} {:>5} {:<25}\n{}\x1b[0m",
         "edited",
         message.id(),

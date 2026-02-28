@@ -1,6 +1,7 @@
 use clickhouse::Row;
 use grammers_client::peer::Peer;
 use grammers_client::update::Message;
+use log::info;
 use serde::Serialize;
 
 use crate::schedulers;
@@ -35,7 +36,7 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
         let reply_part = message.reply_to_message_id()
             .map(|id| format!(" reply to {id}"))
             .unwrap_or_default();
-        println!(
+        info!(
             "\x1b[92m{:<15} {:>5} {:<25} {}{}\x1b[0m",
             "incoming", message.id(), chat_name, preview, reply_part
         );

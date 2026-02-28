@@ -1,5 +1,6 @@
 use clickhouse::Row;
 use grammers_client::update::MessageDeletion;
+use log::info;
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -66,7 +67,7 @@ pub async fn save_deleted(
 
         let preview: String = message.chars().take(80).collect();
         let title_short: String = chat_title.chars().take(25).collect();
-        println!(
+        info!(
             "\x1b[91m{:<15} {:>5} {:<25} {}\x1b[0m",
             "deleted",
             msg_id,

@@ -5,13 +5,24 @@ use grammers_client::client::UpdatesConfiguration;
 use grammers_client::update::Update;
 use grammers_client::{Client, SenderPool, SignInError};
 use grammers_session::storages::SqliteSession;
+use log::{error, info};
 use std::io::{BufRead, Write};
 use std::sync::Arc;
 use std::{env, io};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    pretty_env_logger::init();
+    env_logger::Builder::from_default_env()
+        .format(|buf, record| {
+            use std::io::Write;
+            let now = chrono::Local::now();
+            writeln!(buf, "[{}] {}", now.format("%H:%M:%S"), record.args())
+        })
+        .init();
+    std::panic::set_hook(Box::new(|info| {
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        log::error!("{}\n{}", info, backtrace);
+    }));
 
     let api_id = env::var("TG_ID")
         .expect("TG_ID not set")
@@ -29,7 +40,7 @@ async fn main() -> Result<()> {
     let _ = tokio::spawn(runner.run());
 
     if !client.is_authorized().await? {
-        println!("Signing in...");
+        info!("Signing in...");
         let phone = prompt("Enter your phone number (international format): ")?;
         let api_hash = env::var("TG_HASH").expect("TG_HASH not set");
         let token = client.request_login_code(&phone, &api_hash).await?;
@@ -52,7 +63,7 @@ async fn main() -> Result<()> {
             Ok(_) => (),
             Err(e) => panic!("{}", e),
         };
-        println!("Signed in!");
+        info!("Signed in!");
     }
 
     let mut updates = client
@@ -65,7 +76,7 @@ async fn main() -> Result<()> {
         )
         .await;
 
-    println!("Listening for messages...");
+    info!("Listening for messages...");
 
     let client_id = client.get_me().await?.id().bare_id().unwrap() as u64;
     schedulers::start(client.clone(), client_id);
@@ -77,21 +88,21 @@ async fn main() -> Result<()> {
                 match update {
                     Update::NewMessage(message) => {
                         if let Err(e) = handlers::save_incoming(&message, client_id).await {
-                            eprintln!("Failed to save incoming message: {}", e);
+                            error!("Failed to save incoming message: {:?}", e);
                         }
                         if let Err(e) = handlers::save_outgoing(&message, client_id).await {
-                            eprintln!("Failed to save outgoing message: {}", e);
+                            error!("Failed to save outgoing message: {:?}", e);
                         }
                         handlers::handle_auto_cat(&message).await?;
                     }
                     Update::MessageEdited(message) => {
                         if let Err(e) = handlers::save_edited(&message, client_id).await {
-                            eprintln!("Failed to save edited message: {}", e);
+                            error!("Failed to save edited message: {:?}", e);
                         }
                     }
                     Update::MessageDeleted(deletion) => {
                         if let Err(e) = handlers::save_deleted(&deletion, client_id).await {
-                            eprintln!("Failed to save deleted message: {}", e);
+                            error!("Failed to save deleted message: {:?}", e);
                         }
                     }
                     _ => {}

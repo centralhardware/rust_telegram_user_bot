@@ -12,7 +12,7 @@ pub fn start(client: Client, client_id: u64) {
         loop {
             interval.tick().await;
             if let Err(e) = log_admin_actions(&client, client_id).await {
-                error!("Failed to fetch admin actions: {}", e);
+                error!("Failed to fetch admin actions: {:?}", e);
             }
         }
     });
@@ -190,7 +190,7 @@ async fn log_admin_actions(
         let peer = match resolve_channel(client, *chat_id).await {
             Ok(r) => r,
             Err(e) => {
-                error!("Cannot resolve channel {}: {}", chat_id, e);
+                error!("Cannot resolve channel {}: {:?}", chat_id, e);
                 continue;
             }
         };
