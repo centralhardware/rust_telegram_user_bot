@@ -81,22 +81,16 @@ pub async fn save_edited(
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs() as u32;
 
-    let mut insert = ch
-        .insert::<EditedMessage>("edited_log")
-        .await?;
-    insert
-        .write(&EditedMessage {
-            date_time: now,
-            chat_id,
-            message_id: msg_id,
-            original_message: original,
-            message: message_content,
-            diff,
-            user_id,
-            client_id,
-        })
-        .await?;
-    insert.end().await?;
+    crate::db::edited_buffer().push(EditedMessage {
+        date_time: now,
+        chat_id,
+        message_id: msg_id,
+        original_message: original,
+        message: message_content,
+        diff,
+        user_id,
+        client_id,
+    });
 
     Ok(())
 }

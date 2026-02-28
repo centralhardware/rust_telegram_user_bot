@@ -83,8 +83,7 @@ pub async fn save_incoming(message: &Message, client: &Client, client_id: u64) -
 
     let reply_to = message.reply_to_message_id().unwrap_or(0) as u64;
 
-    let mut insert = crate::db::clickhouse().insert::<IncomingMessage>("chats_log").await?;
-    insert.write(&IncomingMessage {
+    crate::db::incoming_buffer().push(IncomingMessage {
         date_time: message.date().timestamp() as u32,
         message: msg_content,
         chat_title,
@@ -97,8 +96,7 @@ pub async fn save_incoming(message: &Message, client: &Client, client_id: u64) -
         chat_usernames,
         reply_to,
         client_id,
-    }).await?;
-    insert.end().await?;
+    });
 
     Ok(())
 }
