@@ -36,11 +36,11 @@ where
         self.buffer.lock().await.push(row);
     }
 
-    pub async fn flush(&self) {
+    pub async fn flush(&self) -> usize {
         let rows: Vec<T> = {
             let mut buf = self.buffer.lock().await;
             if buf.is_empty() {
-                return;
+                return 0;
             }
             std::mem::take(&mut *buf)
         };
@@ -50,16 +50,20 @@ where
                 for row in rows {
                     if let Err(e) = insert.write(&row).await {
                         log::error!("buffer write to {}: {e}", self.table);
-                        return;
+                        return 0;
                     }
                 }
                 if let Err(e) = insert.end().await {
                     log::error!("buffer flush to {}: {e}", self.table);
+                    0
                 } else {
-                    log::info!("flushed {count} rows to {}", self.table);
+                    count
                 }
             }
-            Err(e) => log::error!("buffer insert to {}: {e}", self.table),
+            Err(e) => {
+                log::error!("buffer insert to {}: {e}", self.table);
+                0
+            }
         }
     }
 }
