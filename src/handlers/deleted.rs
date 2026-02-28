@@ -31,29 +31,19 @@ pub async fn save_deleted(
 
         let message = ch
             .query(
-                "SELECT message FROM edited_log WHERE chat_id = ? AND message_id = ? ORDER BY date_time DESC LIMIT 1",
+                "SELECT message FROM (
+                    SELECT message, 1 AS p, date_time FROM edited_log WHERE chat_id = ? AND message_id = ?
+                    UNION ALL
+                    SELECT message, 2 AS p, date_time FROM chats_log WHERE chat_id = ? AND message_id = ?
+                ) ORDER BY p, date_time DESC LIMIT 1",
             )
+            .bind(channel_id)
+            .bind(msg_id as i64)
             .bind(channel_id)
             .bind(msg_id as i64)
             .fetch_one::<String>()
             .await
-            .or_else(|_| {
-                // We can't do async in or_else, so we'll handle this below
-                Err(())
-            });
-
-        let message = match message {
-            Ok(m) => m,
-            Err(_) => ch
-                .query(
-                    "SELECT message FROM chats_log WHERE chat_id = ? AND message_id = ? ORDER BY date_time DESC LIMIT 1",
-                )
-                .bind(channel_id)
-                .bind(msg_id as i64)
-                .fetch_one::<String>()
-                .await
-                .unwrap_or_else(|_| msg_id.to_string()),
-        };
+            .unwrap_or_else(|_| msg_id.to_string());
 
         let title_short: String = chat_title.chars().take(25).collect();
         info!(

@@ -23,26 +23,19 @@ pub async fn save_edited(
     // Try to get the original from edited_log first, then from chats_log
     let original = ch
         .query(
-            "SELECT message FROM edited_log WHERE chat_id = ? AND message_id = ? ORDER BY date_time DESC LIMIT 1",
+            "SELECT message FROM (\
+                SELECT message, 1 AS p, date_time FROM edited_log WHERE chat_id = ? AND message_id = ? \
+                UNION ALL \
+                SELECT message, 2 AS p, date_time FROM chats_log WHERE chat_id = ? AND message_id = ? \
+            ) ORDER BY p, date_time DESC LIMIT 1",
         )
+        .bind(chat_id)
+        .bind(msg_id)
         .bind(chat_id)
         .bind(msg_id)
         .fetch_one::<String>()
         .await
-        .ok();
-
-    let original = match original {
-        Some(o) if !o.is_empty() => o,
-        _ => ch
-            .query(
-                "SELECT message FROM chats_log WHERE chat_id = ? AND message_id = ? ORDER BY date_time DESC LIMIT 1",
-            )
-            .bind(chat_id)
-            .bind(msg_id)
-            .fetch_one::<String>()
-            .await
-            .unwrap_or_default(),
-    };
+        .unwrap_or_default();
 
     if original.is_empty() || original == message_content {
         return Ok(());
