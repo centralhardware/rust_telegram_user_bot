@@ -6,7 +6,7 @@ const CHAT_ID: i64 = 1633660171;
 const TRIGGER_PREFIX: &str = "#грбн";
 
 pub async fn handle_auto_cat(message: &Message) -> Result<()> {
-    if message.peer_id().bare_id() != Some(CHAT_ID) || !message.text().starts_with(TRIGGER_PREFIX) {
+    if message.peer_id().bare_id() != Some(CHAT_ID) || !message.text().contains(TRIGGER_PREFIX) {
         return Ok(());
     }
 
