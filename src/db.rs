@@ -36,6 +36,13 @@ where
         self.buffer.lock().await.push(row);
     }
 
+    pub async fn find_last<F, R>(&self, f: F) -> Option<R>
+    where
+        F: Fn(&T) -> Option<R>,
+    {
+        self.buffer.lock().await.iter().rev().find_map(f)
+    }
+
     pub async fn flush(&self) -> usize {
         let rows: Vec<T> = {
             let mut buf = self.buffer.lock().await;
