@@ -13,6 +13,7 @@ use std::{env, io};
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::Builder::from_default_env()
+        .write_style(env_logger::WriteStyle::Always)
         .format(|buf, record| {
             use std::io::Write;
             let now = chrono::Local::now();
