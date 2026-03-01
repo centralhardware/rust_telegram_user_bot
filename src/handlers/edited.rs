@@ -98,42 +98,7 @@ pub async fn save_edited(
 }
 
 fn unified_diff(original: &str, modified: &str) -> String {
-    let original_lines: Vec<&str> = original.lines().collect();
-    let modified_lines: Vec<&str> = modified.lines().collect();
-
-    let mut result = Vec::new();
-    result.push("--- original".to_string());
-    result.push("+++ modified".to_string());
-
-    // Simple line-by-line diff
-    let max_len = original_lines.len().max(modified_lines.len());
-    let mut has_changes = false;
-
-    for i in 0..max_len {
-        match (original_lines.get(i), modified_lines.get(i)) {
-            (Some(o), Some(m)) if o == m => {
-                result.push(format!(" {o}"));
-            }
-            (Some(o), Some(m)) => {
-                result.push(format!("-{o}"));
-                result.push(format!("+{m}"));
-                has_changes = true;
-            }
-            (Some(o), None) => {
-                result.push(format!("-{o}"));
-                has_changes = true;
-            }
-            (None, Some(m)) => {
-                result.push(format!("+{m}"));
-                has_changes = true;
-            }
-            (None, None) => {}
-        }
-    }
-
-    if has_changes {
-        result.join("\n")
-    } else {
-        String::new()
-    }
+    similar::TextDiff::from_lines(original, modified)
+        .unified_diff()
+        .to_string()
 }

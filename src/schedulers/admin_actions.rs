@@ -37,16 +37,9 @@ fn format_log_output(action: &tl::enums::ChannelAdminLogEventAction, user_title:
             if prev == new {
                 return String::new();
             }
-            let mut diff = String::new();
-            diff.push_str("--- \n+++ \n");
-            for hunk in diff::lines(&prev, &new) {
-                match hunk {
-                    diff::Result::Left(l) => { diff.push('-'); diff.push_str(l); diff.push('\n'); }
-                    diff::Result::Right(r) => { diff.push('+'); diff.push_str(r); diff.push('\n'); }
-                    diff::Result::Both(b, _) => { diff.push(' '); diff.push_str(b); diff.push('\n'); }
-                }
-            }
-            diff
+            similar::TextDiff::from_lines(&prev, &new)
+                .unified_diff()
+                .to_string()
         }
         tl::enums::ChannelAdminLogEventAction::DeleteMessage(a) => {
             message_text(&a.message)
