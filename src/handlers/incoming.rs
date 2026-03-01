@@ -56,7 +56,11 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
 
     let text = message.text();
     let msg_content = if text.is_empty() {
-        serde_json::to_string(&message.raw).unwrap_or_default()
+        if let Some(action) = message.action() {
+            crate::utils::service_action::format(action)
+        } else {
+            serde_json::to_string(&message.raw).unwrap_or_default()
+        }
     } else {
         text.to_string()
     };

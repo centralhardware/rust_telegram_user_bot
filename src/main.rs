@@ -2,6 +2,7 @@ mod db;
 mod handlers;
 mod schedulers;
 mod session;
+mod utils;
 
 use grammers_client::update::Update;
 use log::error;
