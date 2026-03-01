@@ -1,5 +1,4 @@
 use grammers_client::update::Message;
-use grammers_client::Client;
 use log::info;
 
 use crate::db::EditedMessage;

@@ -16,3 +16,4 @@ tokio = { version =  "1.8", features = ["rt-multi-thread", "macros", "time"] }
 clickhouse = "0.14.2"
 serde = { version = "1.0.228", features = ["derive"] }
 diff = "0.1"
+dialoguer = "0.11"

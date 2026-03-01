@@ -1,15 +1,10 @@
 use grammers_client::peer::Peer;
 use grammers_client::update::Message;
-use grammers_client::Client;
 use log::info;
 
 use crate::db::IncomingMessage;
 
 pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
-    if message.outgoing() {
-        return Ok(());
-    }
-
     {
         let chat_name = message.peer()
             .map(|p| p.name().unwrap_or_default().to_string())
@@ -29,11 +24,6 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
         Some(p) => p,
         None => return Ok(()),
     };
-
-    // Skip private chats (only save group/channel messages)
-    if matches!(peer, Peer::User(_)) {
-        return Ok(());
-    }
 
     let sender = match message.sender() {
         Some(s) => s,

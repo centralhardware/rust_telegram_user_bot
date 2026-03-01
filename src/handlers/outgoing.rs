@@ -1,15 +1,10 @@
 use grammers_client::peer::Peer;
 use grammers_client::update::Message;
-use grammers_client::Client;
 use log::info;
 
 use crate::db::OutgoingMessage;
 
 pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
-    if !message.outgoing() {
-        return Ok(());
-    }
-
     let peer = match message.peer() {
         Some(p) => p,
         None => return Ok(()),
