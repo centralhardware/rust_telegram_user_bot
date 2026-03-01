@@ -100,5 +100,6 @@ pub async fn save_edited(
 fn unified_diff(original: &str, modified: &str) -> String {
     similar::TextDiff::from_lines(original, modified)
         .unified_diff()
+        .missing_newline_hint(false)
         .to_string()
 }

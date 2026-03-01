@@ -39,6 +39,7 @@ fn format_log_output(action: &tl::enums::ChannelAdminLogEventAction, user_title:
             }
             similar::TextDiff::from_lines(&prev, &new)
                 .unified_diff()
+                .missing_newline_hint(false)
                 .to_string()
         }
         tl::enums::ChannelAdminLogEventAction::DeleteMessage(a) => {
