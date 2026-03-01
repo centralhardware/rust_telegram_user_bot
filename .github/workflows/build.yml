@@ -4,8 +4,18 @@ on:
   push:
     branches: [ "master" ]
     tags: [ "v*.*.*" ]
+    paths:
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "Dockerfile"
   pull_request:
     branches: [ "**" ]
+    paths:
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "Dockerfile"
 
 permissions:
   contents: read
