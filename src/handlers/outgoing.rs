@@ -42,9 +42,12 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
         let preview: String = text.chars().take(80).collect();
         let title_short: String = title.chars().take(25).collect();
         let reply_line = crate::utils::reply_preview::format_reply_line(message).await;
+        if !reply_line.is_empty() {
+            info!("{}", reply_line);
+        }
         info!(
-            "{}\x1b[95m{:<15} {:>5} {:<25} {}\x1b[0m",
-            reply_line, "outgoing", message.id(), title_short, preview
+            "\x1b[95m{:<15} {:>5} {:<25} {}\x1b[0m",
+            "outgoing", message.id(), title_short, preview
         );
     }
 

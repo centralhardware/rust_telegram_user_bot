@@ -11,8 +11,9 @@ pub async fn format_reply_line(message: &Message) -> String {
     let chat_id = message.peer_id().bare_id_unchecked();
     let text = lookup_message_text(chat_id, reply_id).await;
 
-    // Align with message text: [HH:MM:SS] (11) + {:<15} (16) + {:>5} (6) + {:<25} (26) = 59
-    let pad = " ".repeat(59);
+    // Align with message text: {:<15} (16) + {:>5} (6) + {:<25} (26) = 48
+    // Logger already adds [HH:MM:SS] prefix since this is a separate info!() call
+    let pad = " ".repeat(48);
 
     match text {
         Some(text) if !text.is_empty() => {
@@ -23,9 +24,9 @@ pub async fn format_reply_line(message: &Message) -> String {
                     format!("{pad}\x1b[90m  {line}")
                 }
             }).collect::<Vec<_>>().join("\n");
-            format!("{formatted}\x1b[0m\n")
+            format!("{formatted}\x1b[0m")
         }
-        _ => format!("{pad}\x1b[90m> [{reply_id}]\x1b[0m\n"),
+        _ => format!("{pad}\x1b[90m> [{reply_id}]\x1b[0m"),
     }
 }
 
