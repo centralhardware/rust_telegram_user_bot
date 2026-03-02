@@ -1,8 +1,8 @@
 use grammers_client::update::Message;
 
 /// Format reply line for log messages.
-/// Returns `"\n\x1b[90m> reply text\x1b[0m"` suffix if reply found, empty string otherwise.
-pub async fn format_reply_line(message: &Message, limit: usize) -> String {
+/// Returns a line to print *above* the message, or empty string if no reply.
+pub async fn format_reply_line(message: &Message) -> String {
     let reply_id = match message.reply_to_message_id() {
         Some(id) => id,
         None => return String::new(),
@@ -16,19 +16,16 @@ pub async fn format_reply_line(message: &Message, limit: usize) -> String {
 
     match text {
         Some(text) if !text.is_empty() => {
-            let preview: String = text.chars().take(limit).collect();
-            let ellipsis = if text.chars().count() > limit { "…" } else { "" };
-            let full = format!("{preview}{ellipsis}");
-            let formatted = full.lines().enumerate().map(|(i, line)| {
+            let formatted = text.lines().enumerate().map(|(i, line)| {
                 if i == 0 {
                     format!("{pad}\x1b[90m> {line}")
                 } else {
                     format!("{pad}\x1b[90m  {line}")
                 }
             }).collect::<Vec<_>>().join("\n");
-            format!("\n{formatted}\x1b[0m")
+            format!("{formatted}\x1b[0m\n")
         }
-        _ => format!("\n{pad}\x1b[90m> [{reply_id}]\x1b[0m"),
+        _ => format!("{pad}\x1b[90m> [{reply_id}]\x1b[0m\n"),
     }
 }
 
