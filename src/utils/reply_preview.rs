@@ -11,6 +11,9 @@ pub async fn format_reply_line(message: &Message, limit: usize) -> String {
     let chat_id = message.peer_id().bare_id_unchecked();
     let text = lookup_message_text(chat_id, reply_id).await;
 
+    // Align reply text with message text start: 15 + 1 + 5 + 1 + 25 + 1 = 48
+    let pad = " ".repeat(48);
+
     match text {
         Some(text) if !text.is_empty() => {
             let preview: String = text.chars().take(limit).collect();
@@ -18,14 +21,14 @@ pub async fn format_reply_line(message: &Message, limit: usize) -> String {
             let full = format!("{preview}{ellipsis}");
             let formatted = full.lines().enumerate().map(|(i, line)| {
                 if i == 0 {
-                    format!("\x1b[90m> {line}")
+                    format!("{pad}\x1b[90m> {line}")
                 } else {
-                    format!("\x1b[90m  {line}")
+                    format!("{pad}\x1b[90m  {line}")
                 }
             }).collect::<Vec<_>>().join("\n");
             format!("\n{formatted}\x1b[0m")
         }
-        _ => format!("\n\x1b[90m> [{reply_id}]\x1b[0m"),
+        _ => format!("\n{pad}\x1b[90m> [{reply_id}]\x1b[0m"),
     }
 }
 
