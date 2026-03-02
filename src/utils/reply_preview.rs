@@ -15,7 +15,7 @@ pub async fn format_reply_part(message: &Message, limit: usize) -> String {
         Some(text) if !text.is_empty() => {
             let preview: String = text.chars().take(limit).collect();
             let ellipsis = if text.chars().count() > limit { "…" } else { "" };
-            format!(" reply to {reply_id} «{preview}{ellipsis}»")
+            format!(" reply to {reply_id} \x1b[90m«{preview}{ellipsis}»\x1b[0m")
         }
         _ => format!(" reply to {reply_id}"),
     }
