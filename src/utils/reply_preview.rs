@@ -1,7 +1,7 @@
 use grammers_client::update::Message;
 
 /// Format reply line for log messages.
-/// Returns `"\x1b[90m> reply text\x1b[0m\n"` prefix if reply found, empty string otherwise.
+/// Returns `"\n\x1b[90m> reply text\x1b[0m"` suffix if reply found, empty string otherwise.
 pub async fn format_reply_line(message: &Message, limit: usize) -> String {
     let reply_id = match message.reply_to_message_id() {
         Some(id) => id,
@@ -23,9 +23,9 @@ pub async fn format_reply_line(message: &Message, limit: usize) -> String {
                     format!("\x1b[90m  {line}")
                 }
             }).collect::<Vec<_>>().join("\n");
-            format!("{formatted}\x1b[0m\n")
+            format!("\n{formatted}\x1b[0m")
         }
-        _ => format!("\x1b[90m> [{reply_id}]\x1b[0m\n"),
+        _ => format!("\n\x1b[90m> [{reply_id}]\x1b[0m"),
     }
 }
 
