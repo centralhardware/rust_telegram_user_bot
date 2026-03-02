@@ -1,8 +1,8 @@
 use grammers_client::update::Message;
 
-/// Format "reply to {id} «text»" part for log messages.
-/// Looks up the replied-to message text in the incoming buffer and ClickHouse.
-pub async fn format_reply_part(message: &Message, limit: usize) -> String {
+/// Format reply line for log messages.
+/// Returns `"\x1b[90m> reply text\x1b[0m\n"` prefix if reply found, empty string otherwise.
+pub async fn format_reply_line(message: &Message, limit: usize) -> String {
     let reply_id = match message.reply_to_message_id() {
         Some(id) => id,
         None => return String::new(),
@@ -13,12 +13,19 @@ pub async fn format_reply_part(message: &Message, limit: usize) -> String {
 
     match text {
         Some(text) if !text.is_empty() => {
-            let text = text.replace('\n', " ");
             let preview: String = text.chars().take(limit).collect();
             let ellipsis = if text.chars().count() > limit { "…" } else { "" };
-            format!(" reply to {reply_id} \x1b[90m«{preview}{ellipsis}»\x1b[0m")
+            let full = format!("{preview}{ellipsis}");
+            let formatted = full.lines().enumerate().map(|(i, line)| {
+                if i == 0 {
+                    format!("\x1b[90m> {line}")
+                } else {
+                    format!("\x1b[90m  {line}")
+                }
+            }).collect::<Vec<_>>().join("\n");
+            format!("{formatted}\x1b[0m\n")
         }
-        _ => format!(" reply to {reply_id}"),
+        _ => format!("\x1b[90m> [{reply_id}]\x1b[0m\n"),
     }
 }
 

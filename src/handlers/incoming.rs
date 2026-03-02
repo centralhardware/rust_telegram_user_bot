@@ -24,10 +24,10 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
         } else {
             media_desc.as_deref().unwrap_or("")
         };
-        let reply_part = crate::utils::reply_preview::format_reply_part(message, 50).await;
+        let reply_line = crate::utils::reply_preview::format_reply_line(message, 50).await;
         info!(
-            "\x1b[92m{:<15} {:>5} {:<25} {}{}\x1b[0m",
-            "incoming", message.id(), chat_name, preview, reply_part
+            "{}\x1b[92m{:<15} {:>5} {:<25} {}\x1b[0m",
+            reply_line, "incoming", message.id(), chat_name, preview
         );
     }
 
