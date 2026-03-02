@@ -11,8 +11,8 @@ pub async fn format_reply_line(message: &Message, limit: usize) -> String {
     let chat_id = message.peer_id().bare_id_unchecked();
     let text = lookup_message_text(chat_id, reply_id).await;
 
-    // Align reply text with message text start: 15 + 1 + 5 + 1 + 25 + 1 = 48
-    let pad = " ".repeat(48);
+    // Align with message text: [HH:MM:SS] (11) + {:<15} (16) + {:>5} (6) + {:<25} (26) = 59
+    let pad = " ".repeat(59);
 
     match text {
         Some(text) if !text.is_empty() => {
