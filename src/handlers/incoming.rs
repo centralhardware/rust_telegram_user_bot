@@ -5,12 +5,18 @@ use log::info;
 use crate::db::IncomingMessage;
 
 pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
+    let media_desc = crate::utils::media_description::describe(message);
+
     {
         let chat_name = message.peer()
             .map(|p| p.name().unwrap_or_default().to_string())
             .unwrap_or_default();
         let text = message.text();
-        let preview = text;
+        let preview = if text.is_empty() {
+            media_desc.as_deref().unwrap_or("")
+        } else {
+            text
+        };
         let reply_part = message.reply_to_message_id()
             .map(|id| format!(" reply to {id}"))
             .unwrap_or_default();
