@@ -5,24 +5,20 @@ use log::info;
 use crate::db::OutgoingMessage;
 
 pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
-    let peer = match message.peer() {
-        Some(p) => p,
-        None => return Ok(()),
-    };
-
-    let (title, usernames) = match &peer {
-        Peer::User(user) => (
+    let (title, usernames) = match message.peer() {
+        Some(Peer::User(user)) => (
             user.username().unwrap_or_default().to_string(),
             user.username().map(|u| vec![u.to_string()]).unwrap_or_default(),
         ),
-        Peer::Group(group) => (
+        Some(Peer::Group(group)) => (
             group.title().unwrap_or_default().to_string(),
             group.usernames().into_iter().map(|s| s.to_string()).collect(),
         ),
-        Peer::Channel(channel) => (
+        Some(Peer::Channel(channel)) => (
             channel.title().to_string(),
             channel.usernames().into_iter().map(|s| s.to_string()).collect(),
         ),
+        None => (String::new(), Vec::new()),
     };
 
     let title = if title.is_empty() {

@@ -34,18 +34,8 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
         );
     }
 
-    let peer = match message.peer() {
-        Some(p) => p,
-        None => return Ok(()),
-    };
-
-    let sender = match message.sender() {
-        Some(s) => s,
-        None => return Ok(()),
-    };
-
-    let (username, first_name, second_name, user_id) = match &sender {
-        Peer::User(user) => (
+    let (username, first_name, second_name, user_id) = match message.sender() {
+        Some(Peer::User(user)) => (
             vec![user.username().unwrap_or_default().to_string()],
             user.first_name().unwrap_or_default().to_string(),
             user.last_name().unwrap_or_default().to_string(),
@@ -54,12 +44,12 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
         _ => (Vec::new(), String::new(), String::new(), 0),
     };
 
-    let (chat_title, chat_usernames) = match peer {
-        Peer::Group(group) => (
+    let (chat_title, chat_usernames) = match message.peer() {
+        Some(Peer::Group(group)) => (
             group.title().unwrap_or_default().to_string(),
             group.usernames().into_iter().map(|s| s.to_string()).collect(),
         ),
-        Peer::Channel(channel) => (
+        Some(Peer::Channel(channel)) => (
             channel.title().to_string(),
             channel.usernames().into_iter().map(|s| s.to_string()).collect(),
         ),
