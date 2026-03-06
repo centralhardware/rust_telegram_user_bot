@@ -71,12 +71,13 @@ pub async fn save_edited(
         .unwrap_or_default();
 
     let chat_name_short: String = chat_name.chars().take(25).collect();
+    let colored = colored_inline_diff(&original, &message_content);
     info!(
-        "\x1b[93m{:<15} {:>5} {:<25}\n{}\x1b[0m",
+        "\x1b[93m{:<15} {:>5} {:<25}\x1b[0m\n{}",
         "edited",
         message.id(),
         chat_name_short,
-        diff,
+        colored,
     );
 
     let now = std::time::SystemTime::now()
@@ -102,4 +103,89 @@ fn unified_diff(original: &str, modified: &str) -> String {
         .unified_diff()
         .missing_newline_hint(false)
         .to_string()
+}
+
+fn colored_inline_diff(original: &str, modified: &str) -> String {
+    use similar::{ChangeTag, TextDiff};
+
+    let line_diff = TextDiff::from_lines(original, modified);
+    let changes: Vec<_> = line_diff.iter_all_changes().collect();
+    let mut result = String::new();
+
+    let mut i = 0;
+    while i < changes.len() {
+        match changes[i].tag() {
+            ChangeTag::Equal => {
+                i += 1;
+            }
+            ChangeTag::Delete => {
+                let del_start = i;
+                while i < changes.len() && changes[i].tag() == ChangeTag::Delete {
+                    i += 1;
+                }
+                let ins_start = i;
+                while i < changes.len() && changes[i].tag() == ChangeTag::Insert {
+                    i += 1;
+                }
+                let del_lines = &changes[del_start..ins_start];
+                let ins_lines = &changes[ins_start..i];
+                let pair_count = del_lines.len().min(ins_lines.len());
+
+                for j in 0..pair_count {
+                    let old_val = del_lines[j].value().trim_end_matches('\n');
+                    let new_val = ins_lines[j].value().trim_end_matches('\n');
+                    let char_diff = TextDiff::from_chars(old_val, new_val);
+
+                    let mut old_buf = String::from("\x1b[31m- ");
+                    let mut new_buf = String::from("\x1b[32m+ ");
+
+                    for c in char_diff.iter_all_changes() {
+                        match c.tag() {
+                            ChangeTag::Equal => {
+                                old_buf += c.value();
+                                new_buf += c.value();
+                            }
+                            ChangeTag::Delete => {
+                                old_buf += "\x1b[7m";
+                                old_buf += c.value();
+                                old_buf += "\x1b[27m";
+                            }
+                            ChangeTag::Insert => {
+                                new_buf += "\x1b[7m";
+                                new_buf += c.value();
+                                new_buf += "\x1b[27m";
+                            }
+                        }
+                    }
+
+                    old_buf += "\x1b[0m\n";
+                    new_buf += "\x1b[0m\n";
+                    result += &old_buf;
+                    result += &new_buf;
+                }
+
+                for j in pair_count..del_lines.len() {
+                    result += &format!(
+                        "\x1b[31m- \x1b[7m{}\x1b[0m\n",
+                        del_lines[j].value().trim_end_matches('\n')
+                    );
+                }
+                for j in pair_count..ins_lines.len() {
+                    result += &format!(
+                        "\x1b[32m+ \x1b[7m{}\x1b[0m\n",
+                        ins_lines[j].value().trim_end_matches('\n')
+                    );
+                }
+            }
+            ChangeTag::Insert => {
+                result += &format!(
+                    "\x1b[32m+ \x1b[7m{}\x1b[0m\n",
+                    changes[i].value().trim_end_matches('\n')
+                );
+                i += 1;
+            }
+        }
+    }
+
+    result.trim_end().to_string()
 }
