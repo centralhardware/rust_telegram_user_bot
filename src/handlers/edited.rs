@@ -136,8 +136,8 @@ fn colored_inline_diff(original: &str, modified: &str) -> String {
                     let new_val = ins_lines[j].value().trim_end_matches('\n');
                     let char_diff = TextDiff::from_chars(old_val, new_val);
 
-                    let mut old_buf = String::from("\x1b[31m- ");
-                    let mut new_buf = String::from("\x1b[32m+ ");
+                    let mut old_buf = String::from("- ");
+                    let mut new_buf = String::from("+ ");
 
                     for c in char_diff.iter_all_changes() {
                         match c.tag() {
@@ -146,40 +146,40 @@ fn colored_inline_diff(original: &str, modified: &str) -> String {
                                 new_buf += c.value();
                             }
                             ChangeTag::Delete => {
-                                old_buf += "\x1b[7m";
+                                old_buf += "\x1b[31m";
                                 old_buf += c.value();
-                                old_buf += "\x1b[27m";
+                                old_buf += "\x1b[0m";
                             }
                             ChangeTag::Insert => {
-                                new_buf += "\x1b[7m";
+                                new_buf += "\x1b[32m";
                                 new_buf += c.value();
-                                new_buf += "\x1b[27m";
+                                new_buf += "\x1b[0m";
                             }
                         }
                     }
 
-                    old_buf += "\x1b[0m\n";
-                    new_buf += "\x1b[0m\n";
+                    old_buf += "\n";
+                    new_buf += "\n";
                     result += &old_buf;
                     result += &new_buf;
                 }
 
                 for j in pair_count..del_lines.len() {
                     result += &format!(
-                        "\x1b[31m- \x1b[7m{}\x1b[0m\n",
+                        "- \x1b[31m{}\x1b[0m\n",
                         del_lines[j].value().trim_end_matches('\n')
                     );
                 }
                 for j in pair_count..ins_lines.len() {
                     result += &format!(
-                        "\x1b[32m+ \x1b[7m{}\x1b[0m\n",
+                        "+ \x1b[32m{}\x1b[0m\n",
                         ins_lines[j].value().trim_end_matches('\n')
                     );
                 }
             }
             ChangeTag::Insert => {
                 result += &format!(
-                    "\x1b[32m+ \x1b[7m{}\x1b[0m\n",
+                    "+ \x1b[32m{}\x1b[0m\n",
                     changes[i].value().trim_end_matches('\n')
                 );
                 i += 1;
