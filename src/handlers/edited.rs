@@ -71,7 +71,7 @@ pub async fn save_edited(
         .unwrap_or_default();
 
     let chat_name_short: String = chat_name.chars().take(25).collect();
-    let colored = colored_inline_diff(&original, &message_content);
+    let colored = colorize_unified_diff(&diff, &original, &message_content);
     info!(
         "\x1b[93m{:<15} {:>5} {:<25}\x1b[0m\n{}",
         "edited",
@@ -105,40 +105,43 @@ fn unified_diff(original: &str, modified: &str) -> String {
         .to_string()
 }
 
-fn colored_inline_diff(original: &str, modified: &str) -> String {
+fn colorize_unified_diff(diff: &str, original: &str, modified: &str) -> String {
     use similar::{ChangeTag, TextDiff};
 
+    let lines: Vec<&str> = diff.lines().collect();
+    let mut result = String::new();
+
+    // Collect paired old/new lines from original and modified for char-level diff
+    let orig_lines: Vec<&str> = original.lines().collect();
+    let mod_lines: Vec<&str> = modified.lines().collect();
     let line_diff = TextDiff::from_lines(original, modified);
     let changes: Vec<_> = line_diff.iter_all_changes().collect();
-    let mut result = String::new();
+
+    // Build a map: for paired del/ins lines, store char-level colored versions
+    let mut colored_del: Vec<String> = Vec::new();
+    let mut colored_ins: Vec<String> = Vec::new();
 
     let mut i = 0;
     while i < changes.len() {
         match changes[i].tag() {
-            ChangeTag::Equal => {
-                i += 1;
-            }
+            ChangeTag::Equal => { i += 1; }
             ChangeTag::Delete => {
                 let del_start = i;
-                while i < changes.len() && changes[i].tag() == ChangeTag::Delete {
-                    i += 1;
-                }
+                while i < changes.len() && changes[i].tag() == ChangeTag::Delete { i += 1; }
                 let ins_start = i;
-                while i < changes.len() && changes[i].tag() == ChangeTag::Insert {
-                    i += 1;
-                }
-                let del_lines = &changes[del_start..ins_start];
-                let ins_lines = &changes[ins_start..i];
-                let pair_count = del_lines.len().min(ins_lines.len());
+                while i < changes.len() && changes[i].tag() == ChangeTag::Insert { i += 1; }
+
+                let dels = &changes[del_start..ins_start];
+                let inss = &changes[ins_start..i];
+                let pair_count = dels.len().min(inss.len());
 
                 for j in 0..pair_count {
-                    let old_val = del_lines[j].value().trim_end_matches('\n');
-                    let new_val = ins_lines[j].value().trim_end_matches('\n');
+                    let old_val = dels[j].value().trim_end_matches('\n');
+                    let new_val = inss[j].value().trim_end_matches('\n');
                     let char_diff = TextDiff::from_chars(old_val, new_val);
 
-                    let mut old_buf = String::from("- ");
-                    let mut new_buf = String::from("+ ");
-
+                    let mut old_buf = String::new();
+                    let mut new_buf = String::new();
                     for c in char_diff.iter_all_changes() {
                         match c.tag() {
                             ChangeTag::Equal => {
@@ -157,34 +160,54 @@ fn colored_inline_diff(original: &str, modified: &str) -> String {
                             }
                         }
                     }
-
-                    old_buf += "\n";
-                    new_buf += "\n";
-                    result += &old_buf;
-                    result += &new_buf;
+                    colored_del.push(format!("-{old_buf}"));
+                    colored_ins.push(format!("+{new_buf}"));
                 }
-
-                for j in pair_count..del_lines.len() {
-                    result += &format!(
-                        "- \x1b[31m{}\x1b[0m\n",
-                        del_lines[j].value().trim_end_matches('\n')
-                    );
+                for j in pair_count..dels.len() {
+                    colored_del.push(format!(
+                        "-\x1b[31m{}\x1b[0m",
+                        dels[j].value().trim_end_matches('\n')
+                    ));
                 }
-                for j in pair_count..ins_lines.len() {
-                    result += &format!(
-                        "+ \x1b[32m{}\x1b[0m\n",
-                        ins_lines[j].value().trim_end_matches('\n')
-                    );
+                for j in pair_count..inss.len() {
+                    colored_ins.push(format!(
+                        "+\x1b[32m{}\x1b[0m",
+                        inss[j].value().trim_end_matches('\n')
+                    ));
                 }
             }
             ChangeTag::Insert => {
-                result += &format!(
-                    "+ \x1b[32m{}\x1b[0m\n",
+                colored_ins.push(format!(
+                    "+\x1b[32m{}\x1b[0m",
                     changes[i].value().trim_end_matches('\n')
-                );
+                ));
                 i += 1;
             }
         }
+    }
+
+    // Now walk the unified diff lines and replace -/+ lines with colored versions
+    let mut del_idx = 0;
+    let mut ins_idx = 0;
+    for line in &lines {
+        if line.starts_with('-') && !line.starts_with("---") {
+            if del_idx < colored_del.len() {
+                result += &colored_del[del_idx];
+                del_idx += 1;
+            } else {
+                result += line;
+            }
+        } else if line.starts_with('+') && !line.starts_with("+++") {
+            if ins_idx < colored_ins.len() {
+                result += &colored_ins[ins_idx];
+                ins_idx += 1;
+            } else {
+                result += line;
+            }
+        } else {
+            result += line;
+        }
+        result += "\n";
     }
 
     result.trim_end().to_string()
