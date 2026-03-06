@@ -37,10 +37,11 @@ fn format_log_output(action: &tl::enums::ChannelAdminLogEventAction, user_title:
             if prev == new {
                 return String::new();
             }
-            similar::TextDiff::from_lines(&prev, &new)
+            let diff = similar::TextDiff::from_lines(&prev, &new)
                 .unified_diff()
                 .missing_newline_hint(false)
-                .to_string()
+                .to_string();
+            crate::utils::diff::colorize_unified_diff(&diff, &prev, &new)
         }
         tl::enums::ChannelAdminLogEventAction::DeleteMessage(a) => {
             message_text(&a.message)
