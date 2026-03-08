@@ -35,7 +35,7 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
     let admins: Vec<String> = Vec::new();
 
     {
-        let preview: String = text.chars().take(80).collect();
+        let preview = &text;
         let title_short: String = title.chars().take(25).collect();
         let reply_line = crate::utils::reply_preview::format_reply_line(message).await;
         if !reply_line.is_empty() {
