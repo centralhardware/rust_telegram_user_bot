@@ -34,8 +34,17 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
 
     let admins: Vec<String> = Vec::new();
 
+    let media_desc = crate::utils::media_description::describe(message);
+
     {
-        let preview = &text;
+        let preview = if !text.is_empty() {
+            match &media_desc {
+                Some(desc) => format!("{} {}", desc, text),
+                None => text.clone(),
+            }
+        } else {
+            media_desc.clone().unwrap_or_default()
+        };
         let title_short: String = title.chars().take(25).collect();
         let reply_line = crate::utils::reply_preview::format_reply_line(message).await;
         if !reply_line.is_empty() {
@@ -43,7 +52,7 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
         }
         info!(
             "\x1b[95m{:<15} {:>5} {:<25} {}\x1b[0m",
-            "outgoing", message.id(), title_short, preview
+            "outgoing", message.id(), title_short, &preview
         );
     }
 

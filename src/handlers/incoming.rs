@@ -18,11 +18,14 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
             None
         };
         let preview = if !text.is_empty() {
-            text
+            match &media_desc {
+                Some(desc) => format!("{} {}", desc, text),
+                None => text.to_string(),
+            }
         } else if let Some(ref desc) = action_desc {
-            desc.as_str()
+            desc.clone()
         } else {
-            media_desc.as_deref().unwrap_or("")
+            media_desc.clone().unwrap_or_default()
         };
         let reply_line = crate::utils::reply_preview::format_reply_line(message).await;
         if !reply_line.is_empty() {
@@ -30,7 +33,7 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
         }
         info!(
             "\x1b[92m{:<15} {:>5} {:<25} {}\x1b[0m",
-            "incoming", message.id(), chat_name, preview
+            "incoming", message.id(), chat_name, &preview
         );
     }
 
