@@ -221,6 +221,20 @@ pub fn format(action: &MessageAction) -> String {
         MessageAction::ChangeCreator(a) => {
             format!("[ownership transferred to {}]", a.new_creator_id)
         }
+        MessageAction::NoForwardsToggle(a) => {
+            if a.new_value {
+                "[forwarding disabled]".into()
+            } else {
+                "[forwarding enabled]".into()
+            }
+        }
+        MessageAction::NoForwardsRequest(a) => {
+            if a.new_value {
+                "[forwarding restriction requested]".into()
+            } else {
+                "[forwarding restriction removed]".into()
+            }
+        }
     }
 }
 
