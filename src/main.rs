@@ -33,6 +33,7 @@ async fn main() -> Result<()> {
     log::info!("Listening for messages...");
 
     let client_id = client.get_me().await?.id().bare_id().unwrap() as u64;
+    db::load_account_name(client_id).await;
     schedulers::start(client.clone(), client_id);
 
     loop {

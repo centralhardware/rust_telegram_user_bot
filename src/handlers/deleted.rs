@@ -45,12 +45,22 @@ pub async fn save_deleted(
             .await
             .unwrap_or_else(|_| msg_id.to_string());
 
+        let sender_name: String = ch
+            .query("SELECT first_name FROM chats_log WHERE chat_id = ? AND message_id = ? ORDER BY date_time DESC LIMIT 1")
+            .bind(channel_id)
+            .bind(msg_id as i64)
+            .fetch_one::<String>()
+            .await
+            .unwrap_or_default();
+        let sender_short: String = sender_name.chars().take(10).collect();
+
         let title_short: String = chat_title.chars().take(25).collect();
         info!(
-            "\x1b[91m{:<15} {:>5} {:<25} {}\x1b[0m",
+            "\x1b[91m{:<8} {:>6} {:<25} {:<10} {}\x1b[0m",
             "deleted",
             msg_id,
             title_short,
+            sender_short,
             message,
         );
 

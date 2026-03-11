@@ -70,13 +70,20 @@ pub async fn save_edited(
         .map(|p| p.name().unwrap_or_default().to_string())
         .unwrap_or_default();
 
+    let sender_name = message
+        .sender()
+        .and_then(|p| p.name().map(|s| s.to_string()))
+        .unwrap_or_default();
+    let sender_short: String = sender_name.chars().take(10).collect();
+
     let chat_name_short: String = chat_name.chars().take(25).collect();
     let colored = crate::utils::diff::colorize_unified_diff(&diff, &original, &message_content);
     info!(
-        "\x1b[93m{:<15} {:>5} {:<25}\x1b[0m\n{}",
+        "\x1b[93m{:<8} {:>6} {:<25} {:<10}\x1b[0m\n{}",
         "edited",
         message.id(),
         chat_name_short,
+        sender_short,
         colored,
     );
 
