@@ -70,7 +70,7 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
             info!("{}", reply_line);
         }
         info!(
-            "\x1b[92m{:<8} {:>6} {:<25} \x1b[90m│\x1b[92m {:<10} \x1b[90m│\x1b[92m {}\x1b[0m",
+            "\x1b[92m{:<8} {:>8} {:<25} \x1b[90m│\x1b[92m {:<10} \x1b[90m│\x1b[92m {}\x1b[0m",
             "incoming", message.id(), chat_name_short, sender_short, &preview
         );
     }

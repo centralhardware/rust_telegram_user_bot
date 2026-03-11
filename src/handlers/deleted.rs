@@ -56,7 +56,7 @@ pub async fn save_deleted(
 
         let title_short: String = chat_title.chars().take(25).collect();
         info!(
-            "\x1b[91m{:<8} {:>6} {:<25} \x1b[90m│\x1b[91m {:<10} \x1b[90m│\x1b[91m {}\x1b[0m",
+            "\x1b[91m{:<8} {:>8} {:<25} \x1b[90m│\x1b[91m {:<10} \x1b[90m│\x1b[91m {}\x1b[0m",
             "deleted",
             msg_id,
             title_short,

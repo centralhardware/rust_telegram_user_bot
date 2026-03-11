@@ -79,7 +79,7 @@ pub async fn save_edited(
     let chat_name_short: String = chat_name.chars().take(25).collect();
     let colored = crate::utils::diff::colorize_unified_diff(&diff, &original, &message_content);
     info!(
-        "\x1b[93m{:<8} {:>6} {:<25} \x1b[90m│\x1b[93m {:<10}\x1b[0m\n{}",
+        "\x1b[93m{:<8} {:>8} {:<25} \x1b[90m│\x1b[93m {:<10}\x1b[0m\n{}",
         "edited",
         message.id(),
         chat_name_short,
