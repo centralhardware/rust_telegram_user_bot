@@ -46,14 +46,13 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
             media_desc.clone().unwrap_or_default()
         };
         let title_short: String = title.chars().take(25).collect();
-        let sender_short: String = crate::db::account_name().chars().take(10).collect::<String>();
         let reply_line = crate::utils::reply_preview::format_reply_line(message).await;
         if !reply_line.is_empty() {
             info!("{}", reply_line);
         }
         info!(
-            "\x1b[95m{:<8} {:>8} {:<25} \x1b[90m│\x1b[95m {:<10} \x1b[90m│\x1b[95m {}\x1b[0m",
-            "outgoing", message.id(), title_short, sender_short, &preview
+            "\x1b[95m{:<8} {:>8} {:<25} \x1b[90m│\x1b[95m {}\x1b[0m",
+            "outgoing", message.id(), title_short, &preview
         );
     }
 

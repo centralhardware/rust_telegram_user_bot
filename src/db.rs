@@ -1,23 +1,7 @@
 use clickhouse::{Client, Row};
 use serde::Serialize;
-use std::sync::{LazyLock, OnceLock};
+use std::sync::LazyLock;
 use tokio::sync::Mutex;
-
-static ACCOUNT_NAME: OnceLock<String> = OnceLock::new();
-
-pub async fn load_account_name(client_id: u64) {
-    let name = clickhouse()
-        .query("SELECT first_name FROM chats_log WHERE user_id = ? ORDER BY date_time DESC LIMIT 1")
-        .bind(client_id)
-        .fetch_one::<String>()
-        .await
-        .unwrap_or_else(|_| client_id.to_string());
-    let _ = ACCOUNT_NAME.set(if name.is_empty() { client_id.to_string() } else { name });
-}
-
-pub fn account_name() -> &'static str {
-    ACCOUNT_NAME.get().map(|s| s.as_str()).unwrap_or("?")
-}
 
 static CLICKHOUSE: LazyLock<Client> = LazyLock::new(|| {
     Client::default()
