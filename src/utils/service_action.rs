@@ -1,5 +1,7 @@
 use grammers_tl_types::enums::MessageAction;
 
+use super::media_description::format_duration_secs;
+
 pub fn format(action: &MessageAction) -> String {
     match action {
         MessageAction::Empty => "[service message]".into(),
@@ -39,7 +41,7 @@ pub fn format(action: &MessageAction) -> String {
         MessageAction::PhoneCall(a) => {
             let kind = if a.video { "video call" } else { "call" };
             match a.duration {
-                Some(d) => format!("[{kind}, {d} sec]"),
+                Some(d) => format!("[{kind}, {}]", format_duration_secs(d)),
                 None => format!("[{kind}, no answer]"),
             }
         }
@@ -56,7 +58,7 @@ pub fn format(action: &MessageAction) -> String {
             format!("[proximity alert: {} m]", a.distance)
         }
         MessageAction::GroupCall(a) => match a.duration {
-            Some(d) => format!("[group call, {d} sec]"),
+            Some(d) => format!("[group call, {}]", format_duration_secs(d)),
             None => "[group call started]".into(),
         },
         MessageAction::InviteToGroupCall(a) => {
@@ -172,7 +174,7 @@ pub fn format(action: &MessageAction) -> String {
                 ""
             };
             match a.duration {
-                Some(d) => format!("[{kind}{status}, {d} sec]"),
+                Some(d) => format!("[{kind}{status}, {}]", format_duration_secs(d)),
                 None => format!("[{kind}{status}]"),
             }
         }

@@ -193,10 +193,15 @@ fn describe_document(media: &tl::types::MessageMediaDocument) -> String {
     }
 }
 
-fn format_duration_secs(seconds: i32) -> String {
-    let mins = seconds / 60;
+pub fn format_duration_secs(seconds: i32) -> String {
+    let hours = seconds / 3600;
+    let mins = (seconds % 3600) / 60;
     let secs = seconds % 60;
-    format!("{mins}:{secs:02}")
+    if hours > 0 {
+        format!("{hours}:{mins:02}:{secs:02}")
+    } else {
+        format!("{mins}:{secs:02}")
+    }
 }
 
 fn format_duration_f64(seconds: f64) -> String {

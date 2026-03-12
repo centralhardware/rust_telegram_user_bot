@@ -11,12 +11,13 @@ pub async fn format_reply_line(message: &Message) -> String {
     let chat_id = message.peer_id().bare_id_unchecked();
     let (text, sender) = lookup_message_text(chat_id, reply_id).await;
 
-    // Align with message text: {:<8}(9) + {:>8}(9) + {:<25}(26) + │(2) + {:<10}(11) + │(2) = 59
-    // Logger already adds [HH:MM:SS] prefix since this is a separate info!() call
-    let pad = " ".repeat(59);
+    // Align sender column with main message: {:<8}(9) + {:>8}(9) + {:<25}(26) = 44 before first │
+    // Text column starts at 44 + │(2) + {:<10}(11) + │(2) = 59
+    let pad_before_pipe = " ".repeat(44);
+    let pad_text = " ".repeat(59);
 
-    let sender_prefix = match &sender {
-        Some(name) if !name.is_empty() => format!("{name}: "),
+    let sender_short: String = match &sender {
+        Some(name) if !name.is_empty() => name.chars().take(10).collect(),
         _ => String::new(),
     };
 
@@ -24,14 +25,14 @@ pub async fn format_reply_line(message: &Message) -> String {
         Some(text) if !text.is_empty() => {
             let formatted = text.lines().enumerate().map(|(i, line)| {
                 if i == 0 {
-                    format!("{pad}\x1b[90m> {sender_prefix}{line}")
+                    format!("{pad_before_pipe}\x1b[90m│ {:<10} │ > {line}", sender_short)
                 } else {
-                    format!("{pad}\x1b[90m  {line}")
+                    format!("{pad_text}\x1b[90m    {line}")
                 }
             }).collect::<Vec<_>>().join("\n");
             format!("{formatted}\x1b[0m")
         }
-        _ => format!("{pad}\x1b[90m> {sender_prefix}[{reply_id}]\x1b[0m"),
+        _ => format!("{pad_before_pipe}\x1b[90m│ {:<10} │ > [{reply_id}]\x1b[0m", sender_short),
     }
 }
 
