@@ -51,8 +51,8 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
             info!("{}", reply_line);
         }
         info!(
-            "\x1b[95m{:<8} {:>8} {:<25} \x1b[90m│\x1b[95m {}\x1b[0m",
-            "outgoing", message.id(), title_short, &preview
+            "\x1b[95m{:<8} {:>8} {:<25} \x1b[90m│\x1b[95m {:<10} \x1b[90m│\x1b[95m {}\x1b[0m",
+            "outgoing", message.id(), title_short, "", &preview
         );
     }
 
