@@ -35,6 +35,11 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
     let admins: Vec<String> = Vec::new();
 
     let media_desc = crate::utils::media_description::describe(message);
+    let action_desc = if text.is_empty() {
+        message.action().map(|a| crate::utils::service_action::format(a))
+    } else {
+        None
+    };
 
     {
         let preview = if !text.is_empty() {
@@ -42,6 +47,8 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
                 Some(desc) => format!("{} {}", desc, text),
                 None => text.clone(),
             }
+        } else if let Some(ref desc) = action_desc {
+            desc.clone()
         } else {
             media_desc.clone().unwrap_or_default()
         };
@@ -56,10 +63,16 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
         );
     }
 
+    let msg_content = if text.is_empty() {
+        action_desc.unwrap_or_default()
+    } else {
+        text
+    };
+
     let mut insert = crate::db::clickhouse().insert::<OutgoingMessage>("telegram_messages_new").await?;
     insert.write(&OutgoingMessage {
         date_time: message.date().timestamp() as u32,
-        message: text,
+        message: msg_content,
         title,
         id: chat_id,
         admins2: admins,

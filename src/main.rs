@@ -49,7 +49,9 @@ async fn main() -> Result<()> {
                         if let Err(e) = handlers::save_incoming(&message, client_id).await {
                             error!("Failed to save incoming message: {:?}", e);
                         }
-                        handlers::handle_auto_cat(&message).await?;
+                        if let Err(e) = handlers::handle_auto_cat(&message).await {
+                            error!("Failed to handle auto cat: {:?}", e);
+                        }
                     }
                     Update::MessageEdited(message) => {
                         if let Err(e) = handlers::save_edited(&message, client_id).await {
