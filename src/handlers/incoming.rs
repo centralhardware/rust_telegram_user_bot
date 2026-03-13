@@ -39,10 +39,17 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
 
     let chat_id = message.peer_id().bare_id_unchecked();
 
+    let sender_display = if second_name.is_empty() {
+        first_name.clone()
+    } else {
+        format!("{} {}", first_name, second_name)
+    };
+
     {
         let text = message.text();
+        let sender_bare_id = user_id as i64;
         let action_desc = if text.is_empty() {
-            message.action().map(|a| crate::utils::service_action::format(a))
+            message.action().map(|a| crate::utils::service_action::format(a, Some(sender_bare_id), Some(&sender_display)))
         } else {
             None
         };
@@ -55,12 +62,6 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
             desc.clone()
         } else {
             media_desc.clone().unwrap_or_default()
-        };
-
-        let sender_display = if second_name.is_empty() {
-            first_name.clone()
-        } else {
-            format!("{} {}", first_name, second_name)
         };
         let sender_short: String = sender_display.chars().take(10).collect();
         let chat_name_short: String = chat_name.chars().take(25).collect();
@@ -76,9 +77,10 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
     }
 
     let text = message.text();
+    let sender_bare_id = user_id as i64;
     let msg_content = if text.is_empty() {
         if let Some(action) = message.action() {
-            crate::utils::service_action::format(action)
+            crate::utils::service_action::format(action, Some(sender_bare_id), Some(&sender_display))
         } else {
             serde_json::to_string(&message.raw).unwrap_or_default()
         }

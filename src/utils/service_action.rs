@@ -2,7 +2,8 @@ use grammers_tl_types::enums::MessageAction;
 
 use super::media_description::format_duration_secs;
 
-pub fn format(action: &MessageAction) -> String {
+pub fn format(action: &MessageAction, sender_id: Option<i64>, sender_name: Option<&str>) -> String {
+    let name = sender_name.unwrap_or("?");
     match action {
         MessageAction::Empty => "[service message]".into(),
         MessageAction::ChatCreate(a) => {
@@ -13,13 +14,21 @@ pub fn format(action: &MessageAction) -> String {
         MessageAction::ChatEditPhoto(_) => "[chat photo updated]".into(),
         MessageAction::ChatDeletePhoto => "[chat photo removed]".into(),
         MessageAction::ChatAddUser(a) => {
-            format!("[users added: {}]", format_ids(&a.users))
+            if a.users.len() == 1 && sender_id == Some(a.users[0]) {
+                format!("{name} joined the group")
+            } else {
+                format!("[users added: {}]", format_ids(&a.users))
+            }
         }
-        MessageAction::ChatDeleteUser(a) => format!("[user removed: {}]", a.user_id),
-        MessageAction::ChatJoinedByLink(a) => {
-            format!("[joined via invite link from {}]", a.inviter_id)
+        MessageAction::ChatDeleteUser(a) => {
+            if sender_id == Some(a.user_id) {
+                format!("{name} left the group")
+            } else {
+                format!("[user removed: {}]", a.user_id)
+            }
         }
-        MessageAction::ChatJoinedByRequest => "[joined by request]".into(),
+        MessageAction::ChatJoinedByLink(_) => format!("{name} joined the group via invite link"),
+        MessageAction::ChatJoinedByRequest => format!("{name} joined the group by request"),
         MessageAction::ChannelCreate(a) => format!("[channel created: \"{}\"]", a.title),
         MessageAction::ChatMigrateTo(a) => {
             format!("[migrated to supergroup {}]", a.channel_id)
@@ -53,7 +62,7 @@ pub fn format(action: &MessageAction) -> String {
         },
         MessageAction::SecureValuesSentMe(_) => "[passport data received]".into(),
         MessageAction::SecureValuesSent(_) => "[passport data sent]".into(),
-        MessageAction::ContactSignUp => "[joined Telegram]".into(),
+        MessageAction::ContactSignUp => format!("{name} joined Telegram"),
         MessageAction::GeoProximityReached(a) => {
             format!("[proximity alert: {} m]", a.distance)
         }
