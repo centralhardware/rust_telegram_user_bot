@@ -2,7 +2,7 @@ use grammers_client::update::Message;
 use grammers_tl_types as tl;
 
 /// Extract text with markdown-like formatting markers applied from Telegram entities.
-/// **bold**, _italic_, `code`, ```lang\n...\n```, ~~strike~~, __underline__, ||spoiler||, etc.
+/// `code`, ```lang\n...\n```, ~~strike~~, __underline__, ||spoiler||, etc.
 pub fn formatted_text(message: &Message) -> String {
     let text = message.text();
     if text.is_empty() {
@@ -17,24 +17,24 @@ pub fn formatted_text(message: &Message) -> String {
     apply_entities(text, entities)
 }
 
-fn entity_markers(entity: &tl::enums::MessageEntity) -> Option<(i32, i32, String, String)> {
+/// Returns (offset, length, open_marker, close_marker, nesting_priority).
+/// Lower priority = outer wrapper (opens first, closes last).
+fn entity_markers(entity: &tl::enums::MessageEntity) -> Option<(i32, i32, String, String, i32)> {
     match entity {
-        tl::enums::MessageEntity::Bold(e) => Some((e.offset, e.length, "**".into(), "**".into())),
-        tl::enums::MessageEntity::Italic(e) => Some((e.offset, e.length, "_".into(), "_".into())),
-        tl::enums::MessageEntity::Code(e) => Some((e.offset, e.length, "`".into(), "`".into())),
+        tl::enums::MessageEntity::Blockquote(e) => Some((e.offset, e.length, "> ".into(), String::new(), 0)),
+        tl::enums::MessageEntity::Spoiler(e) => Some((e.offset, e.length, "||".into(), "||".into(), 5)),
+        tl::enums::MessageEntity::Strike(e) => Some((e.offset, e.length, "~~".into(), "~~".into(), 10)),
+        tl::enums::MessageEntity::Underline(e) => Some((e.offset, e.length, "__".into(), "__".into(), 15)),
+        tl::enums::MessageEntity::TextUrl(e) => Some((e.offset, e.length, "[".into(), format!("]({})", e.url), 60)),
+        tl::enums::MessageEntity::Code(e) => Some((e.offset, e.length, "`".into(), "`".into(), 70)),
         tl::enums::MessageEntity::Pre(e) => {
             let open = if e.language.is_empty() {
                 "```\n".into()
             } else {
                 format!("```{}\n", e.language)
             };
-            Some((e.offset, e.length, open, "\n```".into()))
+            Some((e.offset, e.length, open, "\n```".into(), 80))
         }
-        tl::enums::MessageEntity::Strike(e) => Some((e.offset, e.length, "~~".into(), "~~".into())),
-        tl::enums::MessageEntity::Underline(e) => Some((e.offset, e.length, "__".into(), "__".into())),
-        tl::enums::MessageEntity::Spoiler(e) => Some((e.offset, e.length, "||".into(), "||".into())),
-        tl::enums::MessageEntity::Blockquote(e) => Some((e.offset, e.length, "> ".into(), String::new())),
-        tl::enums::MessageEntity::TextUrl(e) => Some((e.offset, e.length, "[".into(), format!("]({})", e.url))),
         _ => None,
     }
 }
@@ -44,21 +44,27 @@ fn apply_entities(text: &str, entities: &[tl::enums::MessageEntity]) -> String {
     let utf16: Vec<u16> = text.encode_utf16().collect();
 
     // Collect tags to insert, keyed by UTF-16 position
-    // (position, sort_key, tag):  sort_key=0 for close, 1 for open  →  closes before opens
-    let mut insertions: Vec<(usize, u8, String)> = Vec::new();
+    // (position, is_open, nesting_order, tag)
+    // Nesting order ensures proper markdown nesting:
+    //   opens:  outer entities first (longer span, then lower priority)
+    //   closes: inner entities first (shorter span, then higher priority)
+    let mut insertions: Vec<(usize, u8, i64, String)> = Vec::new();
 
     for entity in entities {
-        if let Some((offset, length, open, close)) = entity_markers(entity) {
+        if let Some((offset, length, open, close, priority)) = entity_markers(entity) {
             let start = offset as usize;
             let end = (offset + length) as usize;
-            insertions.push((start, 1, open));
+            let len = length as i64;
+            // opens: longer span first, then lower priority first → negate
+            insertions.push((start, 1, -(len * 100 - priority as i64), open));
             if !close.is_empty() {
-                insertions.push((end, 0, close));
+                // closes: shorter span first, then higher priority first
+                insertions.push((end, 0, len * 100 - priority as i64, close));
             }
         }
     }
 
-    insertions.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    insertions.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
 
     // Build result by iterating UTF-16 positions
     let mut result = String::new();
@@ -68,7 +74,7 @@ fn apply_entities(text: &str, entities: &[tl::enums::MessageEntity]) -> String {
     while pos <= utf16.len() {
         // Insert all markers at this position
         while ins_idx < insertions.len() && insertions[ins_idx].0 == pos {
-            result.push_str(&insertions[ins_idx].2);
+            result.push_str(&insertions[ins_idx].3);
             ins_idx += 1;
         }
 
