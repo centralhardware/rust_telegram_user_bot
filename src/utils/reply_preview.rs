@@ -1,4 +1,5 @@
 use grammers_client::update::Message;
+use grammers_tl_types as tl;
 
 /// Format reply line for log messages.
 /// Returns a line to print *above* the message, or empty string if no reply.
@@ -6,6 +7,12 @@ pub async fn format_reply_line(message: &Message) -> String {
     let reply_id = match message.reply_to_message_id() {
         Some(id) => id,
         None => return String::new(),
+    };
+
+    // Extract quote_text from reply header (the highlighted portion the user selected)
+    let quote_text = match message.reply_header() {
+        Some(tl::enums::MessageReplyHeader::Header(header)) => header.quote_text,
+        _ => None,
     };
 
     let chat_id = message.peer_id().bare_id_unchecked();
@@ -21,13 +28,23 @@ pub async fn format_reply_line(message: &Message) -> String {
         _ => String::new(),
     };
 
-    match text {
+    // If there's a quote_text, show it instead of the full message text, with highlight color
+    let display_text = if let Some(ref qt) = quote_text {
+        Some(qt.clone())
+    } else {
+        text
+    };
+
+    // Use cyan (\x1b[96m) for quote text, gray (\x1b[90m) for normal reply
+    let color = if quote_text.is_some() { "\x1b[96m" } else { "\x1b[90m" };
+
+    match display_text {
         Some(text) if !text.is_empty() => {
             let formatted = text.lines().enumerate().map(|(i, line)| {
                 if i == 0 {
-                    format!("{pad_before_pipe}\x1b[90m│ {:<10} │ > {line}", sender_short)
+                    format!("{pad_before_pipe}{color}│ {:<10} │ > {line}", sender_short)
                 } else {
-                    format!("{pad_text}\x1b[90m    {line}")
+                    format!("{pad_text}{color}    {line}")
                 }
             }).collect::<Vec<_>>().join("\n");
             format!("{formatted}\x1b[0m")
