@@ -9,7 +9,7 @@ pub async fn save_edited(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let chat_id = message.peer_id().bare_id_unchecked();
     let msg_id = message.id() as i64;
-    let message_content = message.text().to_string();
+    let message_content = crate::utils::format_entities::formatted_text(message);
 
     if message_content.is_empty() {
         return Ok(());

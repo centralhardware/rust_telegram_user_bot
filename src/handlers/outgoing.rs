@@ -28,7 +28,7 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
     };
 
     let chat_id = message.peer_id().bare_id_unchecked();
-    let text = message.text().to_string();
+    let text = crate::utils::format_entities::formatted_text(message);
     let raw = serde_json::to_string(&message.raw).unwrap_or_default();
     let reply_to = message.reply_to_message_id().unwrap_or(0) as u64;
 

@@ -46,7 +46,7 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
     };
 
     {
-        let text = message.text();
+        let text = crate::utils::format_entities::formatted_text(message);
         let sender_bare_id = user_id as i64;
         let action_desc = if text.is_empty() {
             message.action().map(|a| crate::utils::service_action::format(a, Some(sender_bare_id), Some(&sender_display)))
@@ -76,7 +76,7 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
         );
     }
 
-    let text = message.text();
+    let text = crate::utils::format_entities::formatted_text(message);
     let sender_bare_id = user_id as i64;
     let msg_content = if text.is_empty() {
         if let Some(action) = message.action() {
