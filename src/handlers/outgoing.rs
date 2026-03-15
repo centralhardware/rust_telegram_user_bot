@@ -6,10 +6,17 @@ use crate::db::OutgoingMessage;
 
 pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
     let (title, usernames) = match message.peer() {
-        Some(Peer::User(user)) => (
-            user.username().unwrap_or_default().to_string(),
-            user.username().map(|u| vec![u.to_string()]).unwrap_or_default(),
-        ),
+        Some(Peer::User(user)) => {
+            let name = match (user.first_name(), user.last_name()) {
+                (Some(first), Some(last)) if !last.is_empty() => format!("{} {}", first, last),
+                (Some(first), _) => first.to_string(),
+                _ => user.username().unwrap_or_default().to_string(),
+            };
+            (
+                name,
+                user.username().map(|u| vec![u.to_string()]).unwrap_or_default(),
+            )
+        },
         Some(Peer::Group(group)) => (
             group.title().unwrap_or_default().to_string(),
             group.usernames().into_iter().map(|s| s.to_string()).collect(),
@@ -22,7 +29,9 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
     };
 
     let title = if title.is_empty() {
-        message.peer_id().bare_id_unchecked().to_string()
+        message.peer()
+            .and_then(|p| p.name().map(|s| s.to_string()))
+            .unwrap_or_else(|| message.peer_id().bare_id_unchecked().to_string())
     } else {
         title
     };
