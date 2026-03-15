@@ -28,28 +28,36 @@ pub async fn format_reply_line(message: &Message) -> String {
         _ => String::new(),
     };
 
-    // If there's a quote_text, show it instead of the full message text, with highlight color
-    let display_text = if let Some(ref qt) = quote_text {
-        Some(qt.clone())
-    } else {
-        text
-    };
-
-    // Use cyan (\x1b[96m) for quote text, gray (\x1b[90m) for normal reply
-    let color = if quote_text.is_some() { "\x1b[96m" } else { "\x1b[90m" };
-
-    match display_text {
+    match text {
         Some(text) if !text.is_empty() => {
-            let formatted = text.lines().enumerate().map(|(i, line)| {
+            // If there's a quote, highlight that portion within the full text
+            let highlighted = if let Some(ref qt) = quote_text {
+                highlight_quote(&text, qt)
+            } else {
+                text
+            };
+            let formatted = highlighted.lines().enumerate().map(|(i, line)| {
                 if i == 0 {
-                    format!("{pad_before_pipe}{color}│ {:<10} │ > {line}", sender_short)
+                    format!("{pad_before_pipe}\x1b[90m│ {:<10} │ > {line}", sender_short)
                 } else {
-                    format!("{pad_text}{color}    {line}")
+                    format!("{pad_text}\x1b[90m    {line}")
                 }
             }).collect::<Vec<_>>().join("\n");
             format!("{formatted}\x1b[0m")
         }
         _ => format!("{pad_before_pipe}\x1b[90m│ {:<10} │ > [{reply_id}]\x1b[0m", sender_short),
+    }
+}
+
+/// Highlight the quote portion within the full text using cyan color
+fn highlight_quote(text: &str, quote: &str) -> String {
+    match text.find(quote) {
+        Some(pos) => {
+            let before = &text[..pos];
+            let after = &text[pos + quote.len()..];
+            format!("{before}\x1b[96m{quote}\x1b[90m{after}")
+        }
+        None => text.to_string(),
     }
 }
 
