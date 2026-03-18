@@ -28,12 +28,7 @@ fn entity_markers(entity: &tl::enums::MessageEntity) -> Option<(i32, i32, String
         tl::enums::MessageEntity::TextUrl(e) => Some((e.offset, e.length, "[".into(), format!("]({})", e.url), 60)),
         tl::enums::MessageEntity::Code(e) => Some((e.offset, e.length, "`".into(), "`".into(), 70)),
         tl::enums::MessageEntity::Pre(e) => {
-            let open = if e.language.is_empty() {
-                "```\n".into()
-            } else {
-                format!("```{}\n", e.language)
-            };
-            Some((e.offset, e.length, open, "\n```".into(), 80))
+            Some((e.offset, e.length, "```\n".into(), "\n```".into(), 80))
         }
         _ => None,
     }
