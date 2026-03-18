@@ -87,7 +87,11 @@ fn describe_media(media: &tl::enums::MessageMedia) -> String {
             if answers.is_empty() {
                 format!("[{}: {}]", kind, q.text)
             } else {
-                format!("[{}: {}] {}", kind, q.text, answers.join(" / "))
+                let opts = answers.iter()
+                    .map(|a| format!("* {}", a))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                format!("[{}: {}]\n{}", kind, q.text, opts)
             }
         }
         tl::enums::MessageMedia::Dice(d) => format!("[{} = {}]", d.emoticon, d.value),
