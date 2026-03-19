@@ -40,14 +40,15 @@ async fn main() -> Result<()> {
             update = updates.next() => {
                 let update = update?;
                 match update {
-                    Update::NewMessage(message) if message.outgoing() => {
-                        if let Err(e) = handlers::save_outgoing(&message, client_id).await {
-                            error!("Failed to save outgoing message: {:?}", e);
-                        }
-                    }
                     Update::NewMessage(message) => {
-                        if let Err(e) = handlers::save_incoming(&message, client_id).await {
-                            error!("Failed to save incoming message: {:?}", e);
+                        if message.outgoing() {
+                            if let Err(e) = handlers::save_outgoing(&message, client_id).await {
+                                error!("Failed to save outgoing message: {:?}", e);
+                            }
+                        } else {
+                            if let Err(e) = handlers::save_incoming(&message, client_id).await {
+                                error!("Failed to save incoming message: {:?}", e);
+                            }
                         }
                         if let Err(e) = handlers::handle_auto_cat(&message).await {
                             error!("Failed to handle auto cat: {:?}", e);
