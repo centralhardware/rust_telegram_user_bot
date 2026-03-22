@@ -664,7 +664,7 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 [[package]]
 name = "grammers-client"
 version = "0.9.0"
-source = "git+https://codeberg.org/Lonami/grammers.git#0ce118ad0f9090029304a4469e2c632dd1252d41"
+source = "git+https://codeberg.org/Lonami/grammers.git#1b5785710a82bfad3a3a8e6bc22ba12598d036cc"
 dependencies = [
  "chrono",
  "futures-util",
@@ -682,7 +682,7 @@ dependencies = [
 [[package]]
 name = "grammers-crypto"
 version = "0.9.0"
-source = "git+https://codeberg.org/Lonami/grammers.git#0ce118ad0f9090029304a4469e2c632dd1252d41"
+source = "git+https://codeberg.org/Lonami/grammers.git#1b5785710a82bfad3a3a8e6bc22ba12598d036cc"
 dependencies = [
  "aes",
  "ctr",
@@ -699,7 +699,7 @@ dependencies = [
 [[package]]
 name = "grammers-mtproto"
 version = "0.9.0"
-source = "git+https://codeberg.org/Lonami/grammers.git#0ce118ad0f9090029304a4469e2c632dd1252d41"
+source = "git+https://codeberg.org/Lonami/grammers.git#1b5785710a82bfad3a3a8e6bc22ba12598d036cc"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -715,7 +715,7 @@ dependencies = [
 [[package]]
 name = "grammers-mtsender"
 version = "0.9.0"
-source = "git+https://codeberg.org/Lonami/grammers.git#0ce118ad0f9090029304a4469e2c632dd1252d41"
+source = "git+https://codeberg.org/Lonami/grammers.git#1b5785710a82bfad3a3a8e6bc22ba12598d036cc"
 dependencies = [
  "bytes",
  "grammers-crypto",
@@ -731,7 +731,7 @@ dependencies = [
 [[package]]
 name = "grammers-session"
 version = "0.9.0"
-source = "git+https://codeberg.org/Lonami/grammers.git#0ce118ad0f9090029304a4469e2c632dd1252d41"
+source = "git+https://codeberg.org/Lonami/grammers.git#1b5785710a82bfad3a3a8e6bc22ba12598d036cc"
 dependencies = [
  "futures-core",
  "grammers-tl-types",
@@ -743,7 +743,7 @@ dependencies = [
 [[package]]
 name = "grammers-tl-gen"
 version = "0.9.0"
-source = "git+https://codeberg.org/Lonami/grammers.git#0ce118ad0f9090029304a4469e2c632dd1252d41"
+source = "git+https://codeberg.org/Lonami/grammers.git#1b5785710a82bfad3a3a8e6bc22ba12598d036cc"
 dependencies = [
  "grammers-tl-parser",
 ]
@@ -751,7 +751,7 @@ dependencies = [
 [[package]]
 name = "grammers-tl-parser"
 version = "1.2.1"
-source = "git+https://codeberg.org/Lonami/grammers.git#0ce118ad0f9090029304a4469e2c632dd1252d41"
+source = "git+https://codeberg.org/Lonami/grammers.git#1b5785710a82bfad3a3a8e6bc22ba12598d036cc"
 dependencies = [
  "crc32fast",
 ]
@@ -759,7 +759,7 @@ dependencies = [
 [[package]]
 name = "grammers-tl-types"
 version = "0.9.0"
-source = "git+https://codeberg.org/Lonami/grammers.git#0ce118ad0f9090029304a4469e2c632dd1252d41"
+source = "git+https://codeberg.org/Lonami/grammers.git#1b5785710a82bfad3a3a8e6bc22ba12598d036cc"
 dependencies = [
  "grammers-tl-gen",
  "grammers-tl-parser",
@@ -1059,9 +1059,9 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
 name = "itoa"
-version = "1.0.17"
+version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
+checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jiff"
@@ -1133,9 +1133,9 @@ dependencies = [
 
 [[package]]
 name = "libsql"
-version = "0.9.29"
+version = "0.9.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2329faffc510cc3c6b4f00169a39177cc7099d3ed7647fc92f7cf26e53a8d976"
+checksum = "30fe980ac5693ed1f3db490559fb578885e913a018df64af8a1a46e1959a78df"
 dependencies = [
  "async-trait",
  "bitflags",
@@ -1149,9 +1149,9 @@ dependencies = [
 
 [[package]]
 name = "libsql-ffi"
-version = "0.9.29"
+version = "0.9.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cd1c1662822495393327856774f6803be25d85bfdcd5b9d4af35458f5daaf75"
+checksum = "0be1da6f123ceb2cd23f469883415cab9ee963286a85d61e22afb8b12e15e681"
 dependencies = [
  "bindgen",
  "cc",
@@ -1161,9 +1161,9 @@ dependencies = [
 
 [[package]]
 name = "libsql-sys"
-version = "0.9.29"
+version = "0.9.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a3c326fcfc36fe7578238d5ee6b58c529f8c76372acd61ec50267529cdaff95"
+checksum = "90725458cc4461bc82f8f7983e80b002ea4f64b5184e1462f252d0dd74b122f5"
 dependencies = [
  "bytes",
  "libsql-ffi",
