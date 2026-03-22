@@ -203,6 +203,19 @@ fn describe_document(media: &tl::types::MessageMediaDocument) -> String {
     }
 }
 
+pub fn format_human_duration(seconds: i32) -> String {
+    let days = seconds / 86400;
+    let hours = (seconds % 86400) / 3600;
+    let mins = (seconds % 3600) / 60;
+    let secs = seconds % 60;
+    let mut parts = Vec::new();
+    if days > 0 { parts.push(format!("{days}d")); }
+    if hours > 0 { parts.push(format!("{hours}h")); }
+    if mins > 0 { parts.push(format!("{mins}m")); }
+    if secs > 0 || parts.is_empty() { parts.push(format!("{secs}s")); }
+    parts.join(" ")
+}
+
 pub fn format_duration_secs(seconds: i32) -> String {
     let hours = seconds / 3600;
     let mins = (seconds % 3600) / 60;

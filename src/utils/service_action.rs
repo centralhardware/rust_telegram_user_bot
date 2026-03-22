@@ -1,6 +1,6 @@
 use grammers_tl_types::enums::MessageAction;
 
-use super::media_description::format_duration_secs;
+use super::media_description::{format_duration_secs, format_human_duration};
 
 pub fn format(action: &MessageAction, sender_id: Option<i64>, sender_name: Option<&str>) -> String {
     let name = sender_name.unwrap_or("?");
@@ -77,11 +77,16 @@ pub fn format(action: &MessageAction, sender_id: Option<i64>, sender_name: Optio
             if a.period == 0 {
                 "[auto-delete disabled]".into()
             } else {
-                format!("[auto-delete: {} sec]", a.period)
+                format!("[auto-delete: {}]", format_human_duration(a.period))
             }
         }
         MessageAction::GroupCallScheduled(a) => {
-            format!("[group call scheduled at {}]", a.schedule_date)
+            {
+                let dt = chrono::DateTime::from_timestamp(a.schedule_date as i64, 0)
+                    .map(|d| d.format("%Y-%m-%d %H:%M UTC").to_string())
+                    .unwrap_or_else(|| a.schedule_date.to_string());
+                format!("[group call scheduled at {dt}]")
+            }
         }
         MessageAction::SetChatTheme(a) => format!("[chat theme changed: {:?}]", a.theme),
         MessageAction::WebViewDataSentMe(a) => {
