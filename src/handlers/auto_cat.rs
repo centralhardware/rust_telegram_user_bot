@@ -10,7 +10,7 @@ pub async fn handle_auto_cat(message: &Message) -> Result<()> {
         return Ok(());
     }
 
-    let reply: grammers_client::message::Message = message.reply("/start@y9catbot").await?;
+    let reply: grammers_client::message::Message = message.reply("/start@centralhardwarecatbot").await?;
     reply.delete().await?;
 
     Ok(())
