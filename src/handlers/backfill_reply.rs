@@ -1,7 +1,7 @@
 use grammers_client::peer::Peer;
 use grammers_client::update::Message;
 use grammers_client::Client;
-use log::{debug, warn};
+use log::{debug, info, warn};
 
 use crate::db::IncomingMessage;
 
@@ -98,7 +98,10 @@ pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) 
         })
         .await;
 
-    debug!("backfilled reply_to {} in chat {}", reply_id, chat_id);
+    info!(
+        "\x1b[93m{:<8} {:>8} backfilled reply_to message\x1b[0m",
+        "backfill", reply_id
+    );
 }
 
 async fn message_exists(chat_id: i64, message_id: i32) -> bool {
