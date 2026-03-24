@@ -1,4 +1,4 @@
-use grammers_client::update::Message;
+use grammers_client::message::Message;
 use grammers_tl_types as tl;
 
 /// Extract text with markdown-like formatting markers applied from Telegram entities.
