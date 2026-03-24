@@ -41,6 +41,7 @@ async fn main() -> Result<()> {
                 let update = update?;
                 match update {
                     Update::NewMessage(message) => {
+                        handlers::backfill_reply(&client, &message, client_id).await;
                         if message.outgoing() {
                             if let Err(e) = handlers::save_outgoing(&message, client_id).await {
                                 error!("Failed to save outgoing message: {:?}", e);
@@ -50,7 +51,6 @@ async fn main() -> Result<()> {
                                 error!("Failed to save incoming message: {:?}", e);
                             }
                         }
-                        handlers::backfill_reply(&client, &message, client_id).await;
                         if let Err(e) = handlers::handle_auto_cat(&message).await {
                             error!("Failed to handle auto cat: {:?}", e);
                         }
