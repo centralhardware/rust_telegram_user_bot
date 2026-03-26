@@ -1957,6 +1957,7 @@ dependencies = [
  "clickhouse",
  "dialoguer",
  "env_logger",
+ "futures-core",
  "grammers-client",
  "grammers-session",
  "grammers-tl-types",

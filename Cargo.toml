@@ -17,3 +17,4 @@ clickhouse = "0.14.2"
 serde = { version = "1.0.228", features = ["derive"] }
 similar = "2"
 dialoguer = "0.12"
+futures-core = "0.3"

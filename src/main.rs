@@ -1,3 +1,4 @@
+mod clickhouse_session;
 mod db;
 mod handlers;
 mod schedulers;

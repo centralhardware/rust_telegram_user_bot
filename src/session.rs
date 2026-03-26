@@ -1,11 +1,11 @@
 use grammers_client::client::{UpdateStream, UpdatesConfiguration};
 use grammers_client::{Client, SenderPool, SignInError};
-use grammers_session::storages::SqliteSession;
 use log::info;
 use std::env;
 use std::sync::Arc;
 
 use crate::Result;
+use crate::clickhouse_session::ClickhouseSession;
 
 pub async fn connect() -> Result<(Client, UpdateStream)> {
     let api_id = env::var("TG_ID")
@@ -13,7 +13,7 @@ pub async fn connect() -> Result<(Client, UpdateStream)> {
         .parse()
         .expect("TG_ID invalid");
 
-    let session = Arc::new(SqliteSession::open(&env::var("SESSION").expect("SESSION not set")).await?);
+    let session = Arc::new(ClickhouseSession::open(&env::var("SESSION").expect("SESSION not set")).await?);
 
     let SenderPool {
         runner,
