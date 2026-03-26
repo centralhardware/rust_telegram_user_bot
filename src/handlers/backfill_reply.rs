@@ -99,7 +99,7 @@ pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) 
         .await;
 
     info!(
-        "\x1b[93m{:<8} {:>8} backfilled reply_to message\x1b[0m",
+        "\x1b[96m{:<8} {:>8} backfilled reply_to message\x1b[0m",
         "backfill", reply_id
     );
 }
