@@ -43,7 +43,7 @@ pub async fn save_deleted(
             .bind(msg_id as i64)
             .fetch_one::<String>()
             .await
-            .unwrap_or_else(|_| msg_id.to_string());
+            .unwrap_or_default();
 
         let sender_name: String = ch
             .query("SELECT first_name FROM chats_log WHERE chat_id = ? AND message_id = ? ORDER BY date_time DESC LIMIT 1")
