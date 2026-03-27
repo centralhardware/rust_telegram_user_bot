@@ -31,7 +31,7 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
     let title = if title.is_empty() {
         message.peer()
             .and_then(|p| p.name().map(|s| s.to_string()))
-            .unwrap_or_else(|| message.peer_id().bare_id_unchecked().to_string())
+            .unwrap_or_default()
     } else {
         title
     };
