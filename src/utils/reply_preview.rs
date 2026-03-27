@@ -18,9 +18,10 @@ pub async fn format_reply_line(message: &Message) -> String {
     let chat_id = message.peer_id().bare_id_unchecked();
     let (text, sender) = lookup_message_text(chat_id, reply_id).await;
 
-    // Align sender column with main message: {:<8}(9) + {:>8}(9) + {:<25}(26) = 44 before first │
+    // Place reply_id in the same {:>8} column as the message id in incoming log lines.
+    // Layout: {:<8}(9) + {:>8}(9) + {:<25}(26) = 44 before first │
     // Text column starts at 44 + │(2) + {:<10}(11) + │(2) = 59
-    let pad_before_pipe = " ".repeat(44);
+    let id_col = format!("{:<8} {:>8} {:<25}", "", reply_id, "");
     let pad_text = " ".repeat(59);
 
     let sender_short: String = match &sender {
@@ -38,14 +39,14 @@ pub async fn format_reply_line(message: &Message) -> String {
             };
             let formatted = highlighted.lines().enumerate().map(|(i, line)| {
                 if i == 0 {
-                    format!("{pad_before_pipe}\x1b[90m│ {:<10} │ > {line}", sender_short)
+                    format!("{id_col}\x1b[90m│ {:<10} │ > {line}", sender_short)
                 } else {
                     format!("{pad_text}\x1b[90m    {line}")
                 }
             }).collect::<Vec<_>>().join("\n");
             format!("{formatted}\x1b[0m")
         }
-        _ => format!("{pad_before_pipe}\x1b[90m│ {:<10} │ > [{reply_id}]\x1b[0m", sender_short),
+        _ => format!("{id_col}\x1b[90m│ {:<10} │ > [{reply_id}]\x1b[0m", sender_short),
     }
 }
 
