@@ -2,6 +2,7 @@ mod auto_cat;
 mod backfill_reply;
 mod deleted;
 mod edited;
+mod extract;
 mod incoming;
 mod outgoing;
 

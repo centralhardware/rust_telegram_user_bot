@@ -1,53 +1,26 @@
-use grammers_client::peer::Peer;
 use grammers_client::update::Message;
 use log::info;
 
 use crate::db::IncomingMessage;
+use super::extract::{extract_sender, extract_chat};
 
 pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
     let media_desc = crate::utils::media_description::describe(message);
 
-    let (username, first_name, second_name, user_id) = match message.sender() {
-        Some(Peer::User(user)) => (
-            vec![user.username().unwrap_or_default().to_string()],
-            user.first_name().unwrap_or_default().to_string(),
-            user.last_name().unwrap_or_default().to_string(),
-            user.id().bare_id_unchecked() as u64,
-        ),
-        _ => (Vec::new(), String::new(), String::new(), 0),
-    };
-
-    let (chat_title, chat_usernames) = match message.peer() {
-        Some(Peer::Group(group)) => (
-            group.title().unwrap_or_default().to_string(),
-            group.usernames().into_iter().map(|s| s.to_string()).collect(),
-        ),
-        Some(Peer::Channel(channel)) => (
-            channel.title().to_string(),
-            channel.usernames().into_iter().map(|s| s.to_string()).collect(),
-        ),
-        _ => (String::new(), Vec::new()),
-    };
-
-    let chat_name = if chat_title.is_empty() {
-        message.peer()
-            .map(|p| p.name().unwrap_or_default().to_string())
-            .unwrap_or_default()
-    } else {
-        chat_title.clone()
-    };
+    let sender = extract_sender(message);
+    let chat = extract_chat(message);
 
     let chat_id = message.peer_id().bare_id_unchecked();
 
-    let sender_display = if second_name.is_empty() {
-        first_name.clone()
+    let sender_display = if sender.second_name.is_empty() {
+        sender.first_name.clone()
     } else {
-        format!("{} {}", first_name, second_name)
+        format!("{} {}", sender.first_name, sender.second_name)
     };
 
     {
         let text = crate::utils::format_entities::formatted_text(message);
-        let sender_bare_id = user_id as i64;
+        let sender_bare_id = sender.user_id as i64;
         let action_desc = if text.is_empty() {
             message.action().map(|a| crate::utils::service_action::format(a, Some(sender_bare_id), Some(&sender_display)))
         } else {
@@ -64,7 +37,7 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
             media_desc.clone().unwrap_or_default()
         };
         let sender_short: String = sender_display.chars().take(10).collect();
-        let chat_name_short: String = chat_name.chars().take(25).collect();
+        let chat_name_short: String = chat.chat_title.chars().take(25).collect();
 
         let reply_line = crate::utils::reply_preview::format_reply_line(message).await;
         if !reply_line.is_empty() {
@@ -77,7 +50,7 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
     }
 
     let text = crate::utils::format_entities::formatted_text(message);
-    let sender_bare_id = user_id as i64;
+    let sender_bare_id = sender.user_id as i64;
     let msg_content = if text.is_empty() {
         if let Some(action) = message.action() {
             crate::utils::service_action::format(action, Some(sender_bare_id), Some(&sender_display))
@@ -93,14 +66,14 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
     crate::db::INCOMING_BUF.push(IncomingMessage {
         date_time: message.date().timestamp() as u32,
         message: msg_content,
-        chat_title: if chat_title.is_empty() { chat_name } else { chat_title },
+        chat_title: chat.chat_title,
         chat_id,
-        username,
-        first_name,
-        second_name,
-        user_id,
+        username: sender.username,
+        first_name: sender.first_name,
+        second_name: sender.second_name,
+        user_id: sender.user_id,
         message_id: message.id() as i64,
-        chat_usernames,
+        chat_usernames: chat.chat_usernames,
         reply_to,
         client_id,
     }).await;

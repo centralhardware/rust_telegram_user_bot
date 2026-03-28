@@ -1,9 +1,9 @@
-use grammers_client::peer::Peer;
 use grammers_client::update::Message;
 use grammers_client::Client;
 use log::{debug, info, warn};
 
 use crate::db::IncomingMessage;
+use super::extract::{extract_sender, extract_chat};
 
 /// If the message is a reply and the replied-to message is not yet in ClickHouse,
 /// fetch it from Telegram and save it.
@@ -33,46 +33,18 @@ pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) 
         }
     };
 
-    let (username, first_name, second_name, user_id) = match reply.sender() {
-        Some(Peer::User(user)) => (
-            vec![user.username().unwrap_or_default().to_string()],
-            user.first_name().unwrap_or_default().to_string(),
-            user.last_name().unwrap_or_default().to_string(),
-            user.id().bare_id_unchecked() as u64,
-        ),
-        _ => (Vec::new(), String::new(), String::new(), 0),
-    };
-
-    let (chat_title, chat_usernames) = match reply.peer() {
-        Some(Peer::Group(group)) => (
-            group.title().unwrap_or_default().to_string(),
-            group.usernames().into_iter().map(|s| s.to_string()).collect(),
-        ),
-        Some(Peer::Channel(channel)) => (
-            channel.title().to_string(),
-            channel.usernames().into_iter().map(|s| s.to_string()).collect(),
-        ),
-        _ => (String::new(), Vec::new()),
-    };
-
-    let chat_title = if chat_title.is_empty() {
-        reply
-            .peer()
-            .map(|p| p.name().unwrap_or_default().to_string())
-            .unwrap_or_default()
-    } else {
-        chat_title
-    };
+    let sender = extract_sender(&reply);
+    let chat = extract_chat(&reply);
 
     let text = crate::utils::format_entities::formatted_text(&reply);
-    let sender_bare_id = user_id as i64;
+    let sender_bare_id = sender.user_id as i64;
     let msg_content = if !text.is_empty() {
         text
     } else if let Some(action) = reply.action() {
-        let sender_display = if second_name.is_empty() {
-            first_name.clone()
+        let sender_display = if sender.second_name.is_empty() {
+            sender.first_name.clone()
         } else {
-            format!("{} {}", first_name, second_name)
+            format!("{} {}", sender.first_name, sender.second_name)
         };
         crate::utils::service_action::format(action, Some(sender_bare_id), Some(&sender_display))
     } else {
@@ -85,14 +57,14 @@ pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) 
         .push(IncomingMessage {
             date_time: reply.date().timestamp() as u32,
             message: msg_content,
-            chat_title,
+            chat_title: chat.chat_title,
             chat_id,
-            username,
-            first_name,
-            second_name,
-            user_id,
+            username: sender.username,
+            first_name: sender.first_name,
+            second_name: sender.second_name,
+            user_id: sender.user_id,
             message_id: reply.id() as i64,
-            chat_usernames,
+            chat_usernames: chat.chat_usernames,
             reply_to,
             client_id,
         })
@@ -123,19 +95,13 @@ async fn message_exists(chat_id: i64, message_id: i32) -> bool {
     let db = crate::db::clickhouse();
 
     if let Ok(count) = db
-        .query("SELECT count() FROM chats_log WHERE chat_id = ? AND message_id = ?")
+        .query(
+            "SELECT \
+                (SELECT count() FROM chats_log WHERE chat_id = ? AND message_id = ?) + \
+                (SELECT count() FROM telegram_messages_new WHERE id = ? AND message_id = ?)",
+        )
         .bind(chat_id)
         .bind(message_id as i64)
-        .fetch_one::<u64>()
-        .await
-    {
-        if count > 0 {
-            return true;
-        }
-    }
-
-    if let Ok(count) = db
-        .query("SELECT count() FROM telegram_messages_new WHERE id = ? AND message_id = ?")
         .bind(chat_id)
         .bind(message_id as u64)
         .fetch_one::<u64>()

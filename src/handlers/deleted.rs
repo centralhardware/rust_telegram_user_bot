@@ -20,38 +20,27 @@ pub async fn save_deleted(
     let ch = crate::db::clickhouse();
 
     for &msg_id in deletion.messages() {
-        let chat_title = ch
+        let (chat_title, sender_name, message) = ch
             .query(
-                "SELECT chat_title FROM chats_log WHERE chat_id = ? ORDER BY date_time DESC LIMIT 1",
+                "SELECT \
+                    (SELECT chat_title FROM chats_log WHERE chat_id = ? ORDER BY date_time DESC LIMIT 1), \
+                    (SELECT first_name FROM chats_log WHERE chat_id = ? AND message_id = ? ORDER BY date_time DESC LIMIT 1), \
+                    (SELECT message FROM (
+                        SELECT message, 1 AS p, date_time FROM edited_log WHERE chat_id = ? AND message_id = ?
+                        UNION ALL
+                        SELECT message, 2 AS p, date_time FROM chats_log WHERE chat_id = ? AND message_id = ?
+                    ) ORDER BY p, date_time DESC LIMIT 1)",
             )
             .bind(channel_id)
-            .fetch_one::<String>()
-            .await
-            .unwrap_or_else(|_| channel_id.to_string());
-
-        let message = ch
-            .query(
-                "SELECT message FROM (
-                    SELECT message, 1 AS p, date_time FROM edited_log WHERE chat_id = ? AND message_id = ?
-                    UNION ALL
-                    SELECT message, 2 AS p, date_time FROM chats_log WHERE chat_id = ? AND message_id = ?
-                ) ORDER BY p, date_time DESC LIMIT 1",
-            )
             .bind(channel_id)
             .bind(msg_id as i64)
             .bind(channel_id)
             .bind(msg_id as i64)
-            .fetch_one::<String>()
-            .await
-            .unwrap_or_default();
-
-        let sender_name: String = ch
-            .query("SELECT first_name FROM chats_log WHERE chat_id = ? AND message_id = ? ORDER BY date_time DESC LIMIT 1")
             .bind(channel_id)
             .bind(msg_id as i64)
-            .fetch_one::<String>()
+            .fetch_one::<(String, String, String)>()
             .await
-            .unwrap_or_default();
+            .unwrap_or_else(|_| (channel_id.to_string(), String::new(), String::new()));
         let sender_short: String = sender_name.chars().take(10).collect();
 
         let title_short: String = chat_title.chars().take(25).collect();
