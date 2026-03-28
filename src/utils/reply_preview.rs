@@ -19,10 +19,10 @@ pub async fn format_reply_line(message: &Message) -> String {
     let (text, sender) = lookup_message_text(chat_id, reply_id).await;
 
     // Place reply_id in the same {:>8} column as the message id in incoming log lines.
-    // Layout: {:<8}(9) + {:>8}(9) + {:<25}(26) = 44 before first │
-    // Text column starts at 44 + │(2) + {:<10}(11) + │(2) = 59
-    let id_col = format!("{:<8} \x1b[90m{:>8}\x1b[0m {:<25}", "", reply_id, "");
-    let pad_text = " ".repeat(59);
+    // Layout: {:<8}(8) + ' '(1) + {:>8}(8) + ' '(1) + {:<25}(25) + ' '(1) = 44 before first │
+    // Text column starts at 44 + │(1) + ' '(1) + {:<10}(10) + ' '(1) + │(1) + ' '(1) + '> '(2) = 61
+    let id_col = format!("{:<8} \x1b[90m{:>8}\x1b[0m {:<25} ", "", reply_id, "");
+    let pad_text = " ".repeat(60);
 
     let sender_short: String = match &sender {
         Some(name) if !name.is_empty() => name.chars().take(10).collect(),
