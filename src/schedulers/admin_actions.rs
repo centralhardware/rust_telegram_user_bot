@@ -29,7 +29,31 @@ fn message_text(msg: &tl::enums::Message) -> String {
     }
 }
 
-fn format_log_output(action: &tl::enums::ChannelAdminLogEventAction, user_title: &str) -> String {
+fn participant_user_id(p: &tl::enums::ChannelParticipant) -> Option<i64> {
+    use tl::enums::ChannelParticipant::*;
+    match p {
+        Participant(p) => Some(p.user_id),
+        ParticipantSelf(p) => Some(p.user_id),
+        Creator(p) => Some(p.user_id),
+        Admin(p) => Some(p.user_id),
+        Banned(p) => match &p.peer {
+            tl::enums::Peer::User(u) => Some(u.user_id),
+            _ => None,
+        },
+        Left(p) => match &p.peer {
+            tl::enums::Peer::User(u) => Some(u.user_id),
+            _ => None,
+        },
+    }
+}
+
+fn participant_name(p: &tl::enums::ChannelParticipant, users: &[tl::enums::User]) -> String {
+    participant_user_id(p)
+        .map(|id| extract_user_info(users, id).0)
+        .unwrap_or_default()
+}
+
+fn format_log_output(action: &tl::enums::ChannelAdminLogEventAction, user_title: &str, users: &[tl::enums::User]) -> String {
     use tl::enums::ChannelAdminLogEventAction::*;
     match action {
         ChangeTitle(a) => format!("title: {} -> {}", a.prev_value, a.new_value),
@@ -54,9 +78,9 @@ fn format_log_output(action: &tl::enums::ChannelAdminLogEventAction, user_title:
         DeleteMessage(a) => message_text(&a.message),
         ParticipantJoin => format!("{} joined", user_title),
         ParticipantLeave => format!("{} left", user_title),
-        ParticipantInvite(_) => format!("{} invited", user_title),
-        ParticipantToggleBan(_) => format!("{} ban toggled", user_title),
-        ParticipantToggleAdmin(_) => format!("{} admin toggled", user_title),
+        ParticipantInvite(a) => format!("{} invited", participant_name(&a.participant, users)),
+        ParticipantToggleBan(a) => format!("{} ban toggled", participant_name(&a.new_participant, users)),
+        ParticipantToggleAdmin(a) => format!("{} admin toggled", participant_name(&a.new_participant, users)),
         ChangeStickerSet(_) => "sticker set changed".to_string(),
         TogglePreHistoryHidden(a) => format!("pre-history: {}", if a.new_value { "hidden" } else { "visible" }),
         DefaultBannedRights(_) => "default banned rights changed".to_string(),
@@ -242,7 +266,7 @@ async fn log_admin_actions(
                     action_type: action_type_name(&ev.action),
                     user_id: ev.user_id as u64,
                     message: action_message_json(&ev.action),
-                    log_output: format_log_output(&ev.action, &user_title),
+                    log_output: format_log_output(&ev.action, &user_title, &result.users),
                     usernames,
                     chat_usernames: channel_usernames.clone(),
                     chat_title: channel_title.clone(),
