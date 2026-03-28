@@ -21,7 +21,7 @@ pub async fn format_reply_line(message: &Message) -> String {
     // Place reply_id in the same {:>8} column as the message id in incoming log lines.
     // Layout: {:<8}(9) + {:>8}(9) + {:<25}(26) = 44 before first │
     // Text column starts at 44 + │(2) + {:<10}(11) + │(2) = 59
-    let id_col = format!("{:<8} {:>8} {:<25}", "", reply_id, "");
+    let id_col = format!("{:<8} \x1b[90m{:>8}\x1b[0m {:<25}", "", reply_id, "");
     let pad_text = " ".repeat(59);
 
     let sender_short: String = match &sender {
