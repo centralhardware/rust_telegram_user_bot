@@ -30,8 +30,16 @@ fn message_text(msg: &tl::enums::Message) -> String {
 }
 
 fn format_log_output(action: &tl::enums::ChannelAdminLogEventAction, user_title: &str) -> String {
+    use tl::enums::ChannelAdminLogEventAction::*;
     match action {
-        tl::enums::ChannelAdminLogEventAction::EditMessage(a) => {
+        ChangeTitle(a) => format!("title: {} -> {}", a.prev_value, a.new_value),
+        ChangeAbout(a) => format!("about: {} -> {}", a.prev_value, a.new_value),
+        ChangeUsername(a) => format!("username: {} -> {}", a.prev_value, a.new_value),
+        ChangePhoto(_) => "photo changed".to_string(),
+        ToggleInvites(a) => format!("invites: {}", if a.new_value { "enabled" } else { "disabled" }),
+        ToggleSignatures(a) => format!("signatures: {}", if a.new_value { "enabled" } else { "disabled" }),
+        UpdatePinned(_) => "message pinned/unpinned".to_string(),
+        EditMessage(a) => {
             let prev = message_text(&a.prev_message);
             let new = message_text(&a.new_message);
             if prev == new {
@@ -43,16 +51,54 @@ fn format_log_output(action: &tl::enums::ChannelAdminLogEventAction, user_title:
                 .to_string();
             crate::utils::diff::colorize_unified_diff(&diff, &prev, &new)
         }
-        tl::enums::ChannelAdminLogEventAction::DeleteMessage(a) => {
-            message_text(&a.message)
+        DeleteMessage(a) => message_text(&a.message),
+        ParticipantJoin => format!("{} joined", user_title),
+        ParticipantLeave => format!("{} left", user_title),
+        ParticipantInvite(_) => format!("{} invited", user_title),
+        ParticipantToggleBan(_) => format!("{} ban toggled", user_title),
+        ParticipantToggleAdmin(_) => format!("{} admin toggled", user_title),
+        ChangeStickerSet(_) => "sticker set changed".to_string(),
+        TogglePreHistoryHidden(a) => format!("pre-history: {}", if a.new_value { "hidden" } else { "visible" }),
+        DefaultBannedRights(_) => "default banned rights changed".to_string(),
+        StopPoll(_) => "poll stopped".to_string(),
+        ChangeLinkedChat(a) => format!("linked chat: {} -> {}", a.prev_value, a.new_value),
+        ChangeLocation(_) => "location changed".to_string(),
+        ToggleSlowMode(a) => format!("slow mode: {}s -> {}s", a.prev_value, a.new_value),
+        StartGroupCall(_) => "group call started".to_string(),
+        DiscardGroupCall(_) => "group call ended".to_string(),
+        ParticipantMute(_) => format!("{} muted in call", user_title),
+        ParticipantUnmute(_) => format!("{} unmuted in call", user_title),
+        ToggleGroupCallSetting(a) => format!("group call join muted: {}", a.join_muted),
+        ParticipantJoinByInvite(_) => format!("{} joined by invite", user_title),
+        ExportedInviteDelete(_) => "invite link deleted".to_string(),
+        ExportedInviteRevoke(_) => "invite link revoked".to_string(),
+        ExportedInviteEdit(_) => "invite link edited".to_string(),
+        ParticipantVolume(_) => format!("{} volume changed in call", user_title),
+        ChangeHistoryTtl(a) => format!("history TTL: {}s -> {}s", a.prev_value, a.new_value),
+        ParticipantJoinByRequest(_) => format!("{} joined by request", user_title),
+        ToggleNoForwards(a) => format!("no forwards: {}", if a.new_value { "enabled" } else { "disabled" }),
+        SendMessage(a) => message_text(&a.message),
+        ChangeAvailableReactions(_) => "available reactions changed".to_string(),
+        ChangeUsernames(a) => format!("usernames: {:?} -> {:?}", a.prev_value, a.new_value),
+        ToggleForum(a) => format!("forum: {}", if a.new_value { "enabled" } else { "disabled" }),
+        CreateTopic(_) => "topic created".to_string(),
+        EditTopic(_) => "topic edited".to_string(),
+        DeleteTopic(_) => "topic deleted".to_string(),
+        PinTopic(_) => "topic pinned/unpinned".to_string(),
+        ToggleAntiSpam(a) => format!("anti-spam: {}", if a.new_value { "enabled" } else { "disabled" }),
+        ChangePeerColor(_) => "peer color changed".to_string(),
+        ChangeProfilePeerColor(_) => "profile peer color changed".to_string(),
+        ChangeWallpaper(_) => "wallpaper changed".to_string(),
+        ChangeEmojiStatus(_) => "emoji status changed".to_string(),
+        ChangeEmojiStickerSet(_) => "emoji sticker set changed".to_string(),
+        ToggleSignatureProfiles(a) => format!("signature profiles: {}", if a.new_value { "enabled" } else { "disabled" }),
+        ParticipantSubExtend(_) => format!("{} subscription extended", user_title),
+        ToggleAutotranslation(a) => format!("autotranslation: {}", if a.new_value { "enabled" } else { "disabled" }),
+        ParticipantEditRank(a) => {
+            let prev = if a.prev_rank.is_empty() { "none" } else { &a.prev_rank };
+            let new = if a.new_rank.is_empty() { "none" } else { &a.new_rank };
+            format!("{}: rank {} -> {}", user_title, prev, new)
         }
-        tl::enums::ChannelAdminLogEventAction::ParticipantJoin => {
-            format!("{} joined", user_title)
-        }
-        tl::enums::ChannelAdminLogEventAction::ParticipantLeave => {
-            format!("{} left", user_title)
-        }
-        _ => String::new(),
     }
 }
 
