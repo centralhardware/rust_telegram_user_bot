@@ -98,7 +98,7 @@ async fn message_exists(chat_id: i64, message_id: i32) -> bool {
         .query(
             "SELECT \
                 (SELECT count() FROM chats_log WHERE chat_id = ? AND message_id = ?) + \
-                (SELECT count() FROM telegram_messages_new WHERE id = ? AND message_id = ?)",
+                (SELECT count() FROM telegram_messages_new WHERE id = ? AND message_id = ?) AS cnt",
         )
         .bind(chat_id)
         .bind(message_id as i64)
