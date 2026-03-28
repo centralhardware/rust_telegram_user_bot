@@ -96,9 +96,11 @@ async fn message_exists(chat_id: i64, message_id: i32) -> bool {
 
     if let Ok(count) = db
         .query(
-            "SELECT \
-                (SELECT count() FROM chats_log WHERE chat_id = ? AND message_id = ?) + \
-                (SELECT count() FROM telegram_messages_new WHERE id = ? AND message_id = ?) AS cnt",
+            "SELECT sum(c) AS cnt FROM (\
+                SELECT count() AS c FROM chats_log WHERE chat_id = ? AND message_id = ? \
+                UNION ALL \
+                SELECT count() AS c FROM telegram_messages_new WHERE id = ? AND message_id = ?\
+            )",
         )
         .bind(chat_id)
         .bind(message_id as i64)
