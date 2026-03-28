@@ -15,44 +15,7 @@ pub async fn save_edited(
         return Ok(());
     }
 
-    // Check buffers first — data may not be flushed to DB yet
-    let original = if let Some(msg) = crate::db::EDITED_BUF
-        .find_last(|e| {
-            (e.chat_id == chat_id && e.message_id == msg_id).then(|| e.message.clone())
-        })
-        .await
-    {
-        msg
-    } else {
-        let ch = crate::db::clickhouse();
-        let db_result = ch
-            .query(
-                "SELECT message FROM (\
-                    SELECT message, 1 AS p, date_time FROM edited_log WHERE chat_id = ? AND message_id = ? \
-                    UNION ALL \
-                    SELECT message, 2 AS p, date_time FROM chats_log WHERE chat_id = ? AND message_id = ? \
-                ) ORDER BY p, date_time DESC LIMIT 1",
-            )
-            .bind(chat_id)
-            .bind(msg_id)
-            .bind(chat_id)
-            .bind(msg_id)
-            .fetch_one::<String>()
-            .await
-            .unwrap_or_default();
-
-        if db_result.is_empty() {
-            // Message might still be in the incoming buffer
-            crate::db::INCOMING_BUF
-                .find_last(|m| {
-                    (m.chat_id == chat_id && m.message_id == msg_id).then(|| m.message.clone())
-                })
-                .await
-                .unwrap_or_default()
-        } else {
-            db_result
-        }
-    };
+    let original = crate::db::find_message(chat_id, msg_id).await.message;
 
     if original.is_empty() || original == message_content {
         return Ok(());

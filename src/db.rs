@@ -79,6 +79,73 @@ pub static INCOMING_BUF: WriteBuffer<IncomingMessage> = WriteBuffer::new("chats_
 pub static EDITED_BUF: WriteBuffer<EditedMessage> = WriteBuffer::new("edited_log");
 pub static DELETED_BUF: WriteBuffer<DeletedMessage> = WriteBuffer::new("deleted_log");
 
+pub struct MessageInfo {
+    pub message: String,
+    pub chat_title: String,
+    pub first_name: String,
+}
+
+/// Find message info by chat_id + message_id.
+/// Priority: buffers (EDITED_BUF / INCOMING_BUF) → ClickHouse.
+pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
+    let from_incoming = INCOMING_BUF
+        .find_last(|m| {
+            (m.chat_id == chat_id && m.message_id == message_id)
+                .then(|| (m.message.clone(), m.chat_title.clone(), m.first_name.clone()))
+        })
+        .await;
+
+    let message = if let Some(msg) = EDITED_BUF
+        .find_last(|e| {
+            (e.chat_id == chat_id && e.message_id == message_id).then(|| e.message.clone())
+        })
+        .await
+    {
+        msg
+    } else if let Some((msg, _, _)) = from_incoming.as_ref() {
+        msg.clone()
+    } else {
+        clickhouse()
+            .query(
+                "SELECT message FROM (\
+                    SELECT message, 1 AS p, date_time FROM edited_log WHERE chat_id = ? AND message_id = ? \
+                    UNION ALL \
+                    SELECT message, 2 AS p, date_time FROM chats_log WHERE chat_id = ? AND message_id = ?\
+                ) ORDER BY p, date_time DESC LIMIT 1",
+            )
+            .bind(chat_id)
+            .bind(message_id)
+            .bind(chat_id)
+            .bind(message_id)
+            .fetch_one::<String>()
+            .await
+            .unwrap_or_default()
+    };
+
+    let (chat_title, first_name) = if let Some((_, t, f)) = from_incoming {
+        (t, f)
+    } else {
+        let title = clickhouse()
+            .query("SELECT chat_title FROM chats_log WHERE chat_id = ? ORDER BY date_time DESC LIMIT 1")
+            .bind(chat_id)
+            .fetch_one::<String>()
+            .await
+            .unwrap_or_default();
+
+        let name = clickhouse()
+            .query("SELECT first_name FROM chats_log WHERE chat_id = ? AND message_id = ? ORDER BY date_time DESC LIMIT 1")
+            .bind(chat_id)
+            .bind(message_id)
+            .fetch_one::<String>()
+            .await
+            .unwrap_or_default();
+
+        (title, name)
+    };
+
+    MessageInfo { message, chat_title, first_name }
+}
+
 #[derive(Row, Serialize)]
 pub struct IncomingMessage {
     pub date_time: u32,
