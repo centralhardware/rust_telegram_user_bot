@@ -45,7 +45,10 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
 
     let media_desc = crate::utils::media_description::describe(message);
     let sender_id = message.sender_id().map(|p| p.bare_id_unchecked());
-    let sender_name = message.sender().and_then(|p| p.name().map(|s| s.to_string()));
+    let sender_name = message.sender().map(|p| match p {
+        Peer::User(u) => u.full_name(),
+        _ => p.name().unwrap_or_default().to_string(),
+    });
     let action_desc = if text.is_empty() {
         message.action().map(|a| crate::utils::service_action::format(a, sender_id, sender_name.as_deref()))
     } else {
