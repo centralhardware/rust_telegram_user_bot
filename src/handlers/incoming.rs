@@ -2,13 +2,14 @@ use grammers_client::update::Message;
 use log::info;
 
 use crate::db::IncomingMessage;
-use super::extract::{extract_sender, extract_chat};
+use super::extract::{extract_sender, extract_chat, extract_community_tag};
 
 pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
     let media_desc = crate::utils::media_description::describe(message);
 
     let sender = extract_sender(message);
     let chat = extract_chat(message);
+    let community_tag = extract_community_tag(&message.raw);
 
     let chat_id = message.peer_id().bare_id_unchecked();
 
@@ -72,6 +73,7 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
         first_name: sender.first_name,
         second_name: sender.second_name,
         user_id: sender.user_id,
+        community_tag,
         message_id: message.id() as i64,
         chat_usernames: chat.chat_usernames,
         reply_to,

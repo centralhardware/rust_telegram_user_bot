@@ -156,6 +156,7 @@ pub struct IncomingMessage {
     pub first_name: String,
     pub second_name: String,
     pub user_id: u64,
+    pub community_tag: String,
     pub message_id: i64,
     pub chat_usernames: Vec<String>,
     pub reply_to: u64,
