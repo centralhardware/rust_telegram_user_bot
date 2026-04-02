@@ -14,12 +14,16 @@ pub struct ChatInfo {
     pub chat_usernames: Vec<String>,
 }
 
-pub fn extract_community_tag(update: &tl::enums::Update) -> String {
+pub fn extract_community_tag_from_update(update: &tl::enums::Update) -> String {
     let msg = match update {
         tl::enums::Update::NewMessage(u) => &u.message,
         tl::enums::Update::NewChannelMessage(u) => &u.message,
         _ => return String::new(),
     };
+    extract_community_tag(msg)
+}
+
+pub fn extract_community_tag(msg: &tl::enums::Message) -> String {
     match msg {
         tl::enums::Message::Message(m) => m.from_rank.clone().unwrap_or_default(),
         _ => String::new(),

@@ -3,7 +3,7 @@ use grammers_client::Client;
 use log::{debug, info, warn};
 
 use crate::db::IncomingMessage;
-use super::extract::{extract_sender, extract_chat};
+use super::extract::{extract_sender, extract_chat, extract_community_tag};
 
 /// If the message is a reply and the replied-to message is not yet in ClickHouse,
 /// fetch it from Telegram and save it.
@@ -63,6 +63,7 @@ pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) 
             first_name: sender.first_name,
             second_name: sender.second_name,
             user_id: sender.user_id,
+            community_tag: extract_community_tag(&reply.raw),
             message_id: reply.id() as i64,
             chat_usernames: chat.chat_usernames,
             reply_to,
