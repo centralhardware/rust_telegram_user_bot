@@ -79,10 +79,9 @@ fn describe_media(media: &tl::enums::MessageMedia) -> String {
             let tl::enums::Poll::Poll(poll) = &p.poll;
             let tl::enums::TextWithEntities::Entities(q) = &poll.question;
             let kind = if poll.quiz { "quiz" } else { "poll" };
-            let answers: Vec<&str> = poll.answers.iter().map(|a| {
-                let tl::enums::PollAnswer::Answer(ans) = a;
-                let tl::enums::TextWithEntities::Entities(t) = &ans.text;
-                t.text.as_str()
+            let answers: Vec<String> = poll.answers.iter().map(|a| {
+                let tl::enums::TextWithEntities::Entities(t) = a.text();
+                t.text
             }).collect();
             if answers.is_empty() {
                 format!("[{}: {}]", kind, q.text)

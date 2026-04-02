@@ -251,6 +251,15 @@ pub fn format(action: &MessageAction, sender_id: Option<i64>, sender_name: Optio
                 "[forwarding restriction removed]".into()
             }
         }
+        MessageAction::PollAppendAnswer(a) => {
+            let grammers_tl_types::enums::TextWithEntities::Entities(t) = a.answer.text();
+            format!("[poll answer appended: {}]", t.text)
+        }
+        MessageAction::PollDeleteAnswer(a) => {
+            let grammers_tl_types::enums::TextWithEntities::Entities(t) = a.answer.text();
+            format!("[poll answer deleted: {}]", t.text)
+        }
+        MessageAction::ManagedBotCreated(a) => format!("[managed bot created: {}]", a.bot_id),
     }
 }
 
