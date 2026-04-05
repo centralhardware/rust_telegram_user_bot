@@ -1,14 +1,20 @@
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Mutex;
+
 use clickhouse::Row;
 use futures_core::future::BoxFuture;
 use grammers_session::types::{
-    ChannelKind, DcOption, PeerAuth, PeerId, PeerInfo, PeerKind, UpdateState, UpdatesState,
+    ChannelKind, ChannelState, DcOption, PeerAuth, PeerId, PeerInfo, PeerKind, UpdateState,
+    UpdatesState,
 };
-use grammers_session::Session;
-use grammers_session::storages::SqliteSession;
-use log::{debug, error};
+use grammers_session::{Session, SessionData};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 
 use crate::db::clickhouse;
+
+// ── ClickHouse row types ────────────────────────────────────────────
 
 #[derive(Row, Serialize, Deserialize)]
 struct PeerRow {
@@ -17,26 +23,213 @@ struct PeerRow {
     subtype: Option<u8>,
 }
 
-/// Session wrapper that stores peers in ClickHouse, other tables in SQLite.
+#[derive(Row, Serialize, Deserialize)]
+struct DcHomeRow {
+    dc_id: i32,
+}
+
+#[derive(Row, Serialize, Deserialize)]
+struct DcOptionRow {
+    dc_id: i32,
+    ipv4: String,
+    ipv6: String,
+    auth_key: Option<String>,
+}
+
+#[derive(Row, Serialize, Deserialize)]
+struct UpdateStateRow {
+    pts: i32,
+    qts: i32,
+    date: i32,
+    seq: i32,
+}
+
+#[derive(Row, Serialize, Deserialize)]
+struct ChannelStateRow {
+    peer_id: i64,
+    pts: i32,
+}
+
+// ── In-memory cache ─────────────────────────────────────────────────
+
+struct Cache {
+    home_dc: i32,
+    dc_options: HashMap<i32, DcOption>,
+    updates: UpdatesState,
+}
+
+// ── ClickhouseSession ───────────────────────────────────────────────
+
 pub struct ClickhouseSession {
-    sqlite: SqliteSession,
+    cache: Mutex<Cache>,
 }
 
 impl ClickhouseSession {
-    pub async fn open(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let sqlite = SqliteSession::open(path).await?;
-        Ok(Self { sqlite })
+    pub async fn open(sqlite_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let defaults = SessionData::default();
+
+        // Load dc_home from ClickHouse
+        let home_dc = clickhouse()
+            .query("SELECT dc_id FROM session_dc_home FINAL WHERE key = 1 LIMIT 1")
+            .fetch_one::<DcHomeRow>()
+            .await
+            .ok()
+            .map(|r| r.dc_id);
+
+        let needs_migration = home_dc.is_none() && Path::new(sqlite_path).exists();
+
+        if needs_migration {
+            info!("ClickHouse session tables empty, migrating from SQLite: {sqlite_path}");
+            Self::migrate_from_sqlite(sqlite_path).await?;
+        }
+
+        // (Re-)load after possible migration
+        let home_dc = if needs_migration {
+            clickhouse()
+                .query("SELECT dc_id FROM session_dc_home FINAL WHERE key = 1 LIMIT 1")
+                .fetch_one::<DcHomeRow>()
+                .await
+                .ok()
+                .map(|r| r.dc_id)
+                .unwrap_or(defaults.home_dc)
+        } else {
+            home_dc.unwrap_or(defaults.home_dc)
+        };
+
+        // Load dc_options
+        let mut dc_options: HashMap<i32, DcOption> = defaults.dc_options;
+        let rows: Vec<DcOptionRow> = clickhouse()
+            .query("SELECT dc_id, ipv4, ipv6, auth_key FROM session_dc_option FINAL")
+            .fetch_all()
+            .await
+            .unwrap_or_default();
+        for row in rows {
+            if let Some(opt) = dc_option_from_row(&row) {
+                dc_options.insert(opt.id, opt);
+            }
+        }
+
+        // Load updates state
+        let updates = clickhouse()
+            .query("SELECT pts, qts, date, seq FROM session_update_state FINAL WHERE key = 1 LIMIT 1")
+            .fetch_one::<UpdateStateRow>()
+            .await
+            .ok()
+            .map(|r| UpdatesState {
+                pts: r.pts,
+                qts: r.qts,
+                date: r.date,
+                seq: r.seq,
+                channels: Vec::new(),
+            })
+            .unwrap_or_default();
+
+        let channels: Vec<ChannelStateRow> = clickhouse()
+            .query("SELECT peer_id, pts FROM session_channel_state FINAL")
+            .fetch_all()
+            .await
+            .unwrap_or_default();
+
+        let updates = UpdatesState {
+            channels: channels
+                .into_iter()
+                .map(|r| ChannelState {
+                    id: r.peer_id,
+                    pts: r.pts,
+                })
+                .collect(),
+            ..updates
+        };
+
+        Ok(Self {
+            cache: Mutex::new(Cache {
+                home_dc,
+                dc_options,
+                updates,
+            }),
+        })
     }
 
+    async fn migrate_from_sqlite(path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        use grammers_session::storages::SqliteSession;
+
+        let sqlite = SqliteSession::open(path).await?;
+
+        // 1. home_dc
+        let home_dc = sqlite.home_dc_id();
+        info!("  migrating home_dc = {home_dc}");
+        if let Ok(mut ins) = clickhouse().insert::<DcHomeRow>("session_dc_home").await {
+            let _ = ins.write(&DcHomeRow { dc_id: home_dc }).await;
+            let _ = ins.end().await;
+        }
+
+        // 2. dc_options — read from sqlite for each known DC id (1..=5)
+        for dc_id in 1..=5 {
+            if let Some(opt) = sqlite.dc_option(dc_id) {
+                info!("  migrating dc_option {dc_id}");
+                let row = dc_option_to_row(&opt);
+                if let Ok(mut ins) = clickhouse().insert::<DcOptionRow>("session_dc_option").await {
+                    let _ = ins.write(&row).await;
+                    let _ = ins.end().await;
+                }
+            }
+        }
+
+        // 3. update state
+        let state = sqlite.updates_state().await;
+        info!(
+            "  migrating update_state: pts={}, qts={}, date={}, seq={}, channels={}",
+            state.pts,
+            state.qts,
+            state.date,
+            state.seq,
+            state.channels.len()
+        );
+        if let Ok(mut ins) = clickhouse().insert::<UpdateStateRow>("session_update_state").await {
+            let _ = ins
+                .write(&UpdateStateRow {
+                    pts: state.pts,
+                    qts: state.qts,
+                    date: state.date,
+                    seq: state.seq,
+                })
+                .await;
+            let _ = ins.end().await;
+        }
+
+        for ch in &state.channels {
+            if let Ok(mut ins) = clickhouse()
+                .insert::<ChannelStateRow>("session_channel_state")
+                .await
+            {
+                let _ = ins
+                    .write(&ChannelStateRow {
+                        peer_id: ch.id,
+                        pts: ch.pts,
+                    })
+                    .await;
+                let _ = ins.end().await;
+            }
+        }
+
+        // 4. peers — read all from sqlite peer_info table via raw query isn't
+        //    possible through the Session trait (no list method), so we skip peer
+        //    migration here; peers are already in ClickHouse peer_cache table.
+
+        info!("  SQLite → ClickHouse migration complete");
+        Ok(())
+    }
 }
+
+// ── Peer encoding / decoding (unchanged) ────────────────────────────
 
 fn encode_subtype(peer: &PeerInfo) -> Option<u8> {
     match peer {
         PeerInfo::User { bot, is_self, .. } => {
             match (bot.unwrap_or_default(), is_self.unwrap_or_default()) {
-                (true, true) => Some(3),   // UserSelfBot
-                (true, false) => Some(2),  // UserBot
-                (false, true) => Some(1),  // UserSelf
+                (true, true) => Some(3),
+                (true, false) => Some(2),
+                (false, true) => Some(1),
                 (false, false) => None,
             }
         }
@@ -78,21 +271,83 @@ fn decode_peer(peer_id: PeerId, row: &PeerRow) -> PeerInfo {
     }
 }
 
+// ── DcOption ↔ ClickHouse helpers ───────────────────────────────────
+
+fn auth_key_to_hex(key: &[u8; 256]) -> String {
+    key.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn auth_key_from_hex(hex: &str) -> Option<[u8; 256]> {
+    if hex.len() != 512 {
+        return None;
+    }
+    let mut key = [0u8; 256];
+    for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
+        let s = std::str::from_utf8(chunk).ok()?;
+        key[i] = u8::from_str_radix(s, 16).ok()?;
+    }
+    Some(key)
+}
+
+fn dc_option_to_row(opt: &DcOption) -> DcOptionRow {
+    DcOptionRow {
+        dc_id: opt.id,
+        ipv4: opt.ipv4.to_string(),
+        ipv6: opt.ipv6.to_string(),
+        auth_key: opt.auth_key.as_ref().map(auth_key_to_hex),
+    }
+}
+
+fn dc_option_from_row(row: &DcOptionRow) -> Option<DcOption> {
+    Some(DcOption {
+        id: row.dc_id,
+        ipv4: row.ipv4.parse().ok()?,
+        ipv6: row.ipv6.parse().ok()?,
+        auth_key: row.auth_key.as_deref().and_then(auth_key_from_hex),
+    })
+}
+
+// ── Session trait ───────────────────────────────────────────────────
+
 impl Session for ClickhouseSession {
     fn home_dc_id(&self) -> i32 {
-        self.sqlite.home_dc_id()
+        self.cache.lock().unwrap().home_dc
     }
 
     fn set_home_dc_id(&self, dc_id: i32) -> BoxFuture<'_, ()> {
-        self.sqlite.set_home_dc_id(dc_id)
+        self.cache.lock().unwrap().home_dc = dc_id;
+        Box::pin(async move {
+            if let Ok(mut ins) = clickhouse().insert::<DcHomeRow>("session_dc_home").await {
+                if let Err(e) = ins.write(&DcHomeRow { dc_id }).await {
+                    error!("failed to write home_dc to clickhouse: {e}");
+                } else if let Err(e) = ins.end().await {
+                    error!("failed to flush home_dc to clickhouse: {e}");
+                }
+            }
+        })
     }
 
     fn dc_option(&self, dc_id: i32) -> Option<DcOption> {
-        self.sqlite.dc_option(dc_id)
+        self.cache.lock().unwrap().dc_options.get(&dc_id).cloned()
     }
 
     fn set_dc_option(&self, dc_option: &DcOption) -> BoxFuture<'_, ()> {
-        self.sqlite.set_dc_option(dc_option)
+        self.cache
+            .lock()
+            .unwrap()
+            .dc_options
+            .insert(dc_option.id, dc_option.clone());
+
+        let row = dc_option_to_row(dc_option);
+        Box::pin(async move {
+            if let Ok(mut ins) = clickhouse().insert::<DcOptionRow>("session_dc_option").await {
+                if let Err(e) = ins.write(&row).await {
+                    error!("failed to write dc_option to clickhouse: {e}");
+                } else if let Err(e) = ins.end().await {
+                    error!("failed to flush dc_option to clickhouse: {e}");
+                }
+            }
+        })
     }
 
     fn peer(&self, peer: PeerId) -> BoxFuture<'_, Option<PeerInfo>> {
@@ -117,7 +372,6 @@ impl Session for ClickhouseSession {
                     }
                 }
             } else {
-                // self_user: look for subtype with UserSelf bit set
                 match clickhouse()
                     .query(
                         "SELECT peer_id, hash, subtype FROM peer_cache FINAL \
@@ -165,10 +419,132 @@ impl Session for ClickhouseSession {
     }
 
     fn updates_state(&self) -> BoxFuture<'_, UpdatesState> {
-        self.sqlite.updates_state()
+        Box::pin(async move { self.cache.lock().unwrap().updates.clone() })
     }
 
     fn set_update_state(&self, update: UpdateState) -> BoxFuture<'_, ()> {
-        self.sqlite.set_update_state(update)
+        Box::pin(async move {
+            // Update in-memory cache
+            {
+                let mut cache = self.cache.lock().unwrap();
+                match &update {
+                    UpdateState::All(state) => {
+                        cache.updates = state.clone();
+                    }
+                    UpdateState::Primary { pts, date, seq } => {
+                        cache.updates.pts = *pts;
+                        cache.updates.date = *date;
+                        cache.updates.seq = *seq;
+                    }
+                    UpdateState::Secondary { qts } => {
+                        cache.updates.qts = *qts;
+                    }
+                    UpdateState::Channel { id, pts } => {
+                        if let Some(ch) = cache.updates.channels.iter_mut().find(|c| c.id == *id) {
+                            ch.pts = *pts;
+                        } else {
+                            cache.updates.channels.push(ChannelState {
+                                id: *id,
+                                pts: *pts,
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Persist to ClickHouse
+            match &update {
+                UpdateState::All(state) => {
+                    // Write full update_state
+                    if let Ok(mut ins) = clickhouse()
+                        .insert::<UpdateStateRow>("session_update_state")
+                        .await
+                    {
+                        let _ = ins
+                            .write(&UpdateStateRow {
+                                pts: state.pts,
+                                qts: state.qts,
+                                date: state.date,
+                                seq: state.seq,
+                            })
+                            .await;
+                        let _ = ins.end().await;
+                    }
+
+                    // Replace all channel states: truncate + re-insert
+                    if let Err(e) = clickhouse()
+                        .query("TRUNCATE TABLE session_channel_state")
+                        .execute()
+                        .await
+                    {
+                        warn!("failed to truncate channel_state: {e}");
+                    }
+                    for ch in &state.channels {
+                        if let Ok(mut ins) = clickhouse()
+                            .insert::<ChannelStateRow>("session_channel_state")
+                            .await
+                        {
+                            let _ = ins
+                                .write(&ChannelStateRow {
+                                    peer_id: ch.id,
+                                    pts: ch.pts,
+                                })
+                                .await;
+                            let _ = ins.end().await;
+                        }
+                    }
+                }
+                UpdateState::Primary { pts, date, seq } => {
+                    let row = {
+                        let cache = self.cache.lock().unwrap();
+                        UpdateStateRow {
+                            pts: *pts,
+                            qts: cache.updates.qts,
+                            date: *date,
+                            seq: *seq,
+                        }
+                    };
+                    if let Ok(mut ins) = clickhouse()
+                        .insert::<UpdateStateRow>("session_update_state")
+                        .await
+                    {
+                        let _ = ins.write(&row).await;
+                        let _ = ins.end().await;
+                    }
+                }
+                UpdateState::Secondary { qts } => {
+                    let row = {
+                        let cache = self.cache.lock().unwrap();
+                        UpdateStateRow {
+                            pts: cache.updates.pts,
+                            qts: *qts,
+                            date: cache.updates.date,
+                            seq: cache.updates.seq,
+                        }
+                    };
+                    if let Ok(mut ins) = clickhouse()
+                        .insert::<UpdateStateRow>("session_update_state")
+                        .await
+                    {
+                        let _ = ins.write(&row).await;
+                        let _ = ins.end().await;
+                    }
+                }
+                UpdateState::Channel { id, pts } => {
+                    if let Ok(mut ins) = clickhouse()
+                        .insert::<ChannelStateRow>("session_channel_state")
+                        .await
+                    {
+                        let _ = ins
+                            .write(&ChannelStateRow {
+                                peer_id: *id,
+                                pts: *pts,
+                            })
+                            .await;
+                        let _ = ins.end().await;
+                    }
+                }
+            }
+        })
     }
 }
