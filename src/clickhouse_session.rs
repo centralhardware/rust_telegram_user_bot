@@ -17,7 +17,7 @@ struct PeerRow {
     subtype: Option<u8>,
 }
 
-/// Session wrapper that stores peers in ClickHouse with SQLite fallback.
+/// Session wrapper that stores peers in ClickHouse, other tables in SQLite.
 pub struct ClickhouseSession {
     sqlite: SqliteSession,
 }
@@ -109,10 +109,11 @@ impl Session for ClickhouseSession {
                 {
                     Ok(row) => {
                         debug!("peer {} found in clickhouse", dialog_id);
-                        return Some(decode_peer(peer, &row));
+                        Some(decode_peer(peer, &row))
                     }
                     Err(e) => {
                         debug!("peer {} not in clickhouse: {}", dialog_id, e);
+                        None
                     }
                 }
             } else {
@@ -128,16 +129,14 @@ impl Session for ClickhouseSession {
                     Ok(row) => {
                         debug!("self user found in clickhouse (peer_id={})", row.peer_id);
                         let resolved = PeerId::user_unchecked(row.peer_id);
-                        return Some(decode_peer(resolved, &row));
+                        Some(decode_peer(resolved, &row))
                     }
                     Err(e) => {
                         debug!("self user not in clickhouse: {}", e);
+                        None
                     }
                 }
             }
-
-            // Fallback to SQLite
-            self.sqlite.peer(peer).await
         })
     }
 
@@ -150,7 +149,6 @@ impl Session for ClickhouseSession {
                 subtype: encode_subtype(&peer),
             };
 
-            // Write to ClickHouse
             match clickhouse().insert::<PeerRow>("peer_cache").await {
                 Ok(mut insert) => {
                     if let Err(e) = insert.write(&row).await {
@@ -163,9 +161,6 @@ impl Session for ClickhouseSession {
                     error!("failed to insert peer {} to clickhouse: {}", row.peer_id, e);
                 }
             }
-
-            // Also write to SQLite as fallback
-            self.sqlite.cache_peer(&peer).await;
         })
     }
 
