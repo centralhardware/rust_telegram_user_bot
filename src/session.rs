@@ -13,7 +13,7 @@ pub async fn connect() -> Result<(Client, UpdateStream)> {
         .parse()
         .expect("TG_ID invalid");
 
-    let session = Arc::new(ClickhouseSession::open(&env::var("SESSION").expect("SESSION not set")).await?);
+    let session = Arc::new(ClickhouseSession::open().await?);
 
     let SenderPool {
         runner,

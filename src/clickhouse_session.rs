@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Mutex;
 
 use clickhouse::Row;
@@ -9,7 +8,7 @@ use grammers_session::types::{
     UpdatesState,
 };
 use grammers_session::{Session, SessionData};
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use serde::{Deserialize, Serialize};
 
 use crate::db::clickhouse;
@@ -65,36 +64,16 @@ pub struct ClickhouseSession {
 }
 
 impl ClickhouseSession {
-    pub async fn open(sqlite_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn open() -> Result<Self, Box<dyn std::error::Error>> {
         let defaults = SessionData::default();
 
-        // Load dc_home from ClickHouse
         let home_dc = clickhouse()
             .query("SELECT dc_id FROM session_dc_home FINAL WHERE key = 1 LIMIT 1")
             .fetch_one::<DcHomeRow>()
             .await
             .ok()
-            .map(|r| r.dc_id);
-
-        let needs_migration = home_dc.is_none() && Path::new(sqlite_path).exists();
-
-        if needs_migration {
-            info!("ClickHouse session tables empty, migrating from SQLite: {sqlite_path}");
-            Self::migrate_from_sqlite(sqlite_path).await?;
-        }
-
-        // (Re-)load after possible migration
-        let home_dc = if needs_migration {
-            clickhouse()
-                .query("SELECT dc_id FROM session_dc_home FINAL WHERE key = 1 LIMIT 1")
-                .fetch_one::<DcHomeRow>()
-                .await
-                .ok()
-                .map(|r| r.dc_id)
-                .unwrap_or(defaults.home_dc)
-        } else {
-            home_dc.unwrap_or(defaults.home_dc)
-        };
+            .map(|r| r.dc_id)
+            .unwrap_or(defaults.home_dc);
 
         // Load dc_options
         let mut dc_options: HashMap<i32, DcOption> = defaults.dc_options;
@@ -148,76 +127,6 @@ impl ClickhouseSession {
                 updates,
             }),
         })
-    }
-
-    async fn migrate_from_sqlite(path: &str) -> Result<(), Box<dyn std::error::Error>> {
-        use grammers_session::storages::SqliteSession;
-
-        let sqlite = SqliteSession::open(path).await?;
-
-        // 1. home_dc
-        let home_dc = sqlite.home_dc_id();
-        info!("  migrating home_dc = {home_dc}");
-        if let Ok(mut ins) = clickhouse().insert::<DcHomeRow>("session_dc_home").await {
-            let _ = ins.write(&DcHomeRow { dc_id: home_dc }).await;
-            let _ = ins.end().await;
-        }
-
-        // 2. dc_options — read from sqlite for each known DC id (1..=5)
-        for dc_id in 1..=5 {
-            if let Some(opt) = sqlite.dc_option(dc_id) {
-                info!("  migrating dc_option {dc_id}");
-                let row = dc_option_to_row(&opt);
-                if let Ok(mut ins) = clickhouse().insert::<DcOptionRow>("session_dc_option").await {
-                    let _ = ins.write(&row).await;
-                    let _ = ins.end().await;
-                }
-            }
-        }
-
-        // 3. update state
-        let state = sqlite.updates_state().await;
-        info!(
-            "  migrating update_state: pts={}, qts={}, date={}, seq={}, channels={}",
-            state.pts,
-            state.qts,
-            state.date,
-            state.seq,
-            state.channels.len()
-        );
-        if let Ok(mut ins) = clickhouse().insert::<UpdateStateRow>("session_update_state").await {
-            let _ = ins
-                .write(&UpdateStateRow {
-                    pts: state.pts,
-                    qts: state.qts,
-                    date: state.date,
-                    seq: state.seq,
-                })
-                .await;
-            let _ = ins.end().await;
-        }
-
-        for ch in &state.channels {
-            if let Ok(mut ins) = clickhouse()
-                .insert::<ChannelStateRow>("session_channel_state")
-                .await
-            {
-                let _ = ins
-                    .write(&ChannelStateRow {
-                        peer_id: ch.id,
-                        pts: ch.pts,
-                    })
-                    .await;
-                let _ = ins.end().await;
-            }
-        }
-
-        // 4. peers — read all from sqlite peer_info table via raw query isn't
-        //    possible through the Session trait (no list method), so we skip peer
-        //    migration here; peers are already in ClickHouse peer_cache table.
-
-        info!("  SQLite → ClickHouse migration complete");
-        Ok(())
     }
 }
 
