@@ -20,6 +20,15 @@ async fn main() -> Result<()> {
         .write_style(env_logger::WriteStyle::Always)
         .format(move |buf, record| {
             use std::io::Write;
+            if record
+                .module_path()
+                .is_some_and(|m| m.starts_with("grammers"))
+            {
+                let msg = record.args().to_string();
+                if utils::log_ignore::is_message_ignored(&msg) {
+                    return Ok(());
+                }
+            }
             let now = chrono::Utc::now().with_timezone(&tz);
             writeln!(buf, "[{}] {}", now.format("%H:%M:%S"), record.args())
         })
