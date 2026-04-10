@@ -2,6 +2,7 @@ use grammers_client::update::Message;
 use log::info;
 
 use crate::db::IncomingMessage;
+use crate::utils::log_ignore::is_log_ignored;
 use super::extract::{extract_sender, extract_chat, extract_community_tag_from_update};
 
 pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
@@ -19,7 +20,7 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
         format!("{} {}", sender.first_name, sender.second_name)
     };
 
-    {
+    if !is_log_ignored(chat_id) {
         let text = crate::utils::format_entities::formatted_text(message);
         let sender_bare_id = sender.user_id as i64;
         let action_desc = if text.is_empty() {

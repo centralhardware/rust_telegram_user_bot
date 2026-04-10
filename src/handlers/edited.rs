@@ -2,6 +2,7 @@ use grammers_client::update::Message;
 use log::info;
 
 use crate::db::EditedMessage;
+use crate::utils::log_ignore::is_log_ignored;
 
 pub async fn save_edited(
     message: &Message,
@@ -39,16 +40,18 @@ pub async fn save_edited(
         .unwrap_or_default();
     let sender_short: String = sender_name.chars().take(10).collect();
 
-    let chat_name_short: String = chat_name.chars().take(25).collect();
-    let colored = crate::utils::diff::colorize_unified_diff(&diff, &original, &message_content);
-    info!(
-        "\x1b[93m{:<8} {:>8} {:<25} \x1b[90m│\x1b[93m {:<10}\x1b[0m\n{}",
-        "edited",
-        message.id(),
-        chat_name_short,
-        sender_short,
-        colored,
-    );
+    if !is_log_ignored(chat_id) {
+        let chat_name_short: String = chat_name.chars().take(25).collect();
+        let colored = crate::utils::diff::colorize_unified_diff(&diff, &original, &message_content);
+        info!(
+            "\x1b[93m{:<8} {:>8} {:<25} \x1b[90m│\x1b[93m {:<10}\x1b[0m\n{}",
+            "edited",
+            message.id(),
+            chat_name_short,
+            sender_short,
+            colored,
+        );
+    }
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?

@@ -3,6 +3,7 @@ use log::info;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::db::DeletedMessage;
+use crate::utils::log_ignore::is_log_ignored;
 
 pub async fn save_deleted(
     deletion: &MessageDeletion,
@@ -28,15 +29,17 @@ pub async fn save_deleted(
         let message = info.message;
         let sender_short: String = sender_name.chars().take(10).collect();
 
-        let title_short: String = chat_title.chars().take(25).collect();
-        info!(
-            "\x1b[91m{:<8} {:>8} {:<25} \x1b[90m│\x1b[91m {:<10} \x1b[90m│\x1b[91m {}\x1b[0m",
-            "deleted",
-            msg_id,
-            title_short,
-            sender_short,
-            message,
-        );
+        if !is_log_ignored(channel_id) {
+            let title_short: String = chat_title.chars().take(25).collect();
+            info!(
+                "\x1b[91m{:<8} {:>8} {:<25} \x1b[90m│\x1b[91m {:<10} \x1b[90m│\x1b[91m {}\x1b[0m",
+                "deleted",
+                msg_id,
+                title_short,
+                sender_short,
+                message,
+            );
+        }
 
         crate::db::DELETED_BUF.push(DeletedMessage {
             date_time: now,
