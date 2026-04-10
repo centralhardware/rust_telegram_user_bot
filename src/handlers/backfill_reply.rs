@@ -3,6 +3,7 @@ use grammers_client::Client;
 use log::{debug, info, warn};
 
 use crate::db::IncomingMessage;
+use crate::utils::log_ignore::is_log_ignored;
 use super::extract::{extract_sender, extract_chat, extract_community_tag};
 
 /// If the message is a reply and the replied-to message is not yet in ClickHouse,
@@ -19,7 +20,9 @@ pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) 
         return;
     }
 
-    debug!("backfill reply_to {} in chat {}", reply_id, chat_id);
+    if !is_log_ignored(chat_id) {
+        debug!("backfill reply_to {} in chat {}", reply_id, chat_id);
+    }
 
     let reply = match client.get_reply_to_message(message).await {
         Ok(Some(msg)) => msg,
@@ -71,10 +74,12 @@ pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) 
         })
         .await;
 
-    info!(
-        "\x1b[96m{:<8} {:>8} backfilled reply_to message\x1b[0m",
-        "backfill", reply_id
-    );
+    if !is_log_ignored(chat_id) {
+        info!(
+            "\x1b[96m{:<8} {:>8} backfilled reply_to message\x1b[0m",
+            "backfill", reply_id
+        );
+    }
 }
 
 async fn message_exists(chat_id: i64, message_id: i32) -> bool {
