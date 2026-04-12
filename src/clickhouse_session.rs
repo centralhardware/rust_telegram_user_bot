@@ -130,23 +130,33 @@ impl ClickhouseSession {
     }
 }
 
-// ── Peer encoding / decoding (unchanged) ────────────────────────────
+// ── Peer encoding / decoding ────────────────────────────────────────
+
+#[repr(u8)]
+enum PeerSubtype {
+    UserSelf = 1,
+    UserBot = 2,
+    UserSelfBot = 3,
+    Megagroup = 4,
+    Broadcast = 8,
+    Gigagroup = 12,
+}
 
 fn encode_subtype(peer: &PeerInfo) -> Option<u8> {
     match peer {
         PeerInfo::User { bot, is_self, .. } => {
             match (bot.unwrap_or_default(), is_self.unwrap_or_default()) {
-                (true, true) => Some(3),
-                (true, false) => Some(2),
-                (false, true) => Some(1),
+                (true, true) => Some(PeerSubtype::UserSelfBot as u8),
+                (true, false) => Some(PeerSubtype::UserBot as u8),
+                (false, true) => Some(PeerSubtype::UserSelf as u8),
                 (false, false) => None,
             }
         }
         PeerInfo::Chat { .. } => None,
         PeerInfo::Channel { kind, .. } => kind.map(|k| match k {
-            ChannelKind::Megagroup => 4,
-            ChannelKind::Broadcast => 8,
-            ChannelKind::Gigagroup => 12,
+            ChannelKind::Megagroup => PeerSubtype::Megagroup as u8,
+            ChannelKind::Broadcast => PeerSubtype::Broadcast as u8,
+            ChannelKind::Gigagroup => PeerSubtype::Gigagroup as u8,
         }),
     }
 }
@@ -156,8 +166,8 @@ fn decode_peer(peer_id: PeerId, row: &PeerRow) -> PeerInfo {
         PeerKind::User => PeerInfo::User {
             id: peer_id.bare_id_unchecked(),
             auth: row.hash.map(PeerAuth::from_hash),
-            bot: row.subtype.map(|s| s & 2 != 0),
-            is_self: row.subtype.map(|s| s & 1 != 0),
+            bot: row.subtype.map(|s| s & PeerSubtype::UserBot as u8 != 0),
+            is_self: row.subtype.map(|s| s & PeerSubtype::UserSelf as u8 != 0),
         },
         PeerKind::Chat => PeerInfo::Chat {
             id: peer_id.bare_id_unchecked(),
@@ -166,11 +176,11 @@ fn decode_peer(peer_id: PeerId, row: &PeerRow) -> PeerInfo {
             id: peer_id.bare_id_unchecked(),
             auth: row.hash.map(PeerAuth::from_hash),
             kind: row.subtype.and_then(|s| {
-                if (s & 12) == 12 {
+                if (s & PeerSubtype::Gigagroup as u8) == PeerSubtype::Gigagroup as u8 {
                     Some(ChannelKind::Gigagroup)
-                } else if s & 8 != 0 {
+                } else if s & PeerSubtype::Broadcast as u8 != 0 {
                     Some(ChannelKind::Broadcast)
-                } else if s & 4 != 0 {
+                } else if s & PeerSubtype::Megagroup as u8 != 0 {
                     Some(ChannelKind::Megagroup)
                 } else {
                     None
