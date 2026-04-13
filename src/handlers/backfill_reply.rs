@@ -1,5 +1,6 @@
 use grammers_client::update::Message;
 use grammers_client::Client;
+use grammers_tl_types as tl;
 use log::{debug, info, warn};
 
 use crate::db::IncomingMessage;
@@ -35,6 +36,11 @@ pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) 
             return;
         }
     };
+
+    if matches!(reply.raw, tl::enums::Message::Empty(_)) {
+        info!("reply_to {} is an empty message, skipping backfill", reply_id);
+        return;
+    }
 
     let sender = extract_sender(&reply);
     let chat = extract_chat(&reply);
