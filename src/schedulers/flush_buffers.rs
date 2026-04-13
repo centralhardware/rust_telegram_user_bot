@@ -4,7 +4,7 @@ use crate::db;
 
 pub fn start() {
     tokio::spawn(async {
-        let mut interval = tokio::time::interval(Duration::from_secs(10));
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
         loop {
             interval.tick().await;
             let incoming = db::INCOMING_BUF.flush().await;
