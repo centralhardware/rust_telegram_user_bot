@@ -1,8 +1,16 @@
+use clickhouse::Row;
 use grammers_client::peer::Peer;
 use grammers_client::update::Message;
 use log::info;
+use serde::Deserialize;
 
 use crate::db::OutgoingMessage;
+
+#[derive(Row, Deserialize)]
+struct LastChatRow {
+    title: String,
+    usernames: Vec<String>,
+}
 
 pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
     let (title, usernames) = match message.peer() {
@@ -37,6 +45,21 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
     };
 
     let chat_id = message.peer_id().bare_id_unchecked();
+
+    let (title, usernames) = if title.is_empty() {
+        match crate::db::clickhouse()
+            .query("SELECT title, usernames FROM telegram_messages_new WHERE id = ? AND title != '' ORDER BY date_time DESC LIMIT 1")
+            .bind(chat_id)
+            .fetch_one::<LastChatRow>()
+            .await
+        {
+            Ok(row) => (row.title, row.usernames),
+            Err(_) => (title, usernames),
+        }
+    } else {
+        (title, usernames)
+    };
+
     let text = crate::utils::format_entities::formatted_text(message);
     let raw = serde_json::to_string(&message.raw).unwrap_or_default();
     let reply_to = message.reply_to_message_id().unwrap_or(0) as u64;
