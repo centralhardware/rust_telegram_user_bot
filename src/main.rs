@@ -82,17 +82,16 @@ async fn main() -> Result<()> {
             }
             _ = tokio::signal::ctrl_c() => {
                 log::info!("SIGINT received, flushing buffers...");
-                break;
+                schedulers::flush_all().await;
+                return Ok(());
             }
             _ = sigterm.recv() => {
                 log::info!("SIGTERM received, flushing buffers...");
-                break;
+                schedulers::flush_all().await;
+                return Ok(());
             }
         }
     }
-
-    schedulers::flush_all().await;
-    Ok(())
 }
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
