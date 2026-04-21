@@ -2,6 +2,8 @@ mod user_sessions;
 mod admin_actions;
 mod flush_buffers;
 
+pub use flush_buffers::flush_all;
+
 use grammers_client::Client;
 
 pub fn start(client: Client, client_id: u64) {

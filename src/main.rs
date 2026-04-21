@@ -45,6 +45,8 @@ async fn main() -> Result<()> {
     let client_id = client.get_me().await?.id().bare_id().unwrap() as u64;
     schedulers::start(client.clone(), client_id);
 
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+
     loop {
         tokio::select! {
             update = updates.next() => {
@@ -78,8 +80,19 @@ async fn main() -> Result<()> {
                     _ => {}
                 }
             }
+            _ = tokio::signal::ctrl_c() => {
+                log::info!("SIGINT received, flushing buffers...");
+                break;
+            }
+            _ = sigterm.recv() => {
+                log::info!("SIGTERM received, flushing buffers...");
+                break;
+            }
         }
     }
+
+    schedulers::flush_all().await;
+    Ok(())
 }
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;

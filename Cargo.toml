@@ -12,7 +12,7 @@ grammers-client = { git = "https://codeberg.org/Lonami/grammers.git" }
 grammers-tl-types = { git = "https://codeberg.org/Lonami/grammers.git", features = ["impl-serde"] }
 serde_json = "1"
 grammers-session = { git = "https://codeberg.org/Lonami/grammers.git" }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "signal"] }
 clickhouse = "0.14.2"
 serde = { version = "1.0.228", features = ["derive"] }
 similar = "2"
