@@ -78,17 +78,18 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
         None
     };
 
+    let preview = if !text.is_empty() {
+        match &media_desc {
+            Some(desc) => format!("{} {}", desc, text),
+            None => text.clone(),
+        }
+    } else if let Some(ref desc) = action_desc {
+        desc.clone()
+    } else {
+        media_desc.clone().unwrap_or_default()
+    };
+
     {
-        let preview = if !text.is_empty() {
-            match &media_desc {
-                Some(desc) => format!("{} {}", desc, text),
-                None => text.clone(),
-            }
-        } else if let Some(ref desc) = action_desc {
-            desc.clone()
-        } else {
-            media_desc.clone().unwrap_or_default()
-        };
         let title_short: String = title.chars().take(25).collect();
         let reply_line = crate::utils::reply_preview::format_reply_line(message).await;
         if !reply_line.is_empty() {
@@ -101,7 +102,7 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
     }
 
     let msg_content = if text.is_empty() {
-        action_desc.unwrap_or_default()
+        preview
     } else {
         text
     };
