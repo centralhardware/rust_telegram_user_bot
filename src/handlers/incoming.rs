@@ -41,7 +41,7 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
         };
         if let Some(b) = &buttons {
             if !preview.is_empty() {
-                preview.push('\n');
+                preview.push_str("\n\n");
             }
             preview.push_str(b);
         }
@@ -71,7 +71,7 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
     };
     if let Some(b) = &buttons {
         if !msg_content.is_empty() {
-            msg_content.push('\n');
+            msg_content.push_str("\n\n");
         }
         msg_content.push_str(b);
     }
