@@ -11,6 +11,7 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
     let sender = extract_sender(message);
     let chat = extract_chat(message);
     let community_tag = extract_community_tag_from_update(&message.raw);
+    let buttons = crate::utils::inline_buttons::format_buttons(message);
 
     let chat_id = message.peer_id().bare_id_unchecked();
 
@@ -28,7 +29,7 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
         } else {
             None
         };
-        let preview = if !text.is_empty() {
+        let mut preview = if !text.is_empty() {
             match &media_desc {
                 Some(desc) => format!("{} {}", desc, text),
                 None => text.to_string(),
@@ -38,6 +39,12 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
         } else {
             media_desc.clone().unwrap_or_default()
         };
+        if let Some(b) = &buttons {
+            if !preview.is_empty() {
+                preview.push('\n');
+            }
+            preview.push_str(b);
+        }
         let sender_short: String = sender_display.chars().take(10).collect();
         let chat_name_short: String = chat.chat_title.chars().take(25).collect();
 
@@ -53,7 +60,7 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
 
     let text = crate::utils::format_entities::formatted_text(message);
     let sender_bare_id = sender.user_id as i64;
-    let msg_content = if text.is_empty() {
+    let mut msg_content = if text.is_empty() {
         if let Some(action) = message.action() {
             crate::utils::service_action::format(action, Some(sender_bare_id), Some(&sender_display))
         } else {
@@ -62,6 +69,12 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
     } else {
         text.to_string()
     };
+    if let Some(b) = &buttons {
+        if !msg_content.is_empty() {
+            msg_content.push('\n');
+        }
+        msg_content.push_str(b);
+    }
 
     let reply_to = message.reply_to_message_id().unwrap_or(0) as u64;
 

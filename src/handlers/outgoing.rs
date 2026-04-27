@@ -67,6 +67,7 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
     let admins: Vec<String> = Vec::new();
 
     let media_desc = crate::utils::media_description::describe(message);
+    let buttons = crate::utils::inline_buttons::format_buttons(message);
     let sender_id = message.sender_id().map(|p| p.bare_id_unchecked());
     let sender_name = message.sender().map(|p| match p {
         Peer::User(u) => u.full_name(),
@@ -78,7 +79,7 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
         None
     };
 
-    let preview = if !text.is_empty() {
+    let mut preview = if !text.is_empty() {
         match &media_desc {
             Some(desc) => format!("{} {}", desc, text),
             None => text.clone(),
@@ -88,6 +89,12 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
     } else {
         media_desc.clone().unwrap_or_default()
     };
+    if let Some(b) = &buttons {
+        if !preview.is_empty() {
+            preview.push('\n');
+        }
+        preview.push_str(b);
+    }
 
     {
         let title_short: String = title.chars().take(25).collect();
@@ -101,11 +108,19 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
         );
     }
 
-    let msg_content = if text.is_empty() {
-        preview
-    } else {
+    let mut msg_content = if !text.is_empty() {
         text
+    } else if let Some(ref desc) = action_desc {
+        desc.clone()
+    } else {
+        media_desc.unwrap_or_default()
     };
+    if let Some(b) = &buttons {
+        if !msg_content.is_empty() {
+            msg_content.push('\n');
+        }
+        msg_content.push_str(b);
+    }
 
     let mut insert = crate::db::clickhouse().insert::<OutgoingMessage>("telegram_messages_new").await?;
     insert.write(&OutgoingMessage {

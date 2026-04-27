@@ -10,7 +10,13 @@ pub async fn save_edited(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let chat_id = message.peer_id().bare_id_unchecked();
     let msg_id = message.id() as i64;
-    let message_content = crate::utils::format_entities::formatted_text(message);
+    let mut message_content = crate::utils::format_entities::formatted_text(message);
+    if let Some(b) = crate::utils::inline_buttons::format_buttons(message) {
+        if !message_content.is_empty() {
+            message_content.push('\n');
+        }
+        message_content.push_str(&b);
+    }
 
     if message_content.is_empty() {
         return Ok(());
