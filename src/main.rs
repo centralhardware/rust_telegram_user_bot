@@ -6,6 +6,7 @@ mod session;
 mod utils;
 
 use grammers_client::update::Update;
+use grammers_tl_types as tl;
 use log::error;
 use std::env;
 
@@ -75,6 +76,13 @@ async fn main() -> Result<()> {
                     Update::MessageDeleted(deletion) => {
                         if let Err(e) = handlers::save_deleted(&deletion, client_id).await {
                             error!("Failed to save deleted message: {:?}", e);
+                        }
+                    }
+                    Update::Raw(raw) => {
+                        if let tl::enums::Update::PendingJoinRequests(u) = &raw.raw {
+                            if let Err(e) = handlers::handle_pending_join_requests(&client, u, client_id).await {
+                                error!("Failed to handle pending join requests: {:?}", e);
+                            }
                         }
                     }
                     _ => {}
