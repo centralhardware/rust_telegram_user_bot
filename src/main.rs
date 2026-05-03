@@ -80,7 +80,7 @@ async fn main() -> Result<()> {
                     }
                     Update::Raw(raw) => {
                         if let tl::enums::Update::PendingJoinRequests(u) = &raw.raw {
-                            if let Err(e) = handlers::handle_pending_join_requests(&client, u, client_id).await {
+                            if let Err(e) = handlers::handle_pending_join_requests(u, client_id).await {
                                 error!("Failed to handle pending join requests: {:?}", e);
                             }
                         }

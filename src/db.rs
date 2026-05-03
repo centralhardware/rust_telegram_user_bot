@@ -202,10 +202,6 @@ pub struct JoinRequest {
     pub date_time: u32,
     pub chat_id: i64,
     pub user_id: u64,
-    pub username: Vec<String>,
-    pub first_name: String,
-    pub second_name: String,
-    pub about: String,
     pub client_id: u64,
 }
 
