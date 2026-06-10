@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use clickhouse::Row;
 use futures_core::future::BoxFuture;
@@ -229,11 +230,18 @@ fn dc_option_from_row(row: &DcOptionRow) -> Option<DcOption> {
 // ── Session trait ───────────────────────────────────────────────────
 
 impl Session for ClickhouseSession {
-    fn home_dc_id(&self) -> i32 {
-        self.cache.lock().unwrap().home_dc
+    // Writes are best-effort (in-memory cache is the source of truth, ClickHouse is
+    // write-behind persistence), so the write methods always return `Ok` and only log
+    // failures. The one method that genuinely reads from ClickHouse — `peer` — retries
+    // transient failures and surfaces a real error if ClickHouse stays unreachable,
+    // instead of masking an outage as a missing peer.
+    type Error = clickhouse::error::Error;
+
+    fn home_dc_id(&self) -> Result<i32, Self::Error> {
+        Ok(self.cache.lock().unwrap().home_dc)
     }
 
-    fn set_home_dc_id(&self, dc_id: i32) -> BoxFuture<'_, ()> {
+    fn set_home_dc_id(&self, dc_id: i32) -> BoxFuture<'_, Result<(), Self::Error>> {
         self.cache.lock().unwrap().home_dc = dc_id;
         Box::pin(async move {
             if let Ok(mut ins) = clickhouse().insert::<DcHomeRow>("session_dc_home").await {
@@ -243,14 +251,15 @@ impl Session for ClickhouseSession {
                     error!("failed to flush home_dc to clickhouse: {e}");
                 }
             }
+            Ok(())
         })
     }
 
-    fn dc_option(&self, dc_id: i32) -> Option<DcOption> {
-        self.cache.lock().unwrap().dc_options.get(&dc_id).cloned()
+    fn dc_option(&self, dc_id: i32) -> Result<Option<DcOption>, Self::Error> {
+        Ok(self.cache.lock().unwrap().dc_options.get(&dc_id).cloned())
     }
 
-    fn set_dc_option(&self, dc_option: &DcOption) -> BoxFuture<'_, ()> {
+    fn set_dc_option(&self, dc_option: &DcOption) -> BoxFuture<'_, Result<(), Self::Error>> {
         self.cache
             .lock()
             .unwrap()
@@ -266,54 +275,79 @@ impl Session for ClickhouseSession {
                     error!("failed to flush dc_option to clickhouse: {e}");
                 }
             }
+            Ok(())
         })
     }
 
-    fn peer(&self, peer: PeerId) -> BoxFuture<'_, Option<PeerInfo>> {
+    fn peer(&self, peer: PeerId) -> BoxFuture<'_, Result<Option<PeerInfo>, Self::Error>> {
         Box::pin(async move {
+            const MAX_ATTEMPTS: u32 = 5;
             let is_self_query = peer.bot_api_dialog_id().is_none();
 
-            if !is_self_query {
-                let dialog_id = peer.bot_api_dialog_id().unwrap();
-                match clickhouse()
-                    .query("SELECT peer_id, hash, subtype FROM peer_cache FINAL WHERE peer_id = ?")
-                    .bind(dialog_id)
-                    .fetch_one::<PeerRow>()
-                    .await
-                {
+            let mut attempt = 0;
+            loop {
+                attempt += 1;
+
+                let result = if !is_self_query {
+                    let dialog_id = peer.bot_api_dialog_id().unwrap();
+                    clickhouse()
+                        .query(
+                            "SELECT peer_id, hash, subtype FROM peer_cache FINAL WHERE peer_id = ?",
+                        )
+                        .bind(dialog_id)
+                        .fetch_one::<PeerRow>()
+                        .await
+                } else {
+                    clickhouse()
+                        .query(
+                            "SELECT peer_id, hash, subtype FROM peer_cache FINAL \
+                             WHERE subtype IS NOT NULL AND bitAnd(subtype, 1) = 1 LIMIT 1",
+                        )
+                        .fetch_one::<PeerRow>()
+                        .await
+                };
+
+                match result {
                     Ok(row) => {
-                        debug!("peer {} found in clickhouse", dialog_id);
-                        Some(decode_peer(peer, &row))
+                        let resolved = if is_self_query {
+                            debug!("self user found in clickhouse (peer_id={})", row.peer_id);
+                            PeerId::user_unchecked(row.peer_id)
+                        } else {
+                            debug!("peer {:?} found in clickhouse", peer);
+                            peer
+                        };
+                        return Ok(Some(decode_peer(resolved, &row)));
                     }
+                    // Genuine cache miss: the peer simply isn't stored. Return `None`
+                    // so grammers resolves it from the network.
+                    Err(clickhouse::error::Error::RowNotFound) => {
+                        debug!("peer {:?} not in clickhouse", peer);
+                        return Ok(None);
+                    }
+                    // Transient failure (ClickHouse down, network blip): retry a few
+                    // times so a brief outage isn't mistaken for a missing peer.
+                    Err(e) if attempt < MAX_ATTEMPTS => {
+                        warn!(
+                            "peer {:?} lookup failed (attempt {}/{}): {} — retrying",
+                            peer, attempt, MAX_ATTEMPTS, e
+                        );
+                        tokio::time::sleep(Duration::from_millis(200 * attempt as u64)).await;
+                    }
+                    // Out of retries: surface the real error instead of pretending the
+                    // peer is missing, so the caller fails loudly with the actual cause.
                     Err(e) => {
-                        debug!("peer {} not in clickhouse: {}", dialog_id, e);
-                        None
-                    }
-                }
-            } else {
-                match clickhouse()
-                    .query(
-                        "SELECT peer_id, hash, subtype FROM peer_cache FINAL \
-                         WHERE subtype IS NOT NULL AND bitAnd(subtype, 1) = 1 LIMIT 1",
-                    )
-                    .fetch_one::<PeerRow>()
-                    .await
-                {
-                    Ok(row) => {
-                        debug!("self user found in clickhouse (peer_id={})", row.peer_id);
-                        let resolved = PeerId::user_unchecked(row.peer_id);
-                        Some(decode_peer(resolved, &row))
-                    }
-                    Err(e) => {
-                        debug!("self user not in clickhouse: {}", e);
-                        None
+                        error!(
+                            "peer {:?} lookup failed after {} attempts: {}",
+                            peer, MAX_ATTEMPTS, e
+                        );
+                        return Err(e);
                     }
                 }
             }
         })
     }
 
-    fn cache_peer(&self, peer: &PeerInfo) -> BoxFuture<'_, ()> {
+    fn cache_peer(&self, peer: &PeerInfo) -> BoxFuture<'_, Result<(), Self::Error>> {
         let peer = peer.clone();
         Box::pin(async move {
             let row = PeerRow {
@@ -334,14 +368,15 @@ impl Session for ClickhouseSession {
                     error!("failed to insert peer {} to clickhouse: {}", row.peer_id, e);
                 }
             }
+            Ok(())
         })
     }
 
-    fn updates_state(&self) -> BoxFuture<'_, UpdatesState> {
-        Box::pin(async move { self.cache.lock().unwrap().updates.clone() })
+    fn updates_state(&self) -> BoxFuture<'_, Result<UpdatesState, Self::Error>> {
+        Box::pin(async move { Ok(self.cache.lock().unwrap().updates.clone()) })
     }
 
-    fn set_update_state(&self, update: UpdateState) -> BoxFuture<'_, ()> {
+    fn set_update_state(&self, update: UpdateState) -> BoxFuture<'_, Result<(), Self::Error>> {
         Box::pin(async move {
             // Update in-memory cache
             {
@@ -464,6 +499,7 @@ impl Session for ClickhouseSession {
                     }
                 }
             }
+            Ok(())
         })
     }
 }

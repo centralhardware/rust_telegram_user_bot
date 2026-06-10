@@ -209,9 +209,13 @@ async fn log_admin_actions(
             }
         };
         let peer_ref = match peer.to_ref().await {
-            Some(r) => r,
-            None => {
+            Ok(Some(r)) => r,
+            Ok(None) => {
                 error!("Cannot get peer ref for channel {}", chat_id);
+                continue;
+            }
+            Err(e) => {
+                error!("Cannot get peer ref for channel {}: {:?}", chat_id, e);
                 continue;
             }
         };

@@ -35,7 +35,8 @@ pub async fn connect() -> Result<(Client, UpdateStream)> {
                 ..Default::default()
             },
         )
-        .await;
+        .await
+        .map_err(|e| -> Box<dyn std::error::Error> { e })?;
 
     Ok((client, updates))
 }
