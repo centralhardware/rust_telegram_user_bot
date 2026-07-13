@@ -193,18 +193,18 @@ checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
 name = "bytes"
-version = "1.12.0"
+version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ae3f5d315924270530207e2a68396c3cc547f6dca3fbdca317cfb1a51edb593"
+checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cc"
-version = "1.2.65"
+version = "1.2.67"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e228eec9be7c17ccb640b59b36a5cd805ea2a564a4c5e162c2f659fea30d3b96"
+checksum = "e17dd265a7d0f31ef544e1b20e03add05d3b45b491b633b10d67145d2acc1a38"
 dependencies = [
  "find-msvc-tools",
  "shlex 2.0.1",
@@ -429,9 +429,9 @@ dependencies = [
 
 [[package]]
 name = "defmt"
-version = "1.1.0"
+version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6e524506490a1953d237cb87b1cfc1e46f88c18f10a22dfe0f507dc6bfc7f7f"
+checksum = "e2953bfe4f93bbd20cc71198842756f77d161884c99ebbabc41d80231ded88d1"
 dependencies = [
  "bitflags 1.3.2",
  "defmt-macros",
@@ -439,12 +439,11 @@ dependencies = [
 
 [[package]]
 name = "defmt-macros"
-version = "1.1.0"
+version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0a27770e9c8f719a79d8b638281f4d828f77d8fd61e0bd94451b9b85e576a0b"
+checksum = "bad9c72e7ca2137e0dc3813245a0d282fd6daad32fd800af018306a9169b5fe8"
 dependencies = [
  "defmt-parser",
- "proc-macro-error2",
  "proc-macro2",
  "quote",
  "syn",
@@ -703,7 +702,7 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 [[package]]
 name = "grammers-client"
 version = "0.10.0"
-source = "git+https://codeberg.org/Lonami/grammers.git#5c6d44ff30e02d6c9295bcf1fcb51403ad77c981"
+source = "git+https://codeberg.org/Lonami/grammers.git#c34290345a4636ff689cec312e655419e5972609"
 dependencies = [
  "chrono",
  "futures-util",
@@ -721,7 +720,7 @@ dependencies = [
 [[package]]
 name = "grammers-crypto"
 version = "0.10.0"
-source = "git+https://codeberg.org/Lonami/grammers.git#5c6d44ff30e02d6c9295bcf1fcb51403ad77c981"
+source = "git+https://codeberg.org/Lonami/grammers.git#c34290345a4636ff689cec312e655419e5972609"
 dependencies = [
  "aes",
  "ctr",
@@ -738,7 +737,7 @@ dependencies = [
 [[package]]
 name = "grammers-mtproto"
 version = "0.10.0"
-source = "git+https://codeberg.org/Lonami/grammers.git#5c6d44ff30e02d6c9295bcf1fcb51403ad77c981"
+source = "git+https://codeberg.org/Lonami/grammers.git#c34290345a4636ff689cec312e655419e5972609"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -754,7 +753,7 @@ dependencies = [
 [[package]]
 name = "grammers-mtsender"
 version = "0.10.0"
-source = "git+https://codeberg.org/Lonami/grammers.git#5c6d44ff30e02d6c9295bcf1fcb51403ad77c981"
+source = "git+https://codeberg.org/Lonami/grammers.git#c34290345a4636ff689cec312e655419e5972609"
 dependencies = [
  "bytes",
  "grammers-crypto",
@@ -770,7 +769,7 @@ dependencies = [
 [[package]]
 name = "grammers-session"
 version = "0.10.0"
-source = "git+https://codeberg.org/Lonami/grammers.git#5c6d44ff30e02d6c9295bcf1fcb51403ad77c981"
+source = "git+https://codeberg.org/Lonami/grammers.git#c34290345a4636ff689cec312e655419e5972609"
 dependencies = [
  "grammers-tl-types",
  "libsql",
@@ -781,7 +780,7 @@ dependencies = [
 [[package]]
 name = "grammers-tl-gen"
 version = "0.10.0"
-source = "git+https://codeberg.org/Lonami/grammers.git#5c6d44ff30e02d6c9295bcf1fcb51403ad77c981"
+source = "git+https://codeberg.org/Lonami/grammers.git#c34290345a4636ff689cec312e655419e5972609"
 dependencies = [
  "grammers-tl-parser",
 ]
@@ -789,7 +788,7 @@ dependencies = [
 [[package]]
 name = "grammers-tl-parser"
 version = "1.2.2"
-source = "git+https://codeberg.org/Lonami/grammers.git#5c6d44ff30e02d6c9295bcf1fcb51403ad77c981"
+source = "git+https://codeberg.org/Lonami/grammers.git#c34290345a4636ff689cec312e655419e5972609"
 dependencies = [
  "crc32fast",
 ]
@@ -797,7 +796,7 @@ dependencies = [
 [[package]]
 name = "grammers-tl-types"
 version = "0.10.0"
-source = "git+https://codeberg.org/Lonami/grammers.git#5c6d44ff30e02d6c9295bcf1fcb51403ad77c981"
+source = "git+https://codeberg.org/Lonami/grammers.git#c34290345a4636ff689cec312e655419e5972609"
 dependencies = [
  "grammers-tl-gen",
  "grammers-tl-parser",
@@ -1073,9 +1072,9 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jiff"
-version = "0.2.31"
+version = "0.2.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ccfe6121cbe750cf81efa362d85c0bde7ea298ec43092d3a193baca59cdbd634"
+checksum = "961d16382652bfdd8c6f68b223b26a8c93e0d475c672f414411db31c6c5c900e"
 dependencies = [
  "defmt",
  "jiff-static",
@@ -1087,9 +1086,9 @@ dependencies = [
 
 [[package]]
 name = "jiff-static"
-version = "0.2.31"
+version = "0.2.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e165e897f662d428f3cd3828a919dbe067c2d42bb1031eede74ef9d27ecdedd2"
+checksum = "d0879bd39df99c4c5e2c6615ccc026391a423dde10532c573e6086eb94a802cc"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1242,15 +1241,15 @@ checksum = "670fdfda89751bc4a84ac13eaa63e205cf0fd22b4c9a5fbfa085b63c1f1d3a30"
 
 [[package]]
 name = "md5"
-version = "0.8.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae960838283323069879657ca3de837e9f7bbb4c7bf6ea7f1b290d5e9476d2e0"
+checksum = "7ebb8d8732c6a6df3d8f032a82911cfc747e00efb95cc46e8d0acd5b5b88570c"
 
 [[package]]
 name = "memchr"
-version = "2.8.2"
+version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
+checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "mime"
@@ -1286,9 +1285,9 @@ dependencies = [
 
 [[package]]
 name = "mio"
-version = "1.2.1"
+version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02bd0af71c67b473010cbbc60715ee815645a4dc942899111f494b4b737d6fda"
+checksum = "30d65c71f1ce40ab09135ce117d742b9f8a19ff91a41a8b57ed50bc2de59c427"
 dependencies = [
  "libc",
  "wasi",
@@ -1325,9 +1324,9 @@ dependencies = [
 
 [[package]]
 name = "num-bigint"
-version = "0.4.7"
+version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c863e9ab5e7bf9c99ba75e1050f1e4d624ae87ed3532d6238ffbdc7b585dbbe6"
+checksum = "c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367"
 dependencies = [
  "num-integer",
  "num-traits",
@@ -1657,28 +1656,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "proc-macro-error-attr2"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96de42df36bb9bba5542fe9f1a054b8cc87e172759a1868aa05c1f3acc89dfc5"
-dependencies = [
- "proc-macro2",
- "quote",
-]
-
-[[package]]
-name = "proc-macro-error2"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11ec05c52be0a07b08061f7dd003e7d7092e0472bc731b4af7bb1ef876109802"
-dependencies = [
- "proc-macro-error-attr2",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1719,9 +1696,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.12.4"
+version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1292b7759ae1cb9ec195452d1390a074f0cd8541ab7a5a8c31cd6db45d4a6ba"
+checksum = "2a0e75113e14dc5acb068cd0786884f214f1312650a3d36d269f5c4f3cdee8a2"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -1731,9 +1708,9 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.14"
+version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e1dd4122fc1595e8162618945476892eefca7b88c52820e74af6262213cae8f"
+checksum = "1f388202e4b80542a0921078cc23b6333bcf1409c1e3f86404cae4766a6131db"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -1780,9 +1757,9 @@ dependencies = [
 
 [[package]]
 name = "rustversion"
-version = "1.0.22"
+version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
+checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "scopeguard"
@@ -2523,6 +2500,6 @@ dependencies = [
 
 [[package]]
 name = "zmij"
-version = "1.0.21"
+version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"

@@ -33,6 +33,7 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
             channel.title().to_string(),
             channel.usernames().into_iter().map(|s| s.to_string()).collect(),
         ),
+        Some(Peer::Community(community)) => (community.title().to_string(), Vec::new()),
         None => (String::new(), Vec::new()),
     };
 

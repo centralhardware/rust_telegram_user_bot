@@ -141,6 +141,7 @@ enum PeerSubtype {
     Megagroup = 4,
     Broadcast = 8,
     Gigagroup = 12,
+    Community = 16,
 }
 
 fn encode_subtype(peer: &PeerInfo) -> Option<u8> {
@@ -158,6 +159,7 @@ fn encode_subtype(peer: &PeerInfo) -> Option<u8> {
             ChannelKind::Megagroup => PeerSubtype::Megagroup as u8,
             ChannelKind::Broadcast => PeerSubtype::Broadcast as u8,
             ChannelKind::Gigagroup => PeerSubtype::Gigagroup as u8,
+            ChannelKind::Community => PeerSubtype::Community as u8,
         }),
     }
 }
