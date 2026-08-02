@@ -4,6 +4,12 @@ use grammers_tl_types as tl;
 /// Extract text with markdown-like formatting markers applied from Telegram entities.
 /// `code`, ```lang\n...\n```, ~~strike~~, __underline__, ||spoiler||, etc.
 pub fn formatted_text(message: &Message) -> String {
+    // Rich messages (layer 228+) carry their body as PageBlocks; `message`/`entities`
+    // only hold a plain fallback, so render the rich payload when it is there.
+    if let Some(rich) = crate::utils::rich_message::rich_text(message) {
+        return rich;
+    }
+
     let text = message.text();
     if text.is_empty() {
         return String::new();
