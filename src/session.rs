@@ -1,4 +1,5 @@
-use grammers_client::client::{UpdateStream, UpdatesConfiguration};
+use grammers_client::client::UpdateStream;
+use grammers_client::sender::UpdatesConfiguration;
 use grammers_client::{Client, SenderPool, SignInError};
 use log::info;
 use std::env;

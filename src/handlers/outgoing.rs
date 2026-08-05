@@ -125,7 +125,7 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
 
     let mut insert = crate::db::clickhouse().insert::<OutgoingMessage>("telegram_messages_new").await?;
     insert.write(&OutgoingMessage {
-        date_time: message.date().timestamp() as u32,
+        date_time: message.date().as_second() as u32,
         message: msg_content,
         title,
         id: chat_id,

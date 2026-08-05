@@ -64,7 +64,7 @@ pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) 
 
     crate::db::INCOMING_BUF
         .push(IncomingMessage {
-            date_time: reply.date().timestamp() as u32,
+            date_time: reply.date().as_second() as u32,
             message: msg_content,
             chat_title: chat.chat_title,
             chat_id,
