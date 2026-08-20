@@ -12,7 +12,7 @@ use grammers_session::{Session, SessionData};
 use log::{debug, error, warn};
 use serde::{Deserialize, Serialize};
 
-use crate::db::clickhouse;
+use crate::db::{clickhouse, clickhouse_async_insert};
 
 // ── ClickHouse row types ────────────────────────────────────────────
 
@@ -358,7 +358,7 @@ impl Session for ClickhouseSession {
                 subtype: encode_subtype(&peer),
             };
 
-            match clickhouse().insert::<PeerRow>("peer_cache").await {
+            match clickhouse_async_insert().insert::<PeerRow>("peer_cache").await {
                 Ok(mut insert) => {
                     if let Err(e) = insert.write(&row).await {
                         error!("failed to write peer {} to clickhouse: {}", row.peer_id, e);

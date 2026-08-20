@@ -11,8 +11,22 @@ static CLICKHOUSE: LazyLock<Client> = LazyLock::new(|| {
         .with_database(std::env::var("CLICKHOUSE_DATABASE").expect("CLICKHOUSE_DATABASE not set"))
 });
 
+// peer_cache is written one row per newly-seen peer, so synchronous inserts make a part per
+// peer. Async inserts let the server batch them, and `wait_for_async_insert=0` keeps the update
+// loop from blocking on the flush — a peer that misses the cache is just re-resolved.
+static CLICKHOUSE_ASYNC_INSERT: LazyLock<Client> = LazyLock::new(|| {
+    CLICKHOUSE
+        .clone()
+        .with_setting("async_insert", "1")
+        .with_setting("wait_for_async_insert", "0")
+});
+
 pub fn clickhouse() -> &'static Client {
     &CLICKHOUSE
+}
+
+pub fn clickhouse_async_insert() -> &'static Client {
+    &CLICKHOUSE_ASYNC_INSERT
 }
 
 pub struct WriteBuffer<T: Send + 'static> {
