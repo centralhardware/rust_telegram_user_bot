@@ -4,7 +4,6 @@ mod deleted;
 mod edited;
 mod extract;
 mod incoming;
-mod join_request;
 mod outgoing;
 
 pub use auto_cat::handle_auto_cat;
@@ -12,6 +11,5 @@ pub use backfill_reply::backfill_reply;
 pub use deleted::save_deleted;
 pub use edited::save_edited;
 pub use incoming::save_incoming;
-pub use join_request::handle_pending_join_requests;
 pub use outgoing::save_outgoing;
 

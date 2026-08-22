@@ -212,14 +212,6 @@ pub struct DeletedMessage {
 }
 
 #[derive(Row, Serialize)]
-pub struct JoinRequest {
-    pub date_time: u32,
-    pub chat_id: i64,
-    pub user_id: u64,
-    pub client_id: u64,
-}
-
-#[derive(Row, Serialize)]
 pub struct AdminAction {
     pub date: u32,
     pub event_id: u64,
@@ -228,10 +220,17 @@ pub struct AdminAction {
     pub user_id: u64,
     pub message: String,
     pub log_output: String,
+    pub message_id: u32,
+    pub topic_id: u32,
+    pub prev_value: String,
+    pub new_value: String,
     pub usernames: Vec<String>,
     pub chat_usernames: Vec<String>,
     pub chat_title: String,
     pub user_title: String,
+    pub target_user_id: u64,
+    pub target_user_title: String,
+    pub user_is_admin: bool,
 }
 
 #[derive(Row, Serialize)]

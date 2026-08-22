@@ -1,25 +1,206 @@
 use grammers_client::Client;
+use grammers_client::peer::Peer;
+use grammers_session::types::PeerRef;
 use grammers_tl_types as tl;
 use log::{error, info};
-use std::time::Duration;
+use std::collections::HashSet;
+use std::time::{Duration, Instant};
 
 use crate::db::AdminAction;
 
-pub fn start(client: Client, client_id: u64) {
+const POLL_INTERVAL: Duration = Duration::from_secs(60);
+/// How often the dialog list is re-scanned for chats where we are an admin.
+const DISCOVERY_INTERVAL: Duration = Duration::from_secs(30 * 60);
+
+/// A chat we administer, along with everything needed to poll and annotate its admin log.
+struct AdminChat {
+    peer: PeerRef,
+    chat_id: u64,
+    title: String,
+    usernames: Vec<String>,
+    admin_ids: HashSet<i64>,
+}
+
+pub fn start(client: Client, _client_id: u64) {
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        let mut interval = tokio::time::interval(POLL_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut chats: Vec<AdminChat> = Vec::new();
+        let mut discovered_at: Option<Instant> = None;
         loop {
             interval.tick().await;
-            if let Err(e) = log_admin_actions(&client, client_id).await {
-                error!("Failed to fetch admin actions: {:?}", e);
+
+            if discovered_at.is_none_or(|at| at.elapsed() >= DISCOVERY_INTERVAL) {
+                match discover_admin_chats(&client).await {
+                    Ok(found) => {
+                        info!("admin log: watching {} chat(s)", found.len());
+                        chats = found;
+                        discovered_at = Some(Instant::now());
+                    }
+                    Err(e) => error!("Failed to discover admin chats: {:?}", e),
+                }
+            }
+
+            for chat in &chats {
+                if let Err(e) = log_admin_actions(&client, chat).await {
+                    error!("Failed to fetch admin actions for {}: {:?}", chat.title, e);
+                }
             }
         }
     });
 }
 
-fn action_type_name(action: &tl::enums::ChannelAdminLogEventAction) -> String {
-    let dbg = format!("{:?}", action);
-    dbg.split(&['(', ' '][..]).next().unwrap_or(&dbg).to_string()
+/// Every chat in the dialog list where the logged-in account holds admin rights.
+///
+/// Only channels and megagroups keep an admin log; basic groups are skipped.
+async fn discover_admin_chats(
+    client: &Client,
+) -> Result<Vec<AdminChat>, Box<dyn std::error::Error>> {
+    let mut chats = Vec::new();
+    let mut dialogs = client.iter_dialogs();
+
+    while let Some(dialog) = dialogs.next().await? {
+        let peer = dialog.peer();
+        let is_admin = match peer {
+            Peer::Channel(channel) => channel.admin_rights().is_some(),
+            Peer::Group(group) => match &group.raw {
+                tl::enums::Chat::Channel(c) => c.creator || c.admin_rights.is_some(),
+                _ => false,
+            },
+            _ => false,
+        };
+        if !is_admin {
+            continue;
+        }
+
+        let Some(chat_id) = peer.id().bare_id() else {
+            continue;
+        };
+        let peer_ref = match peer.to_ref().await {
+            Ok(Some(r)) => r,
+            Ok(None) => {
+                error!("Cannot get peer ref for chat {}", chat_id);
+                continue;
+            }
+            Err(e) => {
+                error!("Cannot get peer ref for chat {}: {:?}", chat_id, e);
+                continue;
+            }
+        };
+
+        let mut usernames: Vec<String> = Vec::new();
+        if let Some(u) = peer.username() {
+            usernames.push(u.to_string());
+        }
+        for u in peer.usernames() {
+            usernames.push(u.to_string());
+        }
+
+        let admin_ids = match fetch_admin_ids(client, peer_ref).await {
+            Ok(ids) => ids,
+            Err(e) => {
+                error!("Cannot list admins of chat {}: {:?}", chat_id, e);
+                HashSet::new()
+            }
+        };
+
+        chats.push(AdminChat {
+            peer: peer_ref,
+            chat_id: chat_id as u64,
+            title: peer.name().unwrap_or("unknown").to_string(),
+            usernames,
+            admin_ids,
+        });
+    }
+
+    Ok(chats)
+}
+
+/// The user ids currently holding admin rights in a chat, used to flag the actor of each event.
+async fn fetch_admin_ids(
+    client: &Client,
+    peer: PeerRef,
+) -> Result<HashSet<i64>, Box<dyn std::error::Error>> {
+    let channel: tl::enums::InputChannel = peer.into();
+    let result = client
+        .invoke(&tl::functions::channels::GetParticipants {
+            channel,
+            filter: tl::enums::ChannelParticipantsFilter::ChannelParticipantsAdmins,
+            offset: 0,
+            limit: 200,
+            hash: 0,
+        })
+        .await?;
+
+    Ok(match result {
+        tl::enums::channels::ChannelParticipants::Participants(p) => p
+            .participants
+            .iter()
+            .filter_map(participant_user_id)
+            .collect(),
+        tl::enums::channels::ChannelParticipants::NotModified => HashSet::new(),
+    })
+}
+
+/// Stable name for an action, kept identical to the historical `{:?}`-derived values so the
+/// `LowCardinality` dictionary stays consistent — but pinned here instead of tracking the
+/// library's `Debug` impl.
+fn action_type_name(action: &tl::enums::ChannelAdminLogEventAction) -> &'static str {
+    use tl::enums::ChannelAdminLogEventAction::*;
+    match action {
+        ChangeTitle(_) => "ChangeTitle",
+        ChangeAbout(_) => "ChangeAbout",
+        ChangeUsername(_) => "ChangeUsername",
+        ChangePhoto(_) => "ChangePhoto",
+        ToggleInvites(_) => "ToggleInvites",
+        ToggleSignatures(_) => "ToggleSignatures",
+        UpdatePinned(_) => "UpdatePinned",
+        EditMessage(_) => "EditMessage",
+        DeleteMessage(_) => "DeleteMessage",
+        ParticipantJoin => "ParticipantJoin",
+        ParticipantLeave => "ParticipantLeave",
+        ParticipantInvite(_) => "ParticipantInvite",
+        ParticipantToggleBan(_) => "ParticipantToggleBan",
+        ParticipantToggleAdmin(_) => "ParticipantToggleAdmin",
+        ChangeStickerSet(_) => "ChangeStickerSet",
+        TogglePreHistoryHidden(_) => "TogglePreHistoryHidden",
+        DefaultBannedRights(_) => "DefaultBannedRights",
+        StopPoll(_) => "StopPoll",
+        ChangeLinkedChat(_) => "ChangeLinkedChat",
+        ChangeLocation(_) => "ChangeLocation",
+        ToggleSlowMode(_) => "ToggleSlowMode",
+        StartGroupCall(_) => "StartGroupCall",
+        DiscardGroupCall(_) => "DiscardGroupCall",
+        ParticipantMute(_) => "ParticipantMute",
+        ParticipantUnmute(_) => "ParticipantUnmute",
+        ToggleGroupCallSetting(_) => "ToggleGroupCallSetting",
+        ParticipantJoinByInvite(_) => "ParticipantJoinByInvite",
+        ExportedInviteDelete(_) => "ExportedInviteDelete",
+        ExportedInviteRevoke(_) => "ExportedInviteRevoke",
+        ExportedInviteEdit(_) => "ExportedInviteEdit",
+        ParticipantVolume(_) => "ParticipantVolume",
+        ChangeHistoryTtl(_) => "ChangeHistoryTtl",
+        ParticipantJoinByRequest(_) => "ParticipantJoinByRequest",
+        ToggleNoForwards(_) => "ToggleNoForwards",
+        SendMessage(_) => "SendMessage",
+        ChangeAvailableReactions(_) => "ChangeAvailableReactions",
+        ChangeUsernames(_) => "ChangeUsernames",
+        ToggleForum(_) => "ToggleForum",
+        CreateTopic(_) => "CreateTopic",
+        EditTopic(_) => "EditTopic",
+        DeleteTopic(_) => "DeleteTopic",
+        PinTopic(_) => "PinTopic",
+        ToggleAntiSpam(_) => "ToggleAntiSpam",
+        ChangePeerColor(_) => "ChangePeerColor",
+        ChangeProfilePeerColor(_) => "ChangeProfilePeerColor",
+        ChangeWallpaper(_) => "ChangeWallpaper",
+        ChangeEmojiStatus(_) => "ChangeEmojiStatus",
+        ChangeEmojiStickerSet(_) => "ChangeEmojiStickerSet",
+        ToggleSignatureProfiles(_) => "ToggleSignatureProfiles",
+        ParticipantSubExtend(_) => "ParticipantSubExtend",
+        ToggleAutotranslation(_) => "ToggleAutotranslation",
+        ParticipantEditRank(_) => "ParticipantEditRank",
+    }
 }
 
 fn message_text(msg: &tl::enums::Message) -> String {
@@ -47,13 +228,122 @@ fn participant_user_id(p: &tl::enums::ChannelParticipant) -> Option<i64> {
     }
 }
 
+fn group_call_participant_user_id(p: &tl::enums::GroupCallParticipant) -> Option<i64> {
+    let tl::enums::GroupCallParticipant::Participant(p) = p;
+    match &p.peer {
+        tl::enums::Peer::User(u) => Some(u.user_id),
+        _ => None,
+    }
+}
+
+/// The user an action was performed *on* (banned, promoted, invited, muted), when there is one.
+fn target_user_id(action: &tl::enums::ChannelAdminLogEventAction) -> Option<i64> {
+    use tl::enums::ChannelAdminLogEventAction::*;
+    match action {
+        ParticipantInvite(a) => participant_user_id(&a.participant),
+        ParticipantToggleBan(a) => participant_user_id(&a.new_participant),
+        ParticipantToggleAdmin(a) => participant_user_id(&a.new_participant),
+        ParticipantSubExtend(a) => participant_user_id(&a.new_participant),
+        ParticipantEditRank(a) => Some(a.user_id),
+        ParticipantMute(a) => group_call_participant_user_id(&a.participant),
+        ParticipantUnmute(a) => group_call_participant_user_id(&a.participant),
+        ParticipantVolume(a) => group_call_participant_user_id(&a.participant),
+        _ => None,
+    }
+}
+
+fn message_id(msg: &tl::enums::Message) -> i32 {
+    match msg {
+        tl::enums::Message::Empty(m) => m.id,
+        tl::enums::Message::Message(m) => m.id,
+        tl::enums::Message::Service(m) => m.id,
+    }
+}
+
+fn forum_topic_id(topic: &tl::enums::ForumTopic) -> i32 {
+    match topic {
+        tl::enums::ForumTopic::Topic(t) => t.id,
+        tl::enums::ForumTopic::Deleted(t) => t.id,
+    }
+}
+
+/// The message an action was performed on, for the message-shaped actions.
+fn action_message_id(action: &tl::enums::ChannelAdminLogEventAction) -> i32 {
+    use tl::enums::ChannelAdminLogEventAction::*;
+    match action {
+        UpdatePinned(a) => message_id(&a.message),
+        EditMessage(a) => message_id(&a.new_message),
+        DeleteMessage(a) => message_id(&a.message),
+        StopPoll(a) => message_id(&a.message),
+        SendMessage(a) => message_id(&a.message),
+        _ => 0,
+    }
+}
+
+/// The forum topic an action was performed on, for the topic-shaped actions.
+fn action_topic_id(action: &tl::enums::ChannelAdminLogEventAction) -> i32 {
+    use tl::enums::ChannelAdminLogEventAction::*;
+    match action {
+        CreateTopic(a) => forum_topic_id(&a.topic),
+        DeleteTopic(a) => forum_topic_id(&a.topic),
+        EditTopic(a) => forum_topic_id(&a.new_topic),
+        PinTopic(a) => a
+            .new_topic
+            .as_ref()
+            .or(a.prev_topic.as_ref())
+            .map(forum_topic_id)
+            .unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// Before/after pair of an action, flattened to text.
+///
+/// Most of the admin log is a single value changing, so these two columns answer most questions
+/// without touching the raw payload. Actions carrying a structure rather than a value (photos,
+/// sticker sets, wallpapers, banned rights) leave them empty — the payload still has the detail.
+fn action_values(action: &tl::enums::ChannelAdminLogEventAction) -> (String, String) {
+    use tl::enums::ChannelAdminLogEventAction::*;
+    let boolean = |v: bool| (String::new(), v.to_string());
+    match action {
+        ChangeTitle(a) => (a.prev_value.clone(), a.new_value.clone()),
+        ChangeAbout(a) => (a.prev_value.clone(), a.new_value.clone()),
+        ChangeUsername(a) => (a.prev_value.clone(), a.new_value.clone()),
+        ChangeUsernames(a) => (a.prev_value.join(","), a.new_value.join(",")),
+        ChangeLinkedChat(a) => (a.prev_value.to_string(), a.new_value.to_string()),
+        ToggleSlowMode(a) => (a.prev_value.to_string(), a.new_value.to_string()),
+        ChangeHistoryTtl(a) => (a.prev_value.to_string(), a.new_value.to_string()),
+        ParticipantEditRank(a) => (a.prev_rank.clone(), a.new_rank.clone()),
+        EditMessage(a) => (message_text(&a.prev_message), message_text(&a.new_message)),
+        ToggleInvites(a) => boolean(a.new_value),
+        ToggleSignatures(a) => boolean(a.new_value),
+        TogglePreHistoryHidden(a) => boolean(a.new_value),
+        ToggleNoForwards(a) => boolean(a.new_value),
+        ToggleForum(a) => boolean(a.new_value),
+        ToggleAntiSpam(a) => boolean(a.new_value),
+        ToggleSignatureProfiles(a) => boolean(a.new_value),
+        ToggleAutotranslation(a) => boolean(a.new_value),
+        ToggleGroupCallSetting(a) => boolean(a.join_muted),
+        _ => (String::new(), String::new()),
+    }
+}
+
 fn participant_name(p: &tl::enums::ChannelParticipant, users: &[tl::enums::User]) -> String {
     participant_user_id(p)
         .map(|id| extract_user_info(users, id).0)
         .unwrap_or_default()
 }
 
-fn format_log_output(action: &tl::enums::ChannelAdminLogEventAction, user_title: &str, users: &[tl::enums::User]) -> String {
+/// Human-readable one-liner for an event.
+///
+/// `colorize` adds ANSI escapes to the edit diff — only ever for the console; the stored copy
+/// stays plain text.
+fn format_log_output(
+    action: &tl::enums::ChannelAdminLogEventAction,
+    user_title: &str,
+    users: &[tl::enums::User],
+    colorize: bool,
+) -> String {
     use tl::enums::ChannelAdminLogEventAction::*;
     match action {
         ChangeTitle(a) => format!("title: {} -> {}", a.prev_value, a.new_value),
@@ -73,7 +363,11 @@ fn format_log_output(action: &tl::enums::ChannelAdminLogEventAction, user_title:
                 .unified_diff()
                 .missing_newline_hint(false)
                 .to_string();
-            crate::utils::diff::colorize_unified_diff(&diff, &prev, &new)
+            if colorize {
+                crate::utils::diff::colorize_unified_diff(&diff, &prev, &new)
+            } else {
+                diff.trim_end().to_string()
+            }
         }
         DeleteMessage(a) => message_text(&a.message),
         ParticipantJoin => format!("{} joined", user_title),
@@ -161,20 +455,7 @@ fn extract_user_info(
 }
 
 
-async fn resolve_channel(
-    client: &Client,
-    chat_id: i64,
-) -> Result<grammers_client::peer::Peer, Box<dyn std::error::Error>> {
-    let input_peer = tl::types::InputPeerChannel {
-        channel_id: chat_id,
-        access_hash: 0,
-    };
-    Ok(client.resolve_peer(input_peer).await?)
-}
-
-async fn get_last_event_id(
-    chat_id: u64,
-) -> Result<u64, Box<dyn std::error::Error>> {
+async fn get_last_event_id(chat_id: u64) -> Result<u64, Box<dyn std::error::Error>> {
     let max_id: u64 = crate::db::clickhouse()
         .query("SELECT max(event_id) FROM admin_actions2 WHERE chat_id = ?")
         .bind(chat_id)
@@ -186,133 +467,104 @@ async fn get_last_event_id(
 
 async fn log_admin_actions(
     client: &Client,
-    _client_id: u64,
+    chat: &AdminChat,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ch = crate::db::clickhouse();
 
-    let chat_ids_str = std::env::var("TELEGRAM_CHAT_IDS")?;
-    let chat_ids: Vec<i64> = chat_ids_str
-        .split(',')
-        .filter_map(|s| s.trim().parse().ok())
-        .collect();
+    let min_id = get_last_event_id(chat.chat_id).await? as i64;
+    let mut max_id: i64 = 0;
+    let mut total_inserted: usize = 0;
+    let mut new_last_id: u64 = 0;
 
-    if chat_ids.is_empty() {
-        return Ok(());
+    loop {
+        let input_channel: tl::enums::InputChannel = chat.peer.into();
+
+        let tl::enums::channels::AdminLogResults::Results(result) = client
+            .invoke(&tl::functions::channels::GetAdminLog {
+                channel: input_channel,
+                q: String::new(),
+                events_filter: None,
+                admins: None,
+                max_id,
+                min_id,
+                limit: 100,
+            })
+            .await?;
+
+        if result.events.is_empty() {
+            break;
+        }
+
+        let mut insert = ch.insert::<AdminAction>("admin_actions2").await?;
+
+        for event in &result.events {
+            let tl::enums::ChannelAdminLogEvent::Event(ev) = event;
+
+            let (user_title, usernames) = extract_user_info(&result.users, ev.user_id);
+            let target_id = target_user_id(&ev.action);
+            let (prev_value, new_value) = action_values(&ev.action);
+            let console_output = format_log_output(&ev.action, &user_title, &result.users, true);
+            let target_user_title = target_id
+                .map(|id| extract_user_info(&result.users, id).0)
+                .unwrap_or_default();
+
+            let log = &AdminAction {
+                date: ev.date as u32,
+                event_id: ev.id as u64,
+                chat_id: chat.chat_id,
+                action_type: action_type_name(&ev.action).to_string(),
+                user_id: ev.user_id as u64,
+                message: action_message_json(&ev.action),
+                log_output: format_log_output(&ev.action, &user_title, &result.users, false),
+                usernames,
+                chat_usernames: chat.usernames.clone(),
+                chat_title: chat.title.clone(),
+                user_title,
+                message_id: action_message_id(&ev.action) as u32,
+                topic_id: action_topic_id(&ev.action) as u32,
+                prev_value,
+                new_value,
+                target_user_id: target_id.unwrap_or(0) as u64,
+                target_user_title,
+                user_is_admin: chat.admin_ids.contains(&ev.user_id),
+            };
+
+            info!(
+                "admin    {:>12} {:<25} {:<20} {:<20}\n{}",
+                log.event_id,
+                &log.chat_title.chars().take(25).collect::<String>(),
+                &log.action_type.chars().take(20).collect::<String>(),
+                &log.user_title.chars().take(20).collect::<String>(),
+                console_output,
+            );
+
+            insert.write(log).await?;
+        }
+
+        insert.end().await?;
+
+        let (batch_min, batch_max) = result.events.iter().fold((i64::MAX, 0u64), |(min, max), e| {
+            let tl::enums::ChannelAdminLogEvent::Event(ev) = e;
+            (min.min(ev.id), max.max(ev.id as u64))
+        });
+
+        total_inserted += result.events.len();
+        if batch_max > new_last_id {
+            new_last_id = batch_max;
+        }
+
+        if result.events.len() < 100 {
+            break;
+        }
+
+        max_id = batch_min;
     }
 
-    for chat_id in &chat_ids {
-        let peer = match resolve_channel(client, *chat_id).await {
-            Ok(r) => r,
-            Err(e) => {
-                error!("Cannot resolve channel {}: {:?}", chat_id, e);
-                continue;
-            }
-        };
-        let peer_ref = match peer.to_ref().await {
-            Ok(Some(r)) => r,
-            Ok(None) => {
-                error!("Cannot get peer ref for channel {}", chat_id);
-                continue;
-            }
-            Err(e) => {
-                error!("Cannot get peer ref for channel {}: {:?}", chat_id, e);
-                continue;
-            }
-        };
-        let channel_title = peer.name().unwrap_or("unknown").to_string();
-        let channel_usernames: Vec<String> = {
-            let mut unames = Vec::new();
-            if let Some(u) = peer.username() {
-                unames.push(u.to_string());
-            }
-            for u in peer.usernames() {
-                unames.push(u.to_string());
-            }
-            unames
-        };
-
-        let chat_id_u64 = *chat_id as u64;
-        let min_id = get_last_event_id(chat_id_u64).await? as i64;
-        let mut max_id: i64 = 0;
-        let mut total_inserted: usize = 0;
-        let mut new_last_id: u64 = 0;
-
-        loop {
-            let input_channel: tl::enums::InputChannel = peer_ref.into();
-
-            let tl::enums::channels::AdminLogResults::Results(result) = client
-                .invoke(&tl::functions::channels::GetAdminLog {
-                    channel: input_channel,
-                    q: String::new(),
-                    events_filter: None,
-                    admins: None,
-                    max_id,
-                    min_id,
-                    limit: 100,
-                })
-                .await?;
-
-            if result.events.is_empty() {
-                break;
-            }
-
-            let mut insert = ch.insert::<AdminAction>("admin_actions2").await?;
-
-            for event in &result.events {
-                let tl::enums::ChannelAdminLogEvent::Event(ev) = event;
-
-                let (user_title, usernames) = extract_user_info(&result.users, ev.user_id);
-
-                let log = &AdminAction {
-                    date: ev.date as u32,
-                    event_id: ev.id as u64,
-                    chat_id: chat_id_u64,
-                    action_type: action_type_name(&ev.action),
-                    user_id: ev.user_id as u64,
-                    message: action_message_json(&ev.action),
-                    log_output: format_log_output(&ev.action, &user_title, &result.users),
-                    usernames,
-                    chat_usernames: channel_usernames.clone(),
-                    chat_title: channel_title.clone(),
-                    user_title,
-                };
-
-                info!(
-                    "admin    {:>12} {:<25} {:<20} {:<20}\n{}",
-                    log.event_id,
-                    &log.chat_title.chars().take(25).collect::<String>(),
-                    &log.action_type.chars().take(20).collect::<String>(),
-                    &log.user_title.chars().take(20).collect::<String>(),
-                    log.log_output,
-                );
-
-                insert
-                    .write(log)
-                    .await?;
-            }
-
-            insert.end().await?;
-
-            let (batch_min, batch_max) = result.events.iter().fold((i64::MAX, 0u64), |(min, max), e| {
-                let tl::enums::ChannelAdminLogEvent::Event(ev) = e;
-                (min.min(ev.id), max.max(ev.id as u64))
-            });
-
-            total_inserted += result.events.len();
-            if batch_max > new_last_id {
-                new_last_id = batch_max;
-            }
-
-            if result.events.len() < 100 {
-                break;
-            }
-
-            max_id = batch_min;
-        }
-
-        if total_inserted > 0 {
-            info!("[{}] Inserted {} entries. Last ID: {}", channel_title, total_inserted, new_last_id);
-        }
+    if total_inserted > 0 {
+        info!(
+            "[{}] Inserted {} entries. Last ID: {}",
+            chat.title, total_inserted, new_last_id
+        );
     }
 
     Ok(())
