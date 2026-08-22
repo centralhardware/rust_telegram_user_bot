@@ -10,7 +10,7 @@ use crate::db::AdminAction;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// How often the dialog list is re-scanned for chats where we are an admin.
-const DISCOVERY_INTERVAL: Duration = Duration::from_secs(30 * 60);
+const DISCOVERY_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 /// A chat we administer, along with everything needed to poll and annotate its admin log.
 struct AdminChat {
