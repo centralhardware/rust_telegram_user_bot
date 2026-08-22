@@ -61,10 +61,14 @@ async fn discover_admin_chats(
 
     while let Some(dialog) = dialogs.next().await? {
         let peer = dialog.peer();
+        // Monoforums (a channel's direct-messages chat) report admin rights but reject both
+        // getAdminLog and getParticipants with CHANNEL_MONOFORUM_UNSUPPORTED.
         let is_admin = match peer {
-            Peer::Channel(channel) => channel.admin_rights().is_some(),
+            Peer::Channel(channel) => !channel.raw.monoforum && channel.admin_rights().is_some(),
             Peer::Group(group) => match &group.raw {
-                tl::enums::Chat::Channel(c) => c.creator || c.admin_rights.is_some(),
+                tl::enums::Chat::Channel(c) => {
+                    !c.monoforum && (c.creator || c.admin_rights.is_some())
+                }
                 _ => false,
             },
             _ => false,
