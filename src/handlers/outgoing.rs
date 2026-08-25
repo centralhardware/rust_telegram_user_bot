@@ -1,6 +1,7 @@
 use clickhouse::Row;
 use grammers_client::peer::Peer;
 use grammers_client::update::Message;
+use grammers_client::Client;
 use log::info;
 use serde::Deserialize;
 
@@ -12,7 +13,7 @@ struct LastChatRow {
     usernames: Vec<String>,
 }
 
-pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn save_outgoing(message: &Message, client: &Client, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
     let (title, usernames) = match message.peer() {
         Some(Peer::User(user)) => {
             let name = match (user.first_name(), user.last_name()) {
@@ -98,7 +99,12 @@ pub async fn save_outgoing(message: &Message, client_id: u64) -> Result<(), Box<
     }
 
     {
-        let title_short: String = title.chars().take(25).collect();
+        let topic_name = crate::utils::topic::topic_name(client, message).await;
+        let title_short: String = if topic_name.is_empty() {
+            title.chars().take(25).collect()
+        } else {
+            format!("{} / {}", title, topic_name).chars().take(25).collect()
+        };
         let reply_line = crate::utils::reply_preview::format_reply_line(message).await;
         if !reply_line.is_empty() {
             info!("{}", reply_line);

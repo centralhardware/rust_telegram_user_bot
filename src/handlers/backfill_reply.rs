@@ -60,7 +60,7 @@ pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) 
         serde_json::to_string(&reply.raw).unwrap_or_default()
     };
 
-    let reply_to = crate::utils::reply_target::reply_target_fetched(&reply).unwrap_or(0) as u64;
+    let reply_to = crate::utils::reply_target::reply_target(&reply).unwrap_or(0) as u64;
 
     crate::db::INCOMING_BUF
         .push(IncomingMessage {

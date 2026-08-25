@@ -7,3 +7,4 @@ pub mod reply_preview;
 pub mod reply_target;
 pub mod rich_message;
 pub mod service_action;
+pub mod topic;

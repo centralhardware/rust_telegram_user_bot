@@ -1,11 +1,12 @@
 use grammers_client::update::Message;
+use grammers_client::Client;
 use log::info;
 
 use crate::db::IncomingMessage;
 use crate::utils::log_ignore::is_log_ignored;
 use super::extract::{extract_sender, extract_chat, extract_community_tag_from_update};
 
-pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn save_incoming(message: &Message, client: &Client, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
     let media_desc = crate::utils::media_description::describe(message);
 
     let sender = extract_sender(message);
@@ -46,7 +47,12 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
             preview.push_str(b);
         }
         let sender_short: String = sender_display.chars().take(10).collect();
-        let chat_name_short: String = chat.chat_title.chars().take(25).collect();
+        let topic_name = crate::utils::topic::topic_name(client, message).await;
+        let chat_name_short: String = if topic_name.is_empty() {
+            chat.chat_title.chars().take(25).collect()
+        } else {
+            format!("{} / {}", chat.chat_title, topic_name).chars().take(25).collect()
+        };
 
         let reply_line = crate::utils::reply_preview::format_reply_line(message).await;
         if !reply_line.is_empty() {
