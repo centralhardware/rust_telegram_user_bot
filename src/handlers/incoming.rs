@@ -76,7 +76,7 @@ pub async fn save_incoming(message: &Message, client_id: u64) -> Result<(), Box<
         msg_content.push_str(b);
     }
 
-    let reply_to = message.reply_to_message_id().unwrap_or(0) as u64;
+    let reply_to = crate::utils::reply_target::reply_target(message).unwrap_or(0) as u64;
 
     crate::db::INCOMING_BUF.push(IncomingMessage {
         date_time: message.date().as_second() as u32,

@@ -4,7 +4,7 @@ use grammers_tl_types as tl;
 /// Format reply line for log messages.
 /// Returns a line to print *above* the message, or empty string if no reply.
 pub async fn format_reply_line(message: &Message) -> String {
-    let reply_id = match message.reply_to_message_id() {
+    let reply_id = match crate::utils::reply_target::reply_target(message) {
         Some(id) => id,
         None => return String::new(),
     };

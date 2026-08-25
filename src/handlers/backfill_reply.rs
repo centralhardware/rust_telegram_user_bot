@@ -10,7 +10,7 @@ use super::extract::{extract_sender, extract_chat, extract_community_tag};
 /// If the message is a reply and the replied-to message is not yet in ClickHouse,
 /// fetch it from Telegram and save it.
 pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) {
-    let reply_id = match message.reply_to_message_id() {
+    let reply_id = match crate::utils::reply_target::reply_target(message) {
         Some(id) => id,
         None => return,
     };
@@ -60,7 +60,7 @@ pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) 
         serde_json::to_string(&reply.raw).unwrap_or_default()
     };
 
-    let reply_to = reply.reply_to_message_id().unwrap_or(0) as u64;
+    let reply_to = crate::utils::reply_target::reply_target_fetched(&reply).unwrap_or(0) as u64;
 
     crate::db::INCOMING_BUF
         .push(IncomingMessage {
