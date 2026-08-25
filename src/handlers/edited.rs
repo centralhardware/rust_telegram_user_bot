@@ -1,4 +1,5 @@
 use grammers_client::update::Message;
+use grammers_client::Client;
 use log::info;
 
 use crate::db::EditedMessage;
@@ -6,6 +7,7 @@ use crate::utils::log_ignore::is_log_ignored;
 
 pub async fn save_edited(
     message: &Message,
+    client: &Client,
     client_id: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let chat_id = message.peer_id().bare_id_unchecked();
@@ -31,19 +33,12 @@ pub async fn save_edited(
     let diff = unified_diff(&original, &message_content);
 
     let user_id = message
-        .sender()
-        .and_then(|s| s.id().bare_id())
-        .unwrap_or(0) as i64;
+        .sender_id()
+        .map(|id| id.bare_id_unchecked())
+        .unwrap_or(0);
 
-    let chat_name = message
-        .peer()
-        .map(|p| p.name().unwrap_or_default().to_string())
-        .unwrap_or_default();
-
-    let sender_name = message
-        .sender()
-        .and_then(|p| p.name().map(|s| s.to_string()))
-        .unwrap_or_default();
+    let chat_name = crate::utils::peer_info::chat_title(client, message).await;
+    let sender_name = crate::utils::peer_info::sender_display(client, message).await;
     let sender_short: String = sender_name.chars().take(10).collect();
 
     if !is_log_ignored(chat_id) {

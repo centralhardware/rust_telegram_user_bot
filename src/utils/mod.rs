@@ -3,6 +3,7 @@ pub mod format_entities;
 pub mod inline_buttons;
 pub mod log_ignore;
 pub mod media_description;
+pub mod peer_info;
 pub mod reply_preview;
 pub mod reply_target;
 pub mod rich_message;

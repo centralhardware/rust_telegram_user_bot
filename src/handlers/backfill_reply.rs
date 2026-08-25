@@ -5,7 +5,8 @@ use log::{debug, info, warn};
 
 use crate::db::IncomingMessage;
 use crate::utils::log_ignore::is_log_ignored;
-use super::extract::{extract_sender, extract_chat, extract_community_tag};
+use super::extract::extract_community_tag;
+use crate::utils::peer_info::{chat_info, sender_info};
 
 /// If the message is a reply and the replied-to message is not yet in ClickHouse,
 /// fetch it from Telegram and save it.
@@ -42,8 +43,8 @@ pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) 
         return;
     }
 
-    let sender = extract_sender(&reply);
-    let chat = extract_chat(&reply);
+    let sender = sender_info(client, &reply).await;
+    let chat = chat_info(client, &reply).await;
 
     let text = crate::utils::format_entities::formatted_text(&reply);
     let sender_bare_id = sender.user_id as i64;

@@ -2,6 +2,7 @@ use grammers_client::message::Message;
 use grammers_client::peer::Peer;
 use grammers_tl_types as tl;
 
+#[derive(Clone, Default)]
 pub struct SenderInfo {
     pub username: Vec<String>,
     pub first_name: String,
@@ -9,6 +10,7 @@ pub struct SenderInfo {
     pub user_id: u64,
 }
 
+#[derive(Clone, Default)]
 pub struct ChatInfo {
     pub chat_title: String,
     pub chat_usernames: Vec<String>,
@@ -32,45 +34,50 @@ pub fn extract_community_tag(msg: &tl::enums::Message) -> String {
 
 pub fn extract_sender(message: &Message) -> SenderInfo {
     match message.sender() {
-        Some(Peer::User(user)) => SenderInfo {
+        Some(peer) => sender_from_peer(peer),
+        None => SenderInfo::default(),
+    }
+}
+
+/// The sender fields of an already-resolved peer. Only users send messages we
+/// attribute; anything else stays blank, as it did before.
+pub fn sender_from_peer(peer: &Peer) -> SenderInfo {
+    match peer {
+        Peer::User(user) => SenderInfo {
             username: vec![user.username().unwrap_or_default().to_string()],
             first_name: user.first_name().unwrap_or_default().to_string(),
             second_name: user.last_name().unwrap_or_default().to_string(),
             user_id: user.id().bare_id_unchecked() as u64,
         },
-        _ => SenderInfo {
-            username: Vec::new(),
-            first_name: String::new(),
-            second_name: String::new(),
-            user_id: 0,
-        },
+        _ => SenderInfo::default(),
     }
 }
 
 pub fn extract_chat(message: &Message) -> ChatInfo {
-    let (title, usernames) = match message.peer() {
-        Some(Peer::Group(group)) => (
-            group.title().unwrap_or_default().to_string(),
-            group.usernames().into_iter().map(|s| s.to_string()).collect(),
-        ),
-        Some(Peer::Channel(channel)) => (
-            channel.title().to_string(),
-            channel.usernames().into_iter().map(|s| s.to_string()).collect(),
-        ),
-        _ => (String::new(), Vec::new()),
-    };
+    match message.peer() {
+        Some(peer) => chat_from_peer(peer),
+        None => ChatInfo::default(),
+    }
+}
 
-    let chat_title = if title.is_empty() {
-        message
-            .peer()
-            .map(|p| p.name().unwrap_or_default().to_string())
-            .unwrap_or_default()
-    } else {
-        title
+/// The chat fields of an already-resolved peer. For a private conversation the
+/// "chat" is the other person, so their full name is the title.
+pub fn chat_from_peer(peer: &Peer) -> ChatInfo {
+    let chat_title = match peer {
+        Peer::User(user) => {
+            let first = user.first_name().unwrap_or_default();
+            let last = user.last_name().unwrap_or_default();
+            if last.is_empty() {
+                first.to_string()
+            } else {
+                format!("{first} {last}")
+            }
+        }
+        _ => peer.name().unwrap_or_default().to_string(),
     };
 
     ChatInfo {
         chat_title,
-        chat_usernames: usernames,
+        chat_usernames: peer.usernames().into_iter().map(|s| s.to_string()).collect(),
     }
 }
