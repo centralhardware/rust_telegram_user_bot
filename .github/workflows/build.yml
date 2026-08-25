@@ -2,7 +2,7 @@ name: Build and Publish Docker image
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "main" ]
     tags: [ "v*.*.*" ]
     paths:
       - "src/**"
@@ -53,7 +53,7 @@ jobs:
           IMAGE="ghcr.io/${REPO_LOWER}"
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
           TAGS="${IMAGE}:sha-${GITHUB_SHA::7}"
-          if [[ "$GITHUB_REF" == "refs/heads/main" || "$GITHUB_REF" == "refs/heads/master" ]]; then
+          if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
             TAGS="${TAGS},${IMAGE}:latest"
           fi
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
