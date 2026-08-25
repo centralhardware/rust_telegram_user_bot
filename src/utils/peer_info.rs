@@ -1,87 +1,97 @@
 use grammers_client::message::Message;
 use grammers_client::Client;
-use std::collections::HashMap;
-use std::sync::LazyLock;
-use tokio::sync::Mutex;
 
-use crate::handlers::extract::{chat_from_peer, sender_from_peer, ChatInfo, SenderInfo};
+use crate::handlers::extract::{ChatInfo, SenderInfo};
+use crate::utils::peer_names::{self, PeerNames};
 
 /// Updates only carry the peers Telegram bothered to attach, so a message can
 /// arrive with neither its chat nor its sender in the in-memory peer map — the
-/// chat then gets logged and stored without a name. Names change rarely, so one
-/// resolve per peer per process is enough to fill those gaps.
-static CHATS: LazyLock<Mutex<HashMap<i64, ChatInfo>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static SENDERS: LazyLock<Mutex<HashMap<i64, SenderInfo>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+/// chat then gets logged and stored without a name. Names are looked up in
+/// ClickHouse's `peer_names` (memoised per process by that module) and only
+/// resolved against Telegram when they are not stored yet; every peer that does
+/// come through named is written back, so the table fills itself.
 
 /// The message's chat, resolving it against Telegram when the update did not
 /// carry it. Falls back to whatever the update did have (usually nothing).
 pub async fn chat_info(client: &Client, message: &Message) -> ChatInfo {
-    let from_update = crate::handlers::extract::extract_chat(message);
-    if !from_update.chat_title.is_empty() {
-        return from_update;
-    }
-
-    let chat_id = message.peer_id().bare_id_unchecked();
-    if let Some(cached) = CHATS.lock().await.get(&chat_id) {
-        return cached.clone();
-    }
-
-    let peer = match message.peer_ref().await {
-        Ok(Some(peer)) => peer,
-        _ => return from_update,
-    };
-    let resolved = match client.resolve_peer(peer).await {
-        Ok(peer) => chat_from_peer(&peer),
-        Err(e) => {
-            log::warn!("resolving chat {chat_id}: {e}");
-            return from_update;
-        }
+    let from_update = match message.peer() {
+        Some(peer) => match PeerNames::from_peer(peer) {
+            Some(names) => {
+                peer_names::remember(&names).await;
+                return names.chat_info();
+            }
+            None => ChatInfo::default(),
+        },
+        None => ChatInfo::default(),
     };
 
-    // Never cache a blank name: a peer that could not be named this time must
-    // stay resolvable later, not be pinned empty for the process's lifetime.
-    if resolved.chat_title.is_empty() {
-        return from_update;
+    let peer_id = message.peer_id().bot_api_dialog_id_unchecked();
+    match resolve(client, message, peer_id, Target::Chat).await {
+        Some(names) => names.chat_info(),
+        None => from_update,
     }
-    CHATS.lock().await.insert(chat_id, resolved.clone());
-    resolved
 }
 
 /// The message's sender, resolving it against Telegram when the update did not
 /// carry it. Empty when the message has no sender at all (channel posts).
 pub async fn sender_info(client: &Client, message: &Message) -> SenderInfo {
-    let from_update = crate::handlers::extract::extract_sender(message);
-    if from_update.user_id != 0 {
-        return from_update;
+    if let Some(peer) = message.sender() {
+        if let Some(names) = PeerNames::from_peer(peer) {
+            peer_names::remember(&names).await;
+            if let Some(sender) = names.sender_info() {
+                return sender;
+            }
+        }
     }
 
     let sender_id = match message.sender_id() {
-        Some(id) => id.bare_id_unchecked(),
-        None => return from_update,
+        Some(id) => id.bot_api_dialog_id_unchecked(),
+        None => return SenderInfo::default(),
     };
-    if let Some(cached) = SENDERS.lock().await.get(&sender_id) {
-        return cached.clone();
+    resolve(client, message, sender_id, Target::Sender)
+        .await
+        .and_then(|names| names.sender_info())
+        .unwrap_or_default()
+}
+
+enum Target {
+    Chat,
+    Sender,
+}
+
+/// Stored names for the peer, falling back to one resolve against Telegram.
+async fn resolve(
+    client: &Client,
+    message: &Message,
+    peer_id: i64,
+    target: Target,
+) -> Option<PeerNames> {
+    if let Some(stored) = peer_names::load(peer_id).await {
+        return Some(stored);
     }
 
-    let peer = match message.sender_ref().await {
-        Ok(Some(peer)) => peer,
-        _ => return from_update,
+    let peer_ref = match &target {
+        Target::Chat => message.peer_ref().await,
+        Target::Sender => message.sender_ref().await,
     };
-    let resolved = match client.resolve_peer(peer).await {
-        Ok(peer) => sender_from_peer(&peer),
+    let peer_ref = match peer_ref {
+        Ok(Some(peer_ref)) => peer_ref,
+        _ => return None,
+    };
+
+    let peer = match client.resolve_peer(peer_ref).await {
+        Ok(peer) => peer,
         Err(e) => {
-            log::warn!("resolving sender {sender_id}: {e}");
-            return from_update;
+            log::warn!("resolving peer {peer_id}: {e}");
+            return None;
         }
     };
 
-    if resolved.user_id == 0 {
-        return from_update;
-    }
-    SENDERS.lock().await.insert(sender_id, resolved.clone());
-    resolved
+    // Never store a blank name: a peer that could not be named this time must
+    // stay resolvable later, not be pinned empty.
+    let names = PeerNames::from_peer(&peer)?;
+    peer_names::remember(&names).await;
+    Some(names)
 }
 
 /// The chat's display name, for handlers that only log a name.
