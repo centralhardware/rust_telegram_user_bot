@@ -7,7 +7,7 @@ use crate::utils::peer_names::{self, PeerNames};
 /// Updates only carry the peers Telegram bothered to attach, so a message can
 /// arrive with neither its chat nor its sender in the in-memory peer map — the
 /// chat then gets logged and stored without a name. Names are looked up in
-/// ClickHouse's `peer_names` (memoised per process by that module) and only
+/// ClickHouse's `peer_names` (no local copy — see that module) and only
 /// resolved against Telegram when they are not stored yet; every peer that does
 /// come through named is written back, so the table fills itself.
 
