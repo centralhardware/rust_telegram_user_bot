@@ -6,14 +6,20 @@ use grammers_tl_types as tl;
 /// In a forum topic Telegram points `reply_to_msg_id` at the topic-creation
 /// message for *every* message in the topic, whether or not the sender replied
 /// to anything — so `Message::reply_to_message_id()` alone reports the whole
-/// topic as replies to its own header. A header like that carries `forum_topic`
-/// with no `reply_to_top_id`; a genuine reply inside a topic keeps the topic
-/// root in `reply_to_top_id` and the replied-to message in `reply_to_msg_id`.
+/// topic as replies to its own header. Such a header either carries no
+/// `reply_to_top_id` at all, or repeats the topic root in both fields (what the
+/// Bot API produces when it posts with `message_thread_id`). A genuine reply
+/// inside a topic keeps the topic root in `reply_to_top_id` and points
+/// `reply_to_msg_id` at some *other* message.
 pub fn reply_target(message: &Message) -> Option<i32> {
     let header = header(message)?;
 
-    if header.forum_topic && header.reply_to_top_id.is_none() {
-        return None;
+    if header.forum_topic {
+        match (header.reply_to_msg_id, header.reply_to_top_id) {
+            (_, None) => return None,
+            (Some(msg), Some(top)) if msg == top => return None,
+            _ => {}
+        }
     }
 
     header.reply_to_msg_id
