@@ -164,6 +164,14 @@ fn encode_subtype(peer: &PeerInfo) -> Option<u8> {
     }
 }
 
+fn peer_to_row(peer: &PeerInfo) -> PeerRow {
+    PeerRow {
+        peer_id: peer.id().bot_api_dialog_id_unchecked(),
+        hash: peer.auth().map(|a| a.hash()),
+        subtype: encode_subtype(peer),
+    }
+}
+
 fn decode_peer(peer_id: PeerId, row: &PeerRow) -> PeerInfo {
     match peer_id.kind() {
         PeerKind::User => PeerInfo::User {
@@ -351,11 +359,7 @@ impl Session for ClickhouseSession {
 
     fn cache_peer(&self, peer: PeerInfo) -> BoxFuture<'_, Result<(), Self::Error>> {
         Box::pin(async move {
-            let row = PeerRow {
-                peer_id: peer.id().bot_api_dialog_id_unchecked(),
-                hash: peer.auth().map(|a| a.hash()),
-                subtype: encode_subtype(&peer),
-            };
+            let row = peer_to_row(&peer);
 
             match clickhouse_async_insert().insert::<PeerRow>("peer_cache").await {
                 Ok(mut insert) => {
@@ -367,6 +371,35 @@ impl Session for ClickhouseSession {
                 }
                 Err(e) => {
                     error!("failed to insert peer {} to clickhouse: {}", row.peer_id, e);
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// Bulk variant of [`cache_peer`]: grammers hands us a whole batch after a
+    /// dialogs sync or a large update, so write all of them through a single
+    /// insert instead of opening one per peer.
+    fn cache_peers(&self, peers: Vec<PeerInfo>) -> BoxFuture<'_, Result<(), Self::Error>> {
+        Box::pin(async move {
+            if peers.is_empty() {
+                return Ok(());
+            }
+
+            match clickhouse_async_insert().insert::<PeerRow>("peer_cache").await {
+                Ok(mut insert) => {
+                    for peer in &peers {
+                        let row = peer_to_row(peer);
+                        if let Err(e) = insert.write(&row).await {
+                            error!("failed to write peer {} to clickhouse: {}", row.peer_id, e);
+                        }
+                    }
+                    if let Err(e) = insert.end().await {
+                        error!("failed to flush {} peers to clickhouse: {}", peers.len(), e);
+                    }
+                }
+                Err(e) => {
+                    error!("failed to insert {} peers to clickhouse: {}", peers.len(), e);
                 }
             }
             Ok(())
