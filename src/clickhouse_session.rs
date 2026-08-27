@@ -349,8 +349,7 @@ impl Session for ClickhouseSession {
         })
     }
 
-    fn cache_peer(&self, peer: &PeerInfo) -> BoxFuture<'_, Result<(), Self::Error>> {
-        let peer = peer.clone();
+    fn cache_peer(&self, peer: PeerInfo) -> BoxFuture<'_, Result<(), Self::Error>> {
         Box::pin(async move {
             let row = PeerRow {
                 peer_id: peer.id().bot_api_dialog_id_unchecked(),

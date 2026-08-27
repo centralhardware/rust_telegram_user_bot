@@ -193,6 +193,16 @@ fn render_block(block: &tl::enums::PageBlock) -> String {
                 .join("\n");
             if title.is_empty() { articles } else { format!("{}\n{}", title, articles) }
         }
+        B::ButtonRow(b) => b
+            .buttons
+            .iter()
+            .map(|button| {
+                let tl::enums::PageButton::Button(button) = button;
+                render_button(&button.text, &button.r#type)
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+        B::Document(b) => with_page_caption("[document]".into(), &b.caption),
         B::Table(b) => render_table(b),
     }
 }
@@ -275,6 +285,19 @@ fn render_text(text: &tl::enums::RichText) -> String {
         T::TextBankCard(t) => render_text(&t.text),
         T::TextDate(t) => render_text(&t.text),
         T::TextDiff(t) => render_text(&t.text),
+        T::TextButton(t) => render_button(&t.text, &t.r#type),
+    }
+}
+
+fn render_button(text: &tl::enums::RichText, kind: &tl::enums::InlineButtonType) -> String {
+    use tl::enums::InlineButtonType as T;
+    let label = render_text(text);
+    match kind {
+        T::Url(t) => link(&label, &t.url),
+        T::UrlAuth(t) => link(&label, &t.url),
+        T::InputInlineButtonTypeUrlAuth(t) => link(&label, &t.url),
+        T::WebView(t) => link(&label, &t.url),
+        _ => format!("[{}]", label),
     }
 }
 

@@ -8,7 +8,7 @@ pub fn format_buttons(message: &Message) -> Option<String> {
     };
 
     let mut lines = Vec::new();
-    for tl::enums::KeyboardButtonRow::Row(row) in &inline.rows {
+    for tl::enums::KeyboardInlineButtonRow::Row(row) in &inline.rows {
         let buttons: Vec<String> = row.buttons.iter().map(format_button).collect();
         if !buttons.is_empty() {
             lines.push(buttons.join(" "));
@@ -33,32 +33,27 @@ fn extract_reply_markup(update: &tl::enums::Update) -> Option<&tl::enums::ReplyM
     }
 }
 
-fn format_button(button: &tl::enums::KeyboardButton) -> String {
-    use tl::enums::KeyboardButton::*;
-    match button {
-        Button(b) => format!("[{}]", b.text),
-        Url(b) => format!("[{} → {}]", b.text, b.url),
-        Callback(b) => format!("[{} → cb]", b.text),
-        RequestPhone(b) => format!("[{} → phone]", b.text),
-        RequestGeoLocation(b) => format!("[{} → geo]", b.text),
-        SwitchInline(b) => {
-            if b.query.is_empty() {
+fn format_button(button: &tl::enums::KeyboardInlineButton) -> String {
+    use tl::enums::InlineButtonType as T;
+    let tl::enums::KeyboardInlineButton::Button(b) = button;
+    match &b.r#type {
+        T::Url(t) => format!("[{} → {}]", b.text, t.url),
+        T::UrlAuth(t) => format!("[{} → auth:{}]", b.text, t.url),
+        T::InputInlineButtonTypeUrlAuth(t) => format!("[{} → auth:{}]", b.text, t.url),
+        T::WebView(t) => format!("[{} → webview:{}]", b.text, t.url),
+        T::Callback(_) => format!("[{} → cb]", b.text),
+        T::Game => format!("[{} → game]", b.text),
+        T::Buy => format!("[{} → buy]", b.text),
+        T::SwitchInline(t) => {
+            if t.query.is_empty() {
                 format!("[{} → switch]", b.text)
             } else {
-                format!("[{} → switch:{}]", b.text, b.query)
+                format!("[{} → switch:{}]", b.text, t.query)
             }
         }
-        Game(b) => format!("[{} → game]", b.text),
-        Buy(b) => format!("[{} → buy]", b.text),
-        UrlAuth(b) => format!("[{} → auth:{}]", b.text, b.url),
-        InputKeyboardButtonUrlAuth(b) => format!("[{} → auth:{}]", b.text, b.url),
-        RequestPoll(b) => format!("[{} → poll]", b.text),
-        UserProfile(b) => format!("[{} → user:{}]", b.text, b.user_id),
-        InputKeyboardButtonUserProfile(b) => format!("[{} → user]", b.text),
-        WebView(b) => format!("[{} → webview:{}]", b.text, b.url),
-        SimpleWebView(b) => format!("[{} → webview:{}]", b.text, b.url),
-        RequestPeer(b) => format!("[{} → peer]", b.text),
-        InputKeyboardButtonRequestPeer(b) => format!("[{} → peer]", b.text),
-        Copy(b) => format!("[{} → copy:{}]", b.text, b.copy_text),
+        T::UserProfile(t) => format!("[{} → user:{}]", b.text, t.user_id),
+        T::InputInlineButtonTypeUserProfile(_) => format!("[{} → user]", b.text),
+        T::Copy(t) => format!("[{} → copy:{}]", b.text, t.copy_text),
+        T::Disabled => format!("[{}]", b.text),
     }
 }
