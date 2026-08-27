@@ -260,6 +260,9 @@ pub fn format(action: &MessageAction, sender_id: Option<i64>, sender_name: Optio
             format!("[poll answer deleted: {}]", t.text)
         }
         MessageAction::ManagedBotCreated(a) => format!("[managed bot created: {}]", a.bot_id),
+        MessageAction::ChatJoinedViaCommunity(a) => {
+            format!("{name} joined via community {}", a.community_id)
+        }
         MessageAction::ChangeCommunity(a) => match a.community_id {
             Some(id) => format!("[community changed: {}]", id),
             None => "[community changed]".into(),
