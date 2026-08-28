@@ -127,9 +127,8 @@ async fn archive(
     if let Some(size) = Downloadable::size(&job.media) {
         if size as u64 > storage.max_bytes {
             warn!(
-                "media archive: skipping {} MiB file in chat {}",
-                size / 1024 / 1024,
-                job.chat_id
+                "media archive: skipping {} B file in chat {} (limit {} B)",
+                size, job.chat_id, storage.max_bytes
             );
             return Ok(());
         }
@@ -141,8 +140,8 @@ async fn archive(
         bytes.extend(chunk);
         if bytes.len() as u64 > storage.max_bytes {
             warn!(
-                "media archive: aborting oversized download in chat {}",
-                job.chat_id
+                "media archive: aborting download in chat {}, over the {} B limit",
+                job.chat_id, storage.max_bytes
             );
             return Ok(());
         }
