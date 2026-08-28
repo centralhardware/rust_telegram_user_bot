@@ -92,6 +92,7 @@ where
 pub static INCOMING_BUF: WriteBuffer<IncomingMessage> = WriteBuffer::new("chats_log");
 pub static EDITED_BUF: WriteBuffer<EditedMessage> = WriteBuffer::new("edited_log");
 pub static DELETED_BUF: WriteBuffer<DeletedMessage> = WriteBuffer::new("deleted_log");
+pub static MEDIA_BUF: WriteBuffer<MediaFile> = WriteBuffer::new("media_log");
 
 pub struct MessageInfo {
     pub message: String,
@@ -208,6 +209,23 @@ pub struct DeletedMessage {
     pub date_time: u32,
     pub chat_id: i64,
     pub message_id: i64,
+    pub client_id: u64,
+}
+
+#[derive(Row, Serialize)]
+pub struct MediaFile {
+    pub date_time: u32,
+    pub chat_id: i64,
+    pub chat_title: String,
+    pub message_id: i64,
+    pub user_id: u64,
+    pub media_type: String,
+    pub file_id: i64,
+    pub file_name: String,
+    pub mime_type: String,
+    pub size: u64,
+    pub s3_bucket: String,
+    pub s3_key: String,
     pub client_id: u64,
 }
 

@@ -34,6 +34,7 @@ pub fn start(client: Client, _client_id: u64) {
                 match discover_admin_chats(&client).await {
                     Ok(found) => {
                         info!("admin log: watching {} chat(s)", found.len());
+                        crate::utils::admin_chats::set(found.iter().map(|c| c.chat_id).collect());
                         chats = found;
                         discovered_at = Some(Instant::now());
                     }

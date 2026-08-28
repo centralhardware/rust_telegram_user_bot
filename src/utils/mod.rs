@@ -1,3 +1,4 @@
+pub mod admin_chats;
 pub mod diff;
 pub mod format_entities;
 pub mod inline_buttons;

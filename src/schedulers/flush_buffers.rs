@@ -6,8 +6,9 @@ pub async fn flush_all() {
     let incoming = db::INCOMING_BUF.flush().await;
     let edited = db::EDITED_BUF.flush().await;
     let deleted = db::DELETED_BUF.flush().await;
-    if incoming + edited + deleted > 0 {
-        log::info!("flushed incoming: {incoming}, edited: {edited}, deleted: {deleted}");
+    let media = db::MEDIA_BUF.flush().await;
+    if incoming + edited + deleted + media > 0 {
+        log::info!("flushed incoming: {incoming}, edited: {edited}, deleted: {deleted}, media: {media}");
     }
 }
 
