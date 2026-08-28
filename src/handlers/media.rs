@@ -27,7 +27,6 @@ struct Job {
     message_id: i64,
     user_id: u64,
     date_time: u32,
-    client_id: u64,
 }
 
 static QUEUE: OnceLock<UnboundedSender<Job>> = OnceLock::new();
@@ -65,7 +64,7 @@ pub fn start(client: Client) {
 
 /// Queues the message's media if it comes from a chat we administer. Returns
 /// immediately — the download happens on the worker, off the update loop.
-pub async fn save_media(message: &Message, client: &Client, client_id: u64) {
+pub async fn save_media(message: &Message, client: &Client) {
     let Some(queue) = QUEUE.get() else {
         return;
     };
@@ -97,7 +96,6 @@ pub async fn save_media(message: &Message, client: &Client, client_id: u64) {
         message_id: message.id() as i64,
         user_id,
         date_time: message.date().as_second() as u32,
-        client_id,
     });
 }
 
@@ -127,9 +125,8 @@ async fn archive(
     if let Some(size) = Downloadable::size(&job.media) {
         if size as u64 > storage.max_bytes {
             warn!(
-                "media archive: skipping {} MiB file in chat {}",
-                size / 1024 / 1024,
-                job.chat_id
+                "media archive: skipping {} B file in chat {} (limit {} B)",
+                size, job.chat_id, storage.max_bytes
             );
             return Ok(());
         }
@@ -141,8 +138,8 @@ async fn archive(
         bytes.extend(chunk);
         if bytes.len() as u64 > storage.max_bytes {
             warn!(
-                "media archive: aborting oversized download in chat {}",
-                job.chat_id
+                "media archive: aborting download in chat {}, over the {} B limit",
+                job.chat_id, storage.max_bytes
             );
             return Ok(());
         }
@@ -176,7 +173,6 @@ async fn archive(
             size,
             s3_bucket: storage.bucket.clone(),
             s3_key: key,
-            client_id: job.client_id,
         })
         .await;
 

@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
                                 error!("Failed to save incoming message: {:?}", e);
                             }
                         }
-                        handlers::save_media(&message, &client, client_id).await;
+                        handlers::save_media(&message, &client).await;
                         if let Err(e) = handlers::handle_auto_cat(&message).await {
                             error!("Failed to handle auto cat: {:?}", e);
                         }

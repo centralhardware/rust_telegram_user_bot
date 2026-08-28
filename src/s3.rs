@@ -4,9 +4,12 @@
 //! addressing, so `force_path_style` is not optional here.
 
 use aws_sdk_s3::Client;
+use aws_sdk_s3::config::retry::RetryConfig;
+use aws_sdk_s3::config::timeout::TimeoutConfig;
 use aws_sdk_s3::config::{Credentials, Region};
 use aws_sdk_s3::primitives::ByteStream;
 use std::sync::LazyLock;
+use std::time::Duration;
 
 /// Largest file we are willing to pull. Media above this is logged and skipped:
 /// downloads are buffered in memory, and huge files are the pattern most likely
@@ -44,6 +47,16 @@ static STORAGE: LazyLock<Option<Storage>> = LazyLock::new(|| {
             "telegram_user_bot",
         ))
         .force_path_style(true)
+        // The SDK defaults to a 3.1 s connect timeout, which a self-hosted
+        // endpoint behind a reverse proxy can miss on a cold connection, and a
+        // whole upload then fails on the first attempt.
+        .timeout_config(
+            TimeoutConfig::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .operation_attempt_timeout(Duration::from_secs(120))
+                .build(),
+        )
+        .retry_config(RetryConfig::standard().with_max_attempts(3))
         .build();
 
     Some(Storage {
