@@ -4,6 +4,7 @@ mod deleted;
 mod edited;
 pub(crate) mod extract;
 mod incoming;
+mod media;
 mod outgoing;
 
 pub use auto_cat::handle_auto_cat;
@@ -11,5 +12,6 @@ pub use backfill_reply::backfill_reply;
 pub use deleted::save_deleted;
 pub use edited::save_edited;
 pub use incoming::save_incoming;
+pub use media::{save_media, start as start_media};
 pub use outgoing::save_outgoing;
 

@@ -1,6 +1,7 @@
 mod clickhouse_session;
 mod db;
 mod handlers;
+mod s3;
 mod schedulers;
 mod session;
 mod utils;
@@ -43,6 +44,7 @@ async fn main() -> Result<()> {
     log::info!("Listening for messages...");
 
     let client_id = client.get_me().await?.id().bare_id().unwrap() as u64;
+    handlers::start_media(client.clone());
     schedulers::start(client.clone(), client_id);
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
@@ -63,6 +65,7 @@ async fn main() -> Result<()> {
                                 error!("Failed to save incoming message: {:?}", e);
                             }
                         }
+                        handlers::save_media(&message, &client, client_id).await;
                         if let Err(e) = handlers::handle_auto_cat(&message).await {
                             error!("Failed to handle auto cat: {:?}", e);
                         }
