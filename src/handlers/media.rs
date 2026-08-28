@@ -27,7 +27,6 @@ struct Job {
     message_id: i64,
     user_id: u64,
     date_time: u32,
-    client_id: u64,
 }
 
 static QUEUE: OnceLock<UnboundedSender<Job>> = OnceLock::new();
@@ -65,7 +64,7 @@ pub fn start(client: Client) {
 
 /// Queues the message's media if it comes from a chat we administer. Returns
 /// immediately — the download happens on the worker, off the update loop.
-pub async fn save_media(message: &Message, client: &Client, client_id: u64) {
+pub async fn save_media(message: &Message, client: &Client) {
     let Some(queue) = QUEUE.get() else {
         return;
     };
@@ -97,7 +96,6 @@ pub async fn save_media(message: &Message, client: &Client, client_id: u64) {
         message_id: message.id() as i64,
         user_id,
         date_time: message.date().as_second() as u32,
-        client_id,
     });
 }
 
@@ -175,7 +173,6 @@ async fn archive(
             size,
             s3_bucket: storage.bucket.clone(),
             s3_key: key,
-            client_id: job.client_id,
         })
         .await;
 

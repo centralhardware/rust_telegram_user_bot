@@ -226,7 +226,6 @@ pub struct MediaFile {
     pub size: u64,
     pub s3_bucket: String,
     pub s3_key: String,
-    pub client_id: u64,
 }
 
 #[derive(Row, Serialize)]

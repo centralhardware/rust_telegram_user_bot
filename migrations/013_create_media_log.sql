@@ -16,8 +16,7 @@ CREATE TABLE IF NOT EXISTS media_log
     mime_type  LowCardinality(String),
     size       UInt64,
     s3_bucket  LowCardinality(String),
-    s3_key     String,
-    client_id  LowCardinality(UInt64)
+    s3_key     String
 )
 ENGINE = MergeTree
 ORDER BY (chat_id, date_time, message_id);
