@@ -435,24 +435,30 @@ fn describe_ban_change(
         return format!("{}: banned -> {}{}", name, state(new_rights), until);
     }
 
-    let changes: Vec<String> = RESTRICTIONS
+    let changed: Vec<(&str, bool)> = RESTRICTIONS
         .iter()
         .filter(|(_, has)| is_restricted(prev_rights, *has) != is_restricted(new_rights, *has))
-        .map(|(right, has)| {
-            let (prev, new) = if is_restricted(new_rights, *has) {
+        .map(|(right, has)| (*right, is_restricted(new_rights, *has)))
+        .collect();
+
+    if changed.is_empty() {
+        return format!("{} restrictions unchanged", name);
+    }
+
+    // One right per line, names padded, so a long list can be skimmed down the arrows.
+    let width = changed.iter().map(|(right, _)| right.len()).max().unwrap_or(0);
+    let lines: Vec<String> = changed
+        .iter()
+        .map(|(right, restricted)| {
+            let (prev, new) = if *restricted {
                 ("allowed", "restricted")
             } else {
                 ("restricted", "allowed")
             };
-            format!("{}: {} -> {}", right, prev, new)
+            format!("  {:width$}  {} -> {}", right, prev, new, width = width)
         })
         .collect();
-
-    if changes.is_empty() {
-        format!("{} restrictions unchanged", name)
-    } else {
-        format!("{}: {}{}", name, changes.join("; "), until)
-    }
+    format!("{}:{}\n{}", name, until, lines.join("\n"))
 }
 
 fn participant_name(p: &tl::enums::ChannelParticipant, users: &[tl::enums::User]) -> String {
