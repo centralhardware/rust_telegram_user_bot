@@ -333,6 +333,124 @@ fn action_values(action: &tl::enums::ChannelAdminLogEventAction) -> (String, Str
     }
 }
 
+/// Every restriction a `ChatBannedRights` can carry, paired with its name in the log line.
+///
+/// A `true` flag means the right is taken away, so the same list reads both ways: what was
+/// restricted, and what was handed back.
+const RESTRICTIONS: [(&str, fn(&tl::types::ChatBannedRights) -> bool); 23] = [
+    ("view messages", |r| r.view_messages),
+    ("send messages", |r| r.send_messages),
+    ("send media", |r| r.send_media),
+    ("send stickers", |r| r.send_stickers),
+    ("send gifs", |r| r.send_gifs),
+    ("send games", |r| r.send_games),
+    ("send inline", |r| r.send_inline),
+    ("embed links", |r| r.embed_links),
+    ("send polls", |r| r.send_polls),
+    ("change info", |r| r.change_info),
+    ("invite users", |r| r.invite_users),
+    ("pin messages", |r| r.pin_messages),
+    ("manage topics", |r| r.manage_topics),
+    ("send photos", |r| r.send_photos),
+    ("send videos", |r| r.send_videos),
+    ("send round videos", |r| r.send_roundvideos),
+    ("send audios", |r| r.send_audios),
+    ("send voices", |r| r.send_voices),
+    ("send docs", |r| r.send_docs),
+    ("send plain text", |r| r.send_plain),
+    ("edit rank", |r| r.edit_rank),
+    ("send reactions", |r| r.send_reactions),
+    ("manage linked peers", |r| r.manage_linked_peers),
+];
+
+/// The restrictions a participant carries, or `None` when they have no ban record at all.
+fn banned_rights(p: &tl::enums::ChannelParticipant) -> Option<&tl::types::ChatBannedRights> {
+    match p {
+        tl::enums::ChannelParticipant::Banned(b) => {
+            let tl::enums::ChatBannedRights::Rights(r) = &b.banned_rights;
+            Some(r)
+        }
+        _ => None,
+    }
+}
+
+fn is_restricted(rights: Option<&tl::types::ChatBannedRights>, has: fn(&tl::types::ChatBannedRights) -> bool) -> bool {
+    rights.is_some_and(has)
+}
+
+/// Names of the rights currently taken away.
+fn restriction_names(rights: Option<&tl::types::ChatBannedRights>) -> Vec<&'static str> {
+    RESTRICTIONS
+        .iter()
+        .filter(|(_, has)| is_restricted(rights, *has))
+        .map(|(name, _)| *name)
+        .collect()
+}
+
+/// " until <date>" for a timed restriction, empty when it never expires.
+fn until_suffix(rights: Option<&tl::types::ChatBannedRights>) -> String {
+    match rights.map(|r| r.until_date) {
+        Some(ts) if ts != 0 => chrono::DateTime::from_timestamp(ts as i64, 0)
+            .map(|dt| format!(" until {}", dt.format("%Y-%m-%d %H:%M UTC")))
+            .unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+/// What a ban toggle actually did to the user's rights.
+///
+/// Telegram sends the whole before/after participant, so a full ban, a lift, and a single
+/// permission being flipped all arrive as the same event — the difference only shows in the
+/// rights themselves.
+fn describe_ban_change(
+    prev: &tl::enums::ChannelParticipant,
+    new: &tl::enums::ChannelParticipant,
+    name: &str,
+) -> String {
+    let prev_rights = banned_rights(prev);
+    let new_rights = banned_rights(new);
+    let was_banned = is_restricted(prev_rights, |r| r.view_messages);
+    let is_banned = is_restricted(new_rights, |r| r.view_messages);
+    let until = until_suffix(new_rights);
+
+    // A full ban takes every right at once, so the individual flags say nothing worth logging.
+    if is_banned {
+        return format!("{} banned{}", name, until);
+    }
+
+    if was_banned {
+        let left = restriction_names(new_rights);
+        return if left.is_empty() {
+            format!("{} unbanned", name)
+        } else {
+            format!("{} unbanned, still restricted: {}{}", name, left.join(", "), until)
+        };
+    }
+
+    let taken: Vec<&str> = RESTRICTIONS
+        .iter()
+        .filter(|(_, has)| is_restricted(new_rights, *has) && !is_restricted(prev_rights, *has))
+        .map(|(n, _)| *n)
+        .collect();
+    let given: Vec<&str> = RESTRICTIONS
+        .iter()
+        .filter(|(_, has)| is_restricted(prev_rights, *has) && !is_restricted(new_rights, *has))
+        .map(|(n, _)| *n)
+        .collect();
+    let mut parts = Vec::new();
+    if !taken.is_empty() {
+        parts.push(format!("restricted: {}{}", taken.join(", "), until));
+    }
+    if !given.is_empty() {
+        parts.push(format!("allowed: {}", given.join(", ")));
+    }
+    if parts.is_empty() {
+        format!("{} restrictions unchanged", name)
+    } else {
+        format!("{}: {}", name, parts.join("; "))
+    }
+}
+
 fn participant_name(p: &tl::enums::ChannelParticipant, users: &[tl::enums::User]) -> String {
     participant_user_id(p)
         .map(|id| extract_user_info(users, id).0)
@@ -378,7 +496,11 @@ fn format_log_output(
         ParticipantJoin => format!("{} joined", user_title),
         ParticipantLeave => format!("{} left", user_title),
         ParticipantInvite(a) => format!("{} invited", participant_name(&a.participant, users)),
-        ParticipantToggleBan(a) => format!("{} ban toggled", participant_name(&a.new_participant, users)),
+        ParticipantToggleBan(a) => describe_ban_change(
+            &a.prev_participant,
+            &a.new_participant,
+            &participant_name(&a.new_participant, users),
+        ),
         ParticipantToggleAdmin(a) => format!("{} admin toggled", participant_name(&a.new_participant, users)),
         ChangeStickerSet(_) => "sticker set changed".to_string(),
         TogglePreHistoryHidden(a) => format!("pre-history: {}", if a.new_value { "hidden" } else { "visible" }),
