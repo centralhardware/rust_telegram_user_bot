@@ -387,6 +387,19 @@ fn restriction_names(rights: Option<&tl::types::ChatBannedRights>) -> Vec<&'stat
         .collect()
 }
 
+/// A participant's standing in one word — what the arrow in the log line points from or to.
+fn state(rights: Option<&tl::types::ChatBannedRights>) -> String {
+    if is_restricted(rights, |r| r.view_messages) {
+        return "banned".to_string();
+    }
+    let names = restriction_names(rights);
+    if names.is_empty() {
+        "member".to_string()
+    } else {
+        format!("restricted ({})", names.join(", "))
+    }
+}
+
 /// " until <date>" for a timed restriction, empty when it never expires.
 fn until_suffix(rights: Option<&tl::types::ChatBannedRights>) -> String {
     match rights.map(|r| r.until_date) {
@@ -415,39 +428,30 @@ fn describe_ban_change(
 
     // A full ban takes every right at once, so the individual flags say nothing worth logging.
     if is_banned {
-        return format!("{} banned{}", name, until);
+        return format!("{}: {} -> banned{}", name, state(prev_rights), until);
     }
 
     if was_banned {
-        let left = restriction_names(new_rights);
-        return if left.is_empty() {
-            format!("{} unbanned", name)
-        } else {
-            format!("{} unbanned, still restricted: {}{}", name, left.join(", "), until)
-        };
+        return format!("{}: banned -> {}{}", name, state(new_rights), until);
     }
 
-    let taken: Vec<&str> = RESTRICTIONS
+    let changes: Vec<String> = RESTRICTIONS
         .iter()
-        .filter(|(_, has)| is_restricted(new_rights, *has) && !is_restricted(prev_rights, *has))
-        .map(|(n, _)| *n)
+        .filter(|(_, has)| is_restricted(prev_rights, *has) != is_restricted(new_rights, *has))
+        .map(|(right, has)| {
+            let (prev, new) = if is_restricted(new_rights, *has) {
+                ("allowed", "restricted")
+            } else {
+                ("restricted", "allowed")
+            };
+            format!("{}: {} -> {}", right, prev, new)
+        })
         .collect();
-    let given: Vec<&str> = RESTRICTIONS
-        .iter()
-        .filter(|(_, has)| is_restricted(prev_rights, *has) && !is_restricted(new_rights, *has))
-        .map(|(n, _)| *n)
-        .collect();
-    let mut parts = Vec::new();
-    if !taken.is_empty() {
-        parts.push(format!("restricted: {}{}", taken.join(", "), until));
-    }
-    if !given.is_empty() {
-        parts.push(format!("allowed: {}", given.join(", ")));
-    }
-    if parts.is_empty() {
+
+    if changes.is_empty() {
         format!("{} restrictions unchanged", name)
     } else {
-        format!("{}: {}", name, parts.join("; "))
+        format!("{}: {}{}", name, changes.join("; "), until)
     }
 }
 
