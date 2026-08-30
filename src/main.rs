@@ -6,6 +6,7 @@ mod schedulers;
 mod session;
 mod utils;
 
+use grammers_client::tl;
 use grammers_client::update::Update;
 use log::error;
 use std::env;
@@ -80,6 +81,19 @@ async fn main() -> Result<()> {
                             error!("Failed to save deleted message: {:?}", e);
                         }
                     }
+                    // Ephemeral messages have no friendly variant in grammers yet.
+                    Update::Raw(raw) => match &raw.raw {
+                        tl::enums::Update::NewEphemeralMessage(u) => {
+                            handlers::save_ephemeral(&u.message, "new", client_id).await;
+                        }
+                        tl::enums::Update::EditEphemeralMessage(u) => {
+                            handlers::save_ephemeral(&u.message, "edit", client_id).await;
+                        }
+                        tl::enums::Update::DeleteEphemeralMessages(u) => {
+                            handlers::save_ephemeral_deleted(&u.peer, &u.ids, client_id).await;
+                        }
+                        _ => {}
+                    },
                     _ => {}
                 }
             }

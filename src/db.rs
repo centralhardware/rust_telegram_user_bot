@@ -93,6 +93,7 @@ pub static INCOMING_BUF: WriteBuffer<IncomingMessage> = WriteBuffer::new("chats_
 pub static EDITED_BUF: WriteBuffer<EditedMessage> = WriteBuffer::new("edited_log");
 pub static DELETED_BUF: WriteBuffer<DeletedMessage> = WriteBuffer::new("deleted_log");
 pub static MEDIA_BUF: WriteBuffer<MediaFile> = WriteBuffer::new("media_log");
+pub static EPHEMERAL_BUF: WriteBuffer<EphemeralEvent> = WriteBuffer::new("ephemeral_log");
 
 pub struct MessageInfo {
     pub message: String,
@@ -226,6 +227,27 @@ pub struct MediaFile {
     pub sha256: String,
     pub s3_bucket: String,
     pub s3_key: String,
+}
+
+/// One `ephemeral_log` row: a bot message in a group that only `receiver_id` can
+/// see, as it was created, edited or deleted.
+#[derive(Row, Serialize)]
+pub struct EphemeralEvent {
+    pub date_time: u32,
+    pub event: String,
+    pub chat_id: i64,
+    pub chat_title: String,
+    pub message_id: i64,
+    pub message: String,
+    pub sender_id: u64,
+    pub sender_title: String,
+    pub out: bool,
+    pub receiver_id: u64,
+    pub top_msg_id: u32,
+    pub reply_to: u64,
+    pub reply_to_ephemeral: bool,
+    pub welcome: bool,
+    pub client_id: u64,
 }
 
 #[derive(Row, Serialize)]
