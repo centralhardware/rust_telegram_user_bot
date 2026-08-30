@@ -91,4 +91,28 @@ impl Storage {
         req.send().await?;
         Ok(())
     }
+
+    /// The key of an already stored object under `prefix`, if there is one.
+    ///
+    /// Keys are content-addressed, so the caller passes the digest as the
+    /// prefix and a hit means the exact same bytes are already in the bucket —
+    /// under whatever extension the first upload happened to carry, which is
+    /// why this lists a prefix instead of heading one key. An error is reported
+    /// as "not there": re-uploading a file costs one request, silently
+    /// dropping one loses it.
+    pub async fn find_by_prefix(&self, prefix: &str) -> Option<String> {
+        self.client
+            .list_objects_v2()
+            .bucket(&self.bucket)
+            .prefix(prefix)
+            .max_keys(1)
+            .send()
+            .await
+            .ok()?
+            .contents
+            .unwrap_or_default()
+            .into_iter()
+            .next()?
+            .key
+    }
 }
