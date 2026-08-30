@@ -2,7 +2,7 @@ use grammers_client::update::Message;
 
 use crate::Result;
 
-const CHAT_IDS: [i64; 2] = [1633660171, 2128023267];
+const CHAT_IDS: [i64; 3] = [1633660171, 2128023267, 2078316518];
 const TRIGGER_PREFIX: &str = "#грбн";
 
 pub async fn handle_auto_cat(message: &Message) -> Result<()> {
