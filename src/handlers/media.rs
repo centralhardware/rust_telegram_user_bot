@@ -112,10 +112,9 @@ async fn archive(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let storage = crate::s3::storage().expect("worker only starts when configured");
 
-    let (file_id, file_name, mime_type, media_type) = match &job.media {
-        Media::Photo(photo) => (photo.id(), None, Some("image/jpeg".to_string()), "photo"),
+    let (file_name, mime_type, media_type) = match &job.media {
+        Media::Photo(_) => (None, Some("image/jpeg".to_string()), "photo"),
         Media::Document(doc) => (
-            doc.id(),
             doc.name().map(str::to_string),
             doc.mime_type().map(str::to_string),
             "document",
@@ -186,7 +185,6 @@ async fn archive(
             message_id: job.message_id,
             user_id: job.user_id,
             media_type: media_type.to_string(),
-            file_id,
             file_name: file_name.unwrap_or_default(),
             mime_type: mime_type.unwrap_or_default(),
             size,
