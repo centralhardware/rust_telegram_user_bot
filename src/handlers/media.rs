@@ -151,24 +151,32 @@ async fn archive(
 
     let size = bytes.len() as u64;
     let sha256 = hex(&Sha256::digest(&bytes));
-    let key = object_key(&sha256, file_name.as_deref(), mime_type.as_deref());
 
-    if storage.exists(&key).await {
-        info!(
-            "media archive: {} ({} KiB) already stored as {}, upload skipped",
-            media_type,
-            size / 1024,
+    // Looked up by digest alone: the same bytes can arrive under a different
+    // file name, and an extension picked from that name must not turn one
+    // stored file into two objects.
+    let key = match storage.find_by_prefix(&sha256_prefix(&sha256)).await {
+        Some(existing) => {
+            info!(
+                "media archive: {} ({} KiB) already stored as {}, upload skipped",
+                media_type,
+                size / 1024,
+                existing
+            );
+            existing
+        }
+        None => {
+            let key = object_key(&sha256, file_name.as_deref(), mime_type.as_deref());
+            storage.put(&key, bytes, mime_type.as_deref()).await?;
+            info!(
+                "media archive: {} ({} KiB) -> {}",
+                media_type,
+                size / 1024,
+                key
+            );
             key
-        );
-    } else {
-        storage.put(&key, bytes, mime_type.as_deref()).await?;
-        info!(
-            "media archive: {} ({} KiB) -> {}",
-            media_type,
-            size / 1024,
-            key
-        );
-    }
+        }
+    };
 
     crate::db::MEDIA_BUF
         .push(MediaFile {
@@ -202,11 +210,17 @@ fn object_key(sha256: &str, file_name: Option<&str>, mime: Option<&str>) -> Stri
         .filter(|e| e.len() <= 8 && e.chars().all(|c| c.is_ascii_alphanumeric()))
         .or_else(|| mime.and_then(ext_from_mime).map(str::to_string));
 
-    let base = format!("{}/{}/{}", &sha256[..2], &sha256[2..4], sha256);
+    let base = sha256_prefix(sha256);
     match ext {
         Some(ext) => format!("{base}.{ext}"),
         None => base,
     }
+}
+
+/// Everything in a key that is derived from the content alone — the whole key
+/// minus the extension. Listing it is how a stored copy is found again.
+fn sha256_prefix(sha256: &str) -> String {
+    format!("{}/{}/{}", &sha256[..2], &sha256[2..4], sha256)
 }
 
 fn hex(bytes: &[u8]) -> String {

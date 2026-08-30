@@ -92,17 +92,27 @@ impl Storage {
         Ok(())
     }
 
-    /// Whether an object is already in the bucket. Keys are content-addressed,
-    /// so a hit means the exact same bytes were uploaded before and the upload
-    /// can be skipped. An error is reported as "not there": re-uploading a file
-    /// costs one request, silently dropping one loses it.
-    pub async fn exists(&self, key: &str) -> bool {
+    /// The key of an already stored object under `prefix`, if there is one.
+    ///
+    /// Keys are content-addressed, so the caller passes the digest as the
+    /// prefix and a hit means the exact same bytes are already in the bucket —
+    /// under whatever extension the first upload happened to carry, which is
+    /// why this lists a prefix instead of heading one key. An error is reported
+    /// as "not there": re-uploading a file costs one request, silently
+    /// dropping one loses it.
+    pub async fn find_by_prefix(&self, prefix: &str) -> Option<String> {
         self.client
-            .head_object()
+            .list_objects_v2()
             .bucket(&self.bucket)
-            .key(key)
+            .prefix(prefix)
+            .max_keys(1)
             .send()
             .await
-            .is_ok()
+            .ok()?
+            .contents
+            .unwrap_or_default()
+            .into_iter()
+            .next()?
+            .key
     }
 }
