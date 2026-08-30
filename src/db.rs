@@ -220,7 +220,6 @@ pub struct MediaFile {
     pub message_id: i64,
     pub user_id: u64,
     pub media_type: String,
-    pub file_id: i64,
     pub file_name: String,
     pub mime_type: String,
     pub size: u64,
