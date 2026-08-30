@@ -8,6 +8,7 @@
 use grammers_client::Client;
 use grammers_client::media::{Downloadable, Media};
 use grammers_client::update::Message;
+use grammers_tl_types as tl;
 use log::{error, info, warn};
 use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
@@ -102,8 +103,19 @@ pub async fn save_media(message: &Message, client: &Client) {
 
 /// Stickers and custom emoji are the same handful of files over and over, and the
 /// remaining variants (polls, geo, contacts, web pages) carry no file at all.
+///
+/// Self-destructing and view-once media is archivable while it lasts, but once it
+/// has burned Telegram keeps sending the message with the file stripped out —
+/// there is nothing to download then, and asking such a document for its name
+/// panics inside grammers.
 fn is_archivable(media: &Media) -> bool {
-    matches!(media, Media::Photo(_) | Media::Document(_))
+    match media {
+        Media::Photo(photo) => matches!(photo.raw.photo, Some(tl::enums::Photo::Photo(_))),
+        Media::Document(doc) => {
+            matches!(doc.raw.document, Some(tl::enums::Document::Document(_)))
+        }
+        _ => false,
+    }
 }
 
 async fn archive(

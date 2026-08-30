@@ -3,7 +3,36 @@ use grammers_tl_types as tl;
 
 pub fn describe(message: &Message) -> Option<String> {
     let media = extract_media(message)?;
-    Some(describe_media(media))
+    let desc = describe_media(media);
+    Some(match ttl_note(media) {
+        Some(note) => with_note(desc, &note),
+        None => desc,
+    })
+}
+
+/// `ttl_seconds` on a photo or a document is Telegram's self-destruct timer: the
+/// media is gone once the timer runs out. The largest possible value is how
+/// clients encode "view once" media, which burns on opening rather than on a clock.
+fn ttl_note(media: &tl::enums::MessageMedia) -> Option<String> {
+    let ttl = match media {
+        tl::enums::MessageMedia::Photo(p) => p.ttl_seconds,
+        tl::enums::MessageMedia::Document(d) => d.ttl_seconds,
+        _ => None,
+    }?;
+    Some(if ttl == i32::MAX {
+        "view once".into()
+    } else {
+        format!("self-destructs in {}", format_human_duration(ttl))
+    })
+}
+
+/// Descriptions are bracketed, so the note belongs inside the brackets. A poll
+/// lists its options past the closing one, and gets the note appended instead.
+fn with_note(desc: String, note: &str) -> String {
+    match desc.strip_suffix(']') {
+        Some(head) => format!("{head}, {note}]"),
+        None => format!("{desc} [{note}]"),
+    }
 }
 
 fn extract_media(message: &Message) -> Option<&tl::enums::MessageMedia> {
@@ -47,11 +76,16 @@ fn describe_media(media: &tl::enums::MessageMedia) -> String {
         tl::enums::MessageMedia::Empty => "[empty media]".into(),
         tl::enums::MessageMedia::Unsupported => "[unsupported media]".into(),
         tl::enums::MessageMedia::Photo(p) => {
+            let mut parts = vec!["photo"];
             if p.spoiler {
-                "[photo, spoiler]".into()
-            } else {
-                "[photo]".into()
+                parts.push("spoiler");
             }
+            // A self-destructing photo that has already burned still arrives as
+            // media, only with the file stripped out.
+            if p.photo.is_none() {
+                parts.push("expired");
+            }
+            format!("[{}]", parts.join(", "))
         }
         tl::enums::MessageMedia::Document(doc) => describe_document(doc),
         tl::enums::MessageMedia::Contact(c) => {
@@ -118,8 +152,15 @@ fn describe_media(media: &tl::enums::MessageMedia) -> String {
 fn describe_document(media: &tl::types::MessageMediaDocument) -> String {
     let doc = match media.document.as_ref() {
         Some(tl::enums::Document::Document(d)) => d,
-        Some(tl::enums::Document::Empty(_)) => return "[document]".into(),
-        None => return "[document]".into(),
+        // Same as a burned photo: the file is gone, so nothing is left to say
+        // what kind of file it was.
+        Some(tl::enums::Document::Empty(_)) | None => {
+            return if media.ttl_seconds.is_some() {
+                "[file, expired]".into()
+            } else {
+                "[document]".into()
+            };
+        }
     };
 
     let mut is_voice = false;
