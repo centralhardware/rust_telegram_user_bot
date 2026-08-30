@@ -9,6 +9,7 @@ use grammers_client::Client;
 use grammers_client::media::{Downloadable, Media};
 use grammers_client::update::Message;
 use log::{error, info, warn};
+use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
@@ -148,16 +149,26 @@ async fn archive(
         return Ok(());
     }
 
-    let key = object_key(job, file_id, file_name.as_deref(), mime_type.as_deref());
     let size = bytes.len() as u64;
-    storage.put(&key, bytes, mime_type.as_deref()).await?;
+    let sha256 = hex(&Sha256::digest(&bytes));
+    let key = object_key(&sha256, file_name.as_deref(), mime_type.as_deref());
 
-    info!(
-        "media archive: {} ({} KiB) -> {}",
-        media_type,
-        size / 1024,
-        key
-    );
+    if storage.exists(&key).await {
+        info!(
+            "media archive: {} ({} KiB) already stored as {}, upload skipped",
+            media_type,
+            size / 1024,
+            key
+        );
+    } else {
+        storage.put(&key, bytes, mime_type.as_deref()).await?;
+        info!(
+            "media archive: {} ({} KiB) -> {}",
+            media_type,
+            size / 1024,
+            key
+        );
+    }
 
     crate::db::MEDIA_BUF
         .push(MediaFile {
@@ -171,6 +182,7 @@ async fn archive(
             file_name: file_name.unwrap_or_default(),
             mime_type: mime_type.unwrap_or_default(),
             size,
+            sha256,
             s3_bucket: storage.bucket.clone(),
             s3_key: key,
         })
@@ -179,26 +191,32 @@ async fn archive(
     Ok(())
 }
 
-/// `<chat id>/<yyyy>/<mm>/<message id>_<file id>.<ext>` — sorted by chat and
-/// month so a chat's archive can be listed (or lifecycled) with one prefix.
-fn object_key(job: &Job, file_id: i64, file_name: Option<&str>, mime: Option<&str>) -> String {
-    let date = chrono::DateTime::from_timestamp(job.date_time as i64, 0).unwrap_or_default();
+/// `<aa>/<bb>/<sha256>.<ext>` — content-addressed, so the same file posted in
+/// several chats (or forwarded back into one) occupies a single object and the
+/// second upload can be skipped outright. The two nibble directories keep any
+/// single prefix from growing to the size of the whole archive; which messages
+/// a file belongs to is a `media_log` query, not a key prefix.
+fn object_key(sha256: &str, file_name: Option<&str>, mime: Option<&str>) -> String {
     let ext = file_name
         .and_then(|n| n.rsplit_once('.').map(|(_, e)| e.to_lowercase()))
         .filter(|e| e.len() <= 8 && e.chars().all(|c| c.is_ascii_alphanumeric()))
         .or_else(|| mime.and_then(ext_from_mime).map(str::to_string));
 
-    let base = format!(
-        "{}/{}/{}_{}",
-        job.chat_id,
-        date.format("%Y/%m"),
-        job.message_id,
-        file_id
-    );
+    let base = format!("{}/{}/{}", &sha256[..2], &sha256[2..4], sha256);
     match ext {
         Some(ext) => format!("{base}.{ext}"),
         None => base,
     }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
 }
 
 fn ext_from_mime(mime: &str) -> Option<&'static str> {

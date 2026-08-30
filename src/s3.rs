@@ -91,4 +91,18 @@ impl Storage {
         req.send().await?;
         Ok(())
     }
+
+    /// Whether an object is already in the bucket. Keys are content-addressed,
+    /// so a hit means the exact same bytes were uploaded before and the upload
+    /// can be skipped. An error is reported as "not there": re-uploading a file
+    /// costs one request, silently dropping one loses it.
+    pub async fn exists(&self, key: &str) -> bool {
+        self.client
+            .head_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+            .is_ok()
+    }
 }

@@ -224,6 +224,7 @@ pub struct MediaFile {
     pub file_name: String,
     pub mime_type: String,
     pub size: u64,
+    pub sha256: String,
     pub s3_bucket: String,
     pub s3_key: String,
 }
