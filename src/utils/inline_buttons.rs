@@ -2,7 +2,12 @@ use grammers_client::update::Message;
 use grammers_tl_types as tl;
 
 pub fn format_buttons(message: &Message) -> Option<String> {
-    let markup = extract_reply_markup(&message.raw)?;
+    format_markup(extract_reply_markup(&message.raw)?)
+}
+
+/// The same, for markup that did not arrive on a `Message` — an ephemeral
+/// message carries its own `reply_markup`.
+pub fn format_markup(markup: &tl::enums::ReplyMarkup) -> Option<String> {
     let tl::enums::ReplyMarkup::ReplyInlineMarkup(inline) = markup else {
         return None;
     };

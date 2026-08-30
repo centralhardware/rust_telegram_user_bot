@@ -15,12 +15,16 @@ pub fn formatted_text(message: &Message) -> String {
         return String::new();
     }
 
-    let entities = match message.fmt_entities() {
-        Some(e) if !e.is_empty() => e,
-        _ => return text.to_string(),
-    };
+    render(text, message.fmt_entities().map(Vec::as_slice))
+}
 
-    apply_entities(text, entities)
+/// The same, for text that did not arrive on a `Message` — an ephemeral message
+/// carries its own `message` and `entities`.
+pub fn render(text: &str, entities: Option<&[tl::enums::MessageEntity]>) -> String {
+    match entities {
+        Some(entities) if !entities.is_empty() => apply_entities(text, entities),
+        _ => text.to_string(),
+    }
 }
 
 /// Returns (offset, length, open_marker, close_marker, nesting_priority).

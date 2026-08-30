@@ -42,7 +42,7 @@ fn extract_media_from_update(update: &tl::enums::Update) -> Option<&tl::enums::M
     }
 }
 
-fn describe_media(media: &tl::enums::MessageMedia) -> String {
+pub fn describe_media(media: &tl::enums::MessageMedia) -> String {
     match media {
         tl::enums::MessageMedia::Empty => "[empty media]".into(),
         tl::enums::MessageMedia::Unsupported => "[unsupported media]".into(),
