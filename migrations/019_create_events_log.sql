@@ -68,7 +68,6 @@ CREATE TABLE IF NOT EXISTS events_log
     sha256           String,
     s3_bucket        LowCardinality(String),
     s3_key           String,
-    client_id        UInt64,
     -- Ingest time: the newest write of a key wins.
     version          DateTime
 )
@@ -109,7 +108,6 @@ ORDER BY (chat_id, message_id, event, date_time);
 
 CREATE TABLE IF NOT EXISTS events_chat_stat
 (
-    client_id       UInt64,
     chat_id         Int64,
     last_title      AggregateFunction(anyLastIf, String, UInt8),
     messages        AggregateFunction(countIf, UInt8),
@@ -125,11 +123,10 @@ CREATE TABLE IF NOT EXISTS events_chat_stat
     last_seen       AggregateFunction(max, DateTime)
 )
 ENGINE = AggregatingMergeTree
-ORDER BY (client_id, chat_id);
+ORDER BY chat_id;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_events_chat_stat TO events_chat_stat AS
 SELECT
-    client_id,
     chat_id,
     -- Only a send knows the chat's title; an edit or a delete leaves it empty and
     -- must not be allowed to overwrite it.
@@ -147,11 +144,10 @@ SELECT
     maxState(date_time) AS last_seen
 FROM events_log
 WHERE s3_key = ''
-GROUP BY client_id, chat_id;
+GROUP BY chat_id;
 
 CREATE VIEW IF NOT EXISTS v_chat_stat AS
 SELECT
-    client_id,
     chat_id,
     anyLastIfMerge(last_title) AS chat_title,
     countIfMerge(messages) AS messages,
@@ -166,7 +162,7 @@ SELECT
     minMerge(first_seen) AS first_seen,
     maxMerge(last_seen) AS last_seen
 FROM events_chat_stat
-GROUP BY client_id, chat_id;
+GROUP BY chat_id;
 
 
 -- ---------------------------------------------------------------------------
@@ -176,7 +172,6 @@ GROUP BY client_id, chat_id;
 
 CREATE TABLE IF NOT EXISTS events_user_stat
 (
-    client_id    UInt64,
     user_id      UInt64,
     username     AggregateFunction(anyLastIf, Array(String), UInt8),
     first_name   AggregateFunction(anyLastIf, String, UInt8),
@@ -190,11 +185,10 @@ CREATE TABLE IF NOT EXISTS events_user_stat
     last_seen    AggregateFunction(max, DateTime)
 )
 ENGINE = AggregatingMergeTree
-ORDER BY (client_id, user_id);
+ORDER BY user_id;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_events_user_stat TO events_user_stat AS
 SELECT
-    client_id,
     user_id,
     -- Same reason as the chat title: an edit row carries no identity, so it must
     -- not blank out what the sends know.
@@ -210,11 +204,10 @@ SELECT
     maxState(date_time) AS last_seen
 FROM events_log
 WHERE (s3_key = '') AND (event != 'delete') AND (user_id != 0)
-GROUP BY client_id, user_id;
+GROUP BY user_id;
 
 CREATE VIEW IF NOT EXISTS v_user_stat AS
 SELECT
-    client_id,
     user_id,
     anyLastIfMerge(username) AS username,
     anyLastIfMerge(first_name) AS first_name,
@@ -227,7 +220,7 @@ SELECT
     minMerge(first_seen) AS first_seen,
     maxMerge(last_seen) AS last_seen
 FROM events_user_stat
-GROUP BY client_id, user_id;
+GROUP BY user_id;
 
 
 -- ---------------------------------------------------------------------------
@@ -239,7 +232,6 @@ GROUP BY client_id, user_id;
 
 CREATE TABLE IF NOT EXISTS events_daily_stat
 (
-    client_id   UInt64,
     day         Date,
     chat_id     Int64,
     topic_id    Int32,
@@ -250,11 +242,10 @@ CREATE TABLE IF NOT EXISTS events_daily_stat
 )
 ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(day)
-ORDER BY (client_id, day, chat_id, topic_id, event);
+ORDER BY (day, chat_id, topic_id, event);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_events_daily_stat TO events_daily_stat AS
 SELECT
-    client_id,
     toDate(date_time) AS day,
     chat_id,
     topic_id,
@@ -264,11 +255,10 @@ SELECT
     sumState(size) AS media_bytes
 FROM events_log
 WHERE s3_key = ''
-GROUP BY client_id, day, chat_id, topic_id, event;
+GROUP BY day, chat_id, topic_id, event;
 
 CREATE VIEW IF NOT EXISTS v_daily_stat AS
 SELECT
-    client_id,
     day,
     chat_id,
     topic_id,
@@ -277,7 +267,7 @@ SELECT
     length(groupUniqArrayMerge(senders)) AS senders,
     sumMerge(media_bytes) AS media_bytes
 FROM events_daily_stat
-GROUP BY client_id, day, chat_id, topic_id, event;
+GROUP BY day, chat_id, topic_id, event;
 
 
 -- ---------------------------------------------------------------------------

@@ -8,7 +8,6 @@ use crate::utils::log_ignore::is_log_ignored;
 pub async fn save_edited(
     message: &Message,
     client: &Client,
-    client_id: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let chat_id = message.peer_id().bare_id_unchecked();
     let msg_id = message.id() as i64;
@@ -70,7 +69,6 @@ pub async fn save_edited(
         topic_id,
         topic_name,
         user_id: user_id as u64,
-        client_id,
         ..Event::edit()
     }).await;
 

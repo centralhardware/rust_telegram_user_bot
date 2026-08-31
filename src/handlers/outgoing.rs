@@ -13,7 +13,7 @@ struct LastChatRow {
     chat_usernames: Vec<String>,
 }
 
-pub async fn save_outgoing(message: &Message, client: &Client, client_id: u64) -> Result<Event, Box<dyn std::error::Error>> {
+pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Result<Event, Box<dyn std::error::Error>> {
     let chat = crate::utils::peer_info::chat_info(client, message).await;
     let (title, usernames) = (chat.chat_title, chat.chat_usernames);
 
@@ -121,8 +121,8 @@ pub async fn save_outgoing(message: &Message, client: &Client, client_id: u64) -
         chat_id,
         chat_usernames: usernames,
         message_id: message.id() as i64,
-        // The account's own message: sender and client are the same.
-        user_id: client_id,
+        // The account's own message.
+        user_id: me,
         out: true,
         reply_to,
         reply_to_user_id,
@@ -133,7 +133,6 @@ pub async fn save_outgoing(message: &Message, client: &Client, client_id: u64) -
         file_name: meta.file_name,
         mime_type: meta.mime_type,
         size: meta.size,
-        client_id,
         ..Event::send()
     };
 

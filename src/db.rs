@@ -291,7 +291,6 @@ pub struct Event {
     pub sha256: String,
     pub s3_bucket: String,
     pub s3_key: String,
-    pub client_id: u64,
     /// Ingest time, the ReplacingMergeTree version: the newest write of a key
     /// wins, which is how the archiver's enrichment lands on the message row.
     pub version: u32,

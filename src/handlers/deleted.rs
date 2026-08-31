@@ -7,7 +7,6 @@ use crate::utils::log_ignore::is_log_ignored;
 
 pub async fn save_deleted(
     deletion: &MessageDeletion,
-    client_id: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let channel_id = match deletion.channel_id() {
         Some(id) => id,
@@ -54,7 +53,6 @@ pub async fn save_deleted(
             first_name: sender_name,
             topic_id,
             topic_name,
-            client_id,
             ..Event::delete()
         }).await;
     }

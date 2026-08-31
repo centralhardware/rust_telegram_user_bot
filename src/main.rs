@@ -56,11 +56,11 @@ async fn main() -> Result<()> {
                 let update = update?;
                 match update {
                     Update::NewMessage(message) => {
-                        handlers::backfill_reply(&client, &message, client_id).await;
+                        handlers::backfill_reply(&client, &message).await;
                         let saved = if message.outgoing() {
                             handlers::save_outgoing(&message, &client, client_id).await
                         } else {
-                            handlers::save_incoming(&message, &client, client_id).await
+                            handlers::save_incoming(&message, &client).await
                         };
                         match saved {
                             // The archiver writes the same row again once the file
@@ -73,12 +73,12 @@ async fn main() -> Result<()> {
                         }
                     }
                     Update::MessageEdited(message) => {
-                        if let Err(e) = handlers::save_edited(&message, &client, client_id).await {
+                        if let Err(e) = handlers::save_edited(&message, &client).await {
                             error!("Failed to save edited message: {:?}", e);
                         }
                     }
                     Update::MessageDeleted(deletion) => {
-                        if let Err(e) = handlers::save_deleted(&deletion, client_id).await {
+                        if let Err(e) = handlers::save_deleted(&deletion).await {
                             error!("Failed to save deleted message: {:?}", e);
                         }
                     }

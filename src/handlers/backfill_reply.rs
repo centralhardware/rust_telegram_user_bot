@@ -10,7 +10,7 @@ use crate::utils::peer_info::{chat_info, sender_info};
 
 /// If the message is a reply and the replied-to message is not yet in ClickHouse,
 /// fetch it from Telegram and save it.
-pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) {
+pub async fn backfill_reply(client: &Client, message: &Message) {
     let reply_id = match crate::utils::reply_target::reply_target(message) {
         Some(id) => id,
         None => return,
@@ -77,7 +77,6 @@ pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) 
             message_id: reply.id() as i64,
             chat_usernames: chat.chat_usernames,
             reply_to,
-            client_id,
             ..Event::send()
         })
         .await;

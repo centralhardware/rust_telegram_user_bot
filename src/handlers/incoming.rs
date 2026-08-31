@@ -7,7 +7,7 @@ use crate::utils::log_ignore::is_log_ignored;
 use super::extract::extract_community_tag_from_update;
 use crate::utils::peer_info::{chat_info, sender_info};
 
-pub async fn save_incoming(message: &Message, client: &Client, client_id: u64) -> Result<Event, Box<dyn std::error::Error>> {
+pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, Box<dyn std::error::Error>> {
     let media_desc = crate::utils::media_description::describe(message);
 
     let sender = sender_info(client, message).await;
@@ -114,7 +114,6 @@ pub async fn save_incoming(message: &Message, client: &Client, client_id: u64) -
         file_name: meta.file_name,
         mime_type: meta.mime_type,
         size: meta.size,
-        client_id,
         ..Event::send()
     };
 
