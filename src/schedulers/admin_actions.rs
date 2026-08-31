@@ -33,7 +33,12 @@ pub fn start(client: Client, _client_id: u64) {
             if discovered_at.is_none_or(|at| at.elapsed() >= DISCOVERY_INTERVAL) {
                 match discover_admin_chats(&client).await {
                     Ok(found) => {
-                        info!("admin log: watching {} chat(s)", found.len());
+                        let titles = found
+                            .iter()
+                            .map(|c| format!("{} ({})", c.title, c.chat_id))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        info!("admin log: watching {} chat(s): {}", found.len(), titles);
                         crate::utils::admin_chats::set(found.iter().map(|c| c.chat_id).collect());
                         chats = found;
                         discovered_at = Some(Instant::now());
