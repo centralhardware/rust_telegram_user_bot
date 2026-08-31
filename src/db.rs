@@ -220,7 +220,8 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
 
 /// Who sent a message, for the `reply_to_user_id` of the message answering it.
 /// The unflushed buffer first, then ClickHouse; 0 when the message is older than
-/// the log or was never seen.
+/// the log or was never seen. `chat_id` is the chat the *replied-to* message
+/// lives in, which is not the answering message's chat when it quotes another.
 pub async fn find_sender(chat_id: i64, message_id: i64) -> u64 {
     if let Some(user_id) = EVENTS_BUF
         .find_last(|e| {
@@ -244,6 +245,22 @@ pub async fn find_sender(chat_id: i64, message_id: i64) -> u64 {
         .fetch_one::<u64>()
         .await
         .unwrap_or_default()
+}
+
+/// Who sent the message a reply answers, looked up in the chat that message
+/// actually lives in: the quoted chat when the reply quotes another one, this
+/// chat otherwise.
+pub async fn find_reply_sender(chat_id: i64, reply: &crate::utils::reply_target::ReplyInfo) -> u64 {
+    match reply.reply_to {
+        0 => 0,
+        id => {
+            let target_chat = match reply.reply_to_chat_id {
+                0 => chat_id,
+                quoted => quoted,
+            };
+            find_sender(target_chat, id as i64).await
+        }
+    }
 }
 
 /// One `events_log` row. Built through `Event::send()` / `edit()` / `delete()`,
@@ -274,6 +291,15 @@ pub struct Event {
     /// The message this one replies to, and who sent that message.
     pub reply_to: u64,
     pub reply_to_user_id: u64,
+    /// The chat `reply_to` belongs to, 0 when that is this chat — every ordinary
+    /// reply. Telegram also lets a message quote one from *another* chat, and
+    /// then `reply_to` is an id over there: joining it onto this chat's messages
+    /// would find nothing, or the unrelated message carrying the same id.
+    pub reply_to_chat_id: i64,
+    /// The passage of the replied-to message the sender selected, empty when
+    /// they quoted nothing. For a quote out of a chat the account does not see,
+    /// this is the only trace of what was quoted.
+    pub quote_text: String,
     /// The forum topic the message was posted in, 0 outside a forum.
     pub topic_id: i32,
     pub topic_name: String,
