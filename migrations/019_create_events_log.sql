@@ -18,11 +18,9 @@
 -- under rewrites, while each edit and each delete has a time of its own and stays a
 -- separate row.
 --
--- The old tables are kept as `*_legacy` and their names are given to views over
--- `events_log`, so the Grafana boards and every existing query keep working. Nothing
--- is backfilled: the history stays in the `*_legacy` tables and the views show what
--- is logged from here on. Run this with the bot stopped — the moment the old names
--- become views they stop accepting inserts.
+-- The old tables are left untouched: nothing is backfilled and nothing is renamed.
+-- They keep the history they already hold and simply stop being written, and the
+-- Grafana boards are re-pointed at `events_log` for everything from here on.
 
 SET allow_suspicious_low_cardinality_types = 1;
 
@@ -70,75 +68,24 @@ ORDER BY (chat_id, message_id, event, date_time);
 
 
 -- ---------------------------------------------------------------------------
--- The old names, kept as views over the new table.
+-- The old tables are left exactly as they are: they keep their history and their
+-- names, they simply stop being written — the bot logs into `events_log` only, and
+-- the Grafana boards are being re-pointed at it. `mv_my_messages_to_chats_log`
+-- has nothing left to copy, and the aggregates have to be re-attached to the new
+-- source, so those views are the only ones dropped here.
 -- ---------------------------------------------------------------------------
 
--- The aggregates first: they read the tables that are about to be renamed, and
--- `mv_my_messages_to_chats_log` has nothing left to do — outgoing messages are
--- written straight into `events_log`.
 DROP VIEW IF EXISTS mv_my_messages_to_chats_log;
 DROP VIEW IF EXISTS mv_chat_stat;
 DROP VIEW IF EXISTS mv_user_stat;
 DROP VIEW IF EXISTS mv_message_stats;
 DROP VIEW IF EXISTS mv_edited_chain_stats;
 
-RENAME TABLE
-    chats_log             TO chats_log_legacy,
-    telegram_messages_new TO telegram_messages_new_legacy,
-    edited_log            TO edited_log_legacy,
-    deleted_log           TO deleted_log_legacy,
-    media_log             TO media_log_legacy;
-
-CREATE VIEW chats_log AS
-SELECT date_time, message, chat_title, chat_id, username, first_name, second_name,
-       user_id, community_tag, message_id, chat_usernames, reply_to, client_id
-FROM events_log
-WHERE event = 'send';
-
-CREATE VIEW telegram_messages_new AS
-SELECT date_time, message, chat_title AS title, chat_id AS id,
-       CAST([] AS Array(LowCardinality(String))) AS admins2,
-       chat_usernames AS usernames, toUInt64(message_id) AS message_id,
-       reply_to, raw, client_id
-FROM events_log
-WHERE event = 'send' AND out;
-
--- `original_message` is no longer stored: for an edit it is simply the text the
--- message had one event earlier, so the view reads it back off the preceding send
--- or edit row instead of keeping a second copy of it.
-CREATE VIEW edited_log AS
-SELECT date_time, chat_id, message_id, original_message, message, diff,
-       toInt64(user_id) AS user_id, client_id
-FROM
-(
-    SELECT
-        date_time, chat_id, message_id, message, diff, user_id, client_id, event,
-        lagInFrame(message) OVER
-        (
-            PARTITION BY chat_id, message_id ORDER BY date_time ASC
-            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-        ) AS original_message
-    FROM events_log
-    WHERE event IN ('send', 'edit')
-)
-WHERE event = 'edit';
-
-CREATE VIEW deleted_log AS
-SELECT date_time, chat_id, message_id, client_id
-FROM events_log
-WHERE event = 'delete';
-
-CREATE VIEW media_log AS
-SELECT date_time, chat_id, chat_title, message_id, user_id, media_type, file_name,
-       mime_type, size, sha256, s3_bucket, s3_key
-FROM events_log
-WHERE event = 'send' AND s3_key != '';
-
 
 -- ---------------------------------------------------------------------------
--- The aggregates again, on the new source. Their target tables are the existing
--- ones and are left untouched, so the counters carry on from where the old
--- materialized views left them.
+-- The aggregates, re-attached to the new source. Their target tables are the
+-- existing ones and are left as they are, so the counters carry on from where the
+-- old materialized views left them.
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS chat_stat
