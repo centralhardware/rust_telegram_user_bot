@@ -1,102 +1,96 @@
 use similar::{ChangeTag, TextDiff};
 
-pub fn colorize_unified_diff(diff: &str, original: &str, modified: &str) -> String {
-    let lines: Vec<&str> = diff.lines().collect();
-    let mut result = String::new();
+/// Red on a red tint, struck through, for what the edit removed.
+const DEL: &str = "\x1b[9;38;5;203;48;5;52m";
+/// Green on a green tint for what replaced it.
+const INS: &str = "\x1b[38;5;114;48;5;22m";
+const OFF: &str = "\x1b[0m";
 
-    let line_diff = TextDiff::from_lines(original, modified);
-    let changes: Vec<_> = line_diff.iter_all_changes().collect();
+/// An edit as an inline diff: the message printed **once**, with only the words
+/// that changed marked -- removed struck through in red, their replacement in
+/// green, everything untouched left plain.
+///
+/// This replaced a coloured unified diff, which repeated every changed line
+/// twice and left the eye to find the one word that actually moved. It is the
+/// same form the "Recent edits" panel of the Telegram messages dashboard uses,
+/// so the log and the board read alike.
+pub fn inline_diff(original: &str, modified: &str) -> String {
+    let diff = TextDiff::from_words(original, modified);
+    let mut out = String::new();
+    let (mut removed, mut added) = (String::new(), String::new());
 
-    let mut colored_del: Vec<String> = Vec::new();
-    let mut colored_ins: Vec<String> = Vec::new();
-
-    let mut i = 0;
-    while i < changes.len() {
-        match changes[i].tag() {
-            ChangeTag::Equal => { i += 1; }
-            ChangeTag::Delete => {
-                let del_start = i;
-                while i < changes.len() && changes[i].tag() == ChangeTag::Delete { i += 1; }
-                let ins_start = i;
-                while i < changes.len() && changes[i].tag() == ChangeTag::Insert { i += 1; }
-
-                let dels = &changes[del_start..ins_start];
-                let inss = &changes[ins_start..i];
-                let pair_count = dels.len().min(inss.len());
-
-                for j in 0..pair_count {
-                    let old_val = dels[j].value().trim_end_matches('\n');
-                    let new_val = inss[j].value().trim_end_matches('\n');
-                    let char_diff = TextDiff::from_chars(old_val, new_val);
-
-                    let mut old_buf = String::new();
-                    let mut new_buf = String::new();
-                    for c in char_diff.iter_all_changes() {
-                        match c.tag() {
-                            ChangeTag::Equal => {
-                                old_buf += c.value();
-                                new_buf += c.value();
-                            }
-                            ChangeTag::Delete => {
-                                old_buf += "\x1b[31m";
-                                old_buf += c.value();
-                                old_buf += "\x1b[0m";
-                            }
-                            ChangeTag::Insert => {
-                                new_buf += "\x1b[32m";
-                                new_buf += c.value();
-                                new_buf += "\x1b[0m";
-                            }
-                        }
-                    }
-                    colored_del.push(format!("-{old_buf}"));
-                    colored_ins.push(format!("+{new_buf}"));
-                }
-                for j in pair_count..dels.len() {
-                    colored_del.push(format!(
-                        "-\x1b[31m{}\x1b[0m",
-                        dels[j].value().trim_end_matches('\n')
-                    ));
-                }
-                for j in pair_count..inss.len() {
-                    colored_ins.push(format!(
-                        "+\x1b[32m{}\x1b[0m",
-                        inss[j].value().trim_end_matches('\n')
-                    ));
-                }
-            }
-            ChangeTag::Insert => {
-                colored_ins.push(format!(
-                    "+\x1b[32m{}\x1b[0m",
-                    changes[i].value().trim_end_matches('\n')
-                ));
-                i += 1;
+    for change in diff.iter_all_changes() {
+        match change.tag() {
+            // A run of removals and the insertions that replace it are held
+            // back until the text goes equal again, so the two come out as one
+            // "-old +new" pair instead of alternating word by word.
+            ChangeTag::Delete => removed.push_str(change.value()),
+            ChangeTag::Insert => added.push_str(change.value()),
+            ChangeTag::Equal => {
+                flush(&mut out, &mut removed, &mut added);
+                out.push_str(change.value());
             }
         }
     }
+    flush(&mut out, &mut removed, &mut added);
+    out
+}
 
-    let mut del_idx = 0;
-    let mut ins_idx = 0;
-    for line in &lines {
-        if line.starts_with('-') && !line.starts_with("---") {
-            if del_idx < colored_del.len() {
-                result += &colored_del[del_idx];
-                del_idx += 1;
-            } else {
-                result += line;
-            }
-        } else if line.starts_with('+') && !line.starts_with("+++") {
-            if ins_idx < colored_ins.len() {
-                result += &colored_ins[ins_idx];
-                ins_idx += 1;
-            } else {
-                result += line;
-            }
-        } else {
-            result += line;
-        }
-        result += "\n";
+fn flush(out: &mut String, removed: &mut String, added: &mut String) {
+    let both = !removed.trim().is_empty() && !added.trim().is_empty();
+    push_run(out, removed, DEL);
+    // The words come without the space that used to sit between them, so the
+    // two runs would touch: "wensdeyWensdey".
+    if both && !out.ends_with(char::is_whitespace) {
+        out.push(' ');
+    }
+    push_run(out, added, INS);
+}
+
+/// Append one changed run, leaving the whitespace around it uncoloured: a
+/// struck-through newline paints the rest of the terminal line.
+fn push_run(out: &mut String, run: &mut String, style: &str) {
+    let body = run.trim();
+    if body.is_empty() {
+        out.push_str(run);
+    } else {
+        let head = run.len() - run.trim_start().len();
+        let tail = run.trim_end().len();
+        out.push_str(&run[..head]);
+        out.push_str(style);
+        out.push_str(&run[head..tail]);
+        out.push_str(OFF);
+        out.push_str(&run[tail..]);
+    }
+    run.clear();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plain(s: &str) -> String {
+        s.replace(DEL, "[-").replace(INS, "{+").replace(OFF, "|")
     }
 
-    result.trim_end().to_string()
+    #[test]
+    fn marks_only_the_changed_word() {
+        assert_eq!(
+            plain(&inline_diff("meet at wensdey", "meet at Wensdey")),
+            "meet at [-wensdey| {+Wensdey|"
+        );
+    }
+
+    #[test]
+    fn keeps_line_breaks_and_unchanged_text() {
+        assert_eq!(
+            plain(&inline_diff("one\ntwo three", "one\ntwo four")),
+            "one\ntwo [-three| {+four|"
+        );
+    }
+
+    #[test]
+    fn a_pure_insertion_has_no_removed_run() {
+        assert_eq!(plain(&inline_diff("a c", "a b c")), "a {+b| c");
+    }
 }
