@@ -88,6 +88,9 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
             community_id: chat.community_id,
             message_id: reply.id() as i64,
             chat_usernames: chat.chat_usernames,
+            // A backfilled message can be one this account sent: `Event::send()`
+            // defaults to incoming, which would be wrong for half of them.
+            out: reply.outgoing(),
             reply_to,
             reply_to_user_id,
             topic_id,
