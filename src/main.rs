@@ -56,41 +56,46 @@ async fn main() -> Result<()> {
                 let update = update?;
                 match update {
                     Update::NewMessage(message) => {
-                        handlers::backfill_reply(&client, &message, client_id).await;
-                        if message.outgoing() {
-                            if let Err(e) = handlers::save_outgoing(&message, &client, client_id).await {
-                                error!("Failed to save outgoing message: {:?}", e);
-                            }
+                        handlers::backfill_reply(&client, &message).await;
+                        let saved = if message.outgoing() {
+                            handlers::save_outgoing(&message, &client, client_id).await
                         } else {
-                            if let Err(e) = handlers::save_incoming(&message, &client, client_id).await {
-                                error!("Failed to save incoming message: {:?}", e);
-                            }
+                            handlers::save_incoming(&message, &client).await
+                        };
+                        match saved {
+                            // The archiver writes the same row again once the file
+                            // is in S3, so it needs the row as it was logged.
+                            Ok(event) => handlers::save_media(&message, &event).await,
+                            Err(e) => error!("Failed to save message: {:?}", e),
                         }
-                        handlers::save_media(&message, &client).await;
                         if let Err(e) = handlers::handle_auto_cat(&message).await {
                             error!("Failed to handle auto cat: {:?}", e);
                         }
                     }
                     Update::MessageEdited(message) => {
-                        if let Err(e) = handlers::save_edited(&message, &client, client_id).await {
+                        if let Err(e) = handlers::save_edited(&message, &client).await {
                             error!("Failed to save edited message: {:?}", e);
                         }
                     }
                     Update::MessageDeleted(deletion) => {
-                        if let Err(e) = handlers::save_deleted(&deletion, client_id).await {
+                        if let Err(e) = handlers::save_deleted(&deletion).await {
                             error!("Failed to save deleted message: {:?}", e);
                         }
                     }
                     // Ephemeral messages have no friendly variant in grammers yet.
                     Update::Raw(raw) => match &raw.raw {
                         tl::enums::Update::NewEphemeralMessage(u) => {
-                            handlers::save_ephemeral(&u.message, "new", client_id).await;
+                            handlers::save_ephemeral(&u.message, "new").await;
                         }
                         tl::enums::Update::EditEphemeralMessage(u) => {
-                            handlers::save_ephemeral(&u.message, "edit", client_id).await;
+                            handlers::save_ephemeral(&u.message, "edit").await;
                         }
                         tl::enums::Update::DeleteEphemeralMessages(u) => {
-                            handlers::save_ephemeral_deleted(&u.peer, &u.ids, client_id).await;
+                            handlers::save_ephemeral_deleted(&u.peer, &u.ids).await;
+                        }
+                        // Reactions have none either.
+                        tl::enums::Update::MessageReactions(u) => {
+                            handlers::save_reactions(u).await;
                         }
                         _ => {}
                     },

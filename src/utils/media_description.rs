@@ -6,7 +6,7 @@ pub fn describe(message: &Message) -> Option<String> {
     Some(describe_media(media))
 }
 
-fn extract_media(message: &Message) -> Option<&tl::enums::MessageMedia> {
+pub fn extract_media(message: &Message) -> Option<&tl::enums::MessageMedia> {
     // message.raw is tl::enums::Update; we need to get the inner tl::types::Message
     // and its media field. The grammers Message type exposes raw as pub.
     // We go through the grammers high-level API instead: check if media() returns Some,
@@ -237,4 +237,155 @@ fn join_non_empty(sep: &str, parts: &[&str]) -> String {
         .copied()
         .collect::<Vec<_>>()
         .join(sep)
+}
+
+/// The structured side of a message's media: what it is, and — when it is a file
+/// — the name, mime type and size Telegram reports for it. The text side is
+/// `describe`; a row carries both.
+#[derive(Default)]
+pub struct MediaMeta {
+    pub media_type: String,
+    pub file_name: String,
+    pub mime_type: String,
+    pub size: u64,
+    /// Seconds, for voice, audio and video.
+    pub duration: u32,
+    /// Pixels, for a photo or a video.
+    pub width: u32,
+    pub height: u32,
+    /// Degrees, for a location, a live location or a venue.
+    pub lat: f64,
+    pub lon: f64,
+    pub poll_question: String,
+    pub poll_options: Vec<String>,
+}
+
+pub fn media_meta(message: &Message) -> Option<MediaMeta> {
+    extract_media(message).map(meta_of)
+}
+
+/// The same, for a message that arrived as a message rather than as an update —
+/// one fetched to backfill a reply, say, which has no `Update` around it.
+pub fn media_meta_of(message: &tl::enums::Message) -> Option<MediaMeta> {
+    match message {
+        tl::enums::Message::Message(msg) => msg.media.as_ref().map(meta_of),
+        _ => None,
+    }
+}
+
+fn meta_of(media: &tl::enums::MessageMedia) -> MediaMeta {
+    let mut meta = MediaMeta {
+        media_type: kind_of(media).to_string(),
+        ..MediaMeta::default()
+    };
+
+    match media {
+        tl::enums::MessageMedia::Photo(p) => {
+            meta.mime_type = "image/jpeg".into();
+            // The sizes are the same image at several resolutions; the largest is
+            // the one the message actually shows.
+            if let Some(tl::enums::Photo::Photo(photo)) = p.photo.as_ref() {
+                for size in &photo.sizes {
+                    if let tl::enums::PhotoSize::Size(s) = size {
+                        if (s.w as u32) > meta.width {
+                            meta.width = s.w.max(0) as u32;
+                            meta.height = s.h.max(0) as u32;
+                        }
+                    }
+                }
+            }
+        }
+        tl::enums::MessageMedia::Geo(g) => {
+            let tl::enums::GeoPoint::Point(p) = &g.geo else { return meta };
+            (meta.lat, meta.lon) = (p.lat, p.long);
+        }
+        tl::enums::MessageMedia::GeoLive(g) => {
+            let tl::enums::GeoPoint::Point(p) = &g.geo else { return meta };
+            (meta.lat, meta.lon) = (p.lat, p.long);
+        }
+        tl::enums::MessageMedia::Venue(v) => {
+            if let tl::enums::GeoPoint::Point(p) = &v.geo {
+                (meta.lat, meta.lon) = (p.lat, p.long);
+            }
+        }
+        tl::enums::MessageMedia::Poll(p) => {
+            let tl::enums::Poll::Poll(poll) = &p.poll;
+            let tl::enums::TextWithEntities::Entities(q) = &poll.question;
+            meta.poll_question = q.text.clone();
+            meta.poll_options = poll
+                .answers
+                .iter()
+                .filter_map(|a| match a {
+                    tl::enums::PollAnswer::Answer(a) => {
+                        let tl::enums::TextWithEntities::Entities(t) = &a.text;
+                        Some(t.text.clone())
+                    }
+                    _ => None,
+                })
+                .collect();
+        }
+        tl::enums::MessageMedia::Document(d) => {
+            if let Some(tl::enums::Document::Document(doc)) = d.document.as_ref() {
+                meta.mime_type = doc.mime_type.clone();
+                meta.size = doc.size.max(0) as u64;
+                for attr in &doc.attributes {
+                    match attr {
+                        tl::enums::DocumentAttribute::Filename(f) => {
+                            meta.file_name = f.file_name.clone()
+                        }
+                        tl::enums::DocumentAttribute::Sticker(_) => {
+                            meta.media_type = "sticker".into()
+                        }
+                        tl::enums::DocumentAttribute::Audio(a) => {
+                            meta.media_type = if a.voice { "voice" } else { "audio" }.into();
+                            meta.duration = a.duration.max(0) as u32;
+                        }
+                        tl::enums::DocumentAttribute::Video(v) => {
+                            meta.media_type = if v.round_message {
+                                "video_message"
+                            } else if v.nosound {
+                                "gif"
+                            } else {
+                                "video"
+                            }
+                            .into();
+                            meta.duration = v.duration.max(0.0) as u32;
+                            meta.width = v.w.max(0) as u32;
+                            meta.height = v.h.max(0) as u32;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    meta
+}
+
+/// The media variant's own name, so a row can be filtered by what it carries
+/// without parsing the text representation.
+fn kind_of(media: &tl::enums::MessageMedia) -> &'static str {
+    match media {
+        tl::enums::MessageMedia::Empty => "empty",
+        tl::enums::MessageMedia::Unsupported => "unsupported",
+        tl::enums::MessageMedia::Photo(_) => "photo",
+        tl::enums::MessageMedia::Document(_) => "document",
+        tl::enums::MessageMedia::Contact(_) => "contact",
+        tl::enums::MessageMedia::Geo(_) => "location",
+        tl::enums::MessageMedia::GeoLive(_) => "live_location",
+        tl::enums::MessageMedia::Venue(_) => "venue",
+        tl::enums::MessageMedia::Poll(_) => "poll",
+        tl::enums::MessageMedia::Dice(_) => "dice",
+        tl::enums::MessageMedia::WebPage(_) => "web_page",
+        tl::enums::MessageMedia::Game(_) => "game",
+        tl::enums::MessageMedia::Invoice(_) => "invoice",
+        tl::enums::MessageMedia::Story(_) => "story",
+        tl::enums::MessageMedia::Giveaway(_) => "giveaway",
+        tl::enums::MessageMedia::GiveawayResults(_) => "giveaway_results",
+        tl::enums::MessageMedia::PaidMedia(_) => "paid_media",
+        tl::enums::MessageMedia::ToDo(_) => "todo",
+        tl::enums::MessageMedia::VideoStream(_) => "video_stream",
+    }
 }

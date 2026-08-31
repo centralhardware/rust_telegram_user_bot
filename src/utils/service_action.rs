@@ -273,3 +273,29 @@ pub fn format(action: &MessageAction, sender_id: Option<i64>, sender_name: Optio
 fn format_ids(ids: &[i64]) -> String {
     ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ")
 }
+
+/// The action's own name, snake_cased, for the `action` column: `chat_add_user`,
+/// `pin_message`, `topic_edit` and so on.
+///
+/// Taken from the variant name rather than a hand-written table of all seventy of
+/// them: the layer gains actions with every schema bump, and a table would name
+/// the ones that existed when it was written and silently call the rest by the
+/// wrong name — or by none. `Debug` prints the variant name first, and that is
+/// the only part read here.
+pub fn kind(action: &MessageAction) -> String {
+    let debug = format!("{action:?}");
+    let variant = debug.split(['(', ' ', '{']).next().unwrap_or_default();
+
+    let mut out = String::with_capacity(variant.len() + 4);
+    for (i, c) in variant.char_indices() {
+        if c.is_ascii_uppercase() {
+            if i != 0 {
+                out.push('_');
+            }
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}

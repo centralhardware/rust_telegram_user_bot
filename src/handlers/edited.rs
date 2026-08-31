@@ -2,13 +2,12 @@ use grammers_client::update::Message;
 use grammers_client::Client;
 use log::info;
 
-use crate::db::EditedMessage;
+use crate::db::Event;
 use crate::utils::log_ignore::is_log_ignored;
 
 pub async fn save_edited(
     message: &Message,
     client: &Client,
-    client_id: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let chat_id = message.peer_id().bare_id_unchecked();
     let msg_id = message.id() as i64;
@@ -54,19 +53,29 @@ pub async fn save_edited(
         );
     }
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_secs() as u32;
+    let (topic_id, topic_name) = crate::utils::topic::topic_of(client, message).await;
 
-    crate::db::EDITED_BUF.push(EditedMessage {
+    // Telegram's own edit time, not the moment this process got round to it: the
+    // row is when the message changed, and a reconnect replaying a backlog of
+    // edits must not stamp them all with the time it caught up.
+    let now = match message.edit_date() {
+        Some(date) => date.as_second() as u32,
+        None => std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as u32,
+    };
+
+    crate::db::EVENTS_BUF.push(Event {
         date_time: now,
         chat_id,
+        chat_title: chat_name,
         message_id: msg_id,
-        original_message: original,
         message: message_content,
         diff,
-        user_id,
-        client_id,
+        topic_id,
+        topic_name,
+        user_id: user_id as u64,
+        ..Event::edit()
     }).await;
 
     Ok(())

@@ -3,14 +3,14 @@ use grammers_client::Client;
 use grammers_tl_types as tl;
 use log::{debug, info, warn};
 
-use crate::db::IncomingMessage;
+use crate::db::Event;
 use crate::utils::log_ignore::is_log_ignored;
 use super::extract::extract_community_tag;
 use crate::utils::peer_info::{chat_info, sender_info};
 
 /// If the message is a reply and the replied-to message is not yet in ClickHouse,
 /// fetch it from Telegram and save it.
-pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) {
+pub async fn backfill_reply(client: &Client, message: &Message) {
     let reply_id = match crate::utils::reply_target::reply_target(message) {
         Some(id) => id,
         None => return,
@@ -62,9 +62,20 @@ pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) 
     };
 
     let reply_to = crate::utils::reply_target::reply_target(&reply).unwrap_or(0) as u64;
+    let reply_to_user_id = if reply_to == 0 {
+        0
+    } else {
+        crate::db::find_sender(chat_id, reply_to as i64).await
+    };
+    let (topic_id, topic_name) = crate::utils::topic::topic_of(client, &reply).await;
 
-    crate::db::INCOMING_BUF
-        .push(IncomingMessage {
+    // A backfilled message is a message: it gets the same columns a live one
+    // gets, or the row would quietly be the thinner of the two.
+    let meta = crate::utils::media_description::media_meta_of(&reply.raw).unwrap_or_default();
+    let meta_msg = crate::utils::message_meta::of(&reply.raw);
+
+    crate::db::EVENTS_BUF
+        .push(Event {
             date_time: reply.date().as_second() as u32,
             message: msg_content,
             chat_title: chat.chat_title,
@@ -74,10 +85,43 @@ pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) 
             second_name: sender.second_name,
             user_id: sender.user_id,
             community_tag: extract_community_tag(&reply.raw),
+            community_id: chat.community_id,
             message_id: reply.id() as i64,
             chat_usernames: chat.chat_usernames,
+            // A backfilled message can be one this account sent: `Event::send()`
+            // defaults to incoming, which would be wrong for half of them.
+            out: reply.outgoing(),
             reply_to,
-            client_id,
+            reply_to_user_id,
+            topic_id,
+            topic_name,
+            raw: serde_json::to_string(&reply.raw).unwrap_or_default(),
+            media_type: meta.media_type,
+            file_name: meta.file_name,
+            mime_type: meta.mime_type,
+            size: meta.size,
+            duration: meta.duration,
+            width: meta.width,
+            height: meta.height,
+            lat: meta.lat,
+            lon: meta.lon,
+            poll_question: meta.poll_question,
+            poll_options: meta.poll_options,
+            fwd_from_user_id: meta_msg.fwd_from_user_id,
+            fwd_from_chat_id: meta_msg.fwd_from_chat_id,
+            fwd_from_msg_id: meta_msg.fwd_from_msg_id,
+            fwd_from_name: meta_msg.fwd_from_name,
+            fwd_date: meta_msg.fwd_date,
+            action: meta_msg.action,
+            grouped_id: meta_msg.grouped_id,
+            via_bot_id: meta_msg.via_bot_id,
+            guest_from_id: meta_msg.guest_from_id,
+            post_author: meta_msg.post_author,
+            pinned: meta_msg.pinned,
+            silent: meta_msg.silent,
+            noforwards: meta_msg.noforwards,
+            ttl_period: meta_msg.ttl_period,
+            ..Event::send()
         })
         .await;
 
@@ -90,10 +134,16 @@ pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) 
 }
 
 async fn message_exists(chat_id: i64, message_id: i32) -> bool {
-    // Check unflushed incoming buffer
-    let in_buf = crate::db::INCOMING_BUF
-        .find_last(|m| {
-            if m.chat_id == chat_id && m.message_id == message_id as i64 {
+    // Check the unflushed buffer
+    let in_buf = crate::db::EVENTS_BUF
+        .find_last(|e| {
+            // An ephemeral id names a different message entirely, so one must
+            // never answer for an ordinary id.
+            if e.event == crate::db::SEND
+                && !e.ephemeral
+                && e.chat_id == chat_id
+                && e.message_id == message_id as i64
+            {
                 Some(())
             } else {
                 None
@@ -105,20 +155,14 @@ async fn message_exists(chat_id: i64, message_id: i32) -> bool {
         return true;
     }
 
-    let db = crate::db::clickhouse();
-
-    if let Ok(count) = db
+    if let Ok(count) = crate::db::clickhouse()
         .query(
-            "SELECT sum(c) AS cnt FROM (\
-                SELECT count() AS c FROM chats_log WHERE chat_id = ? AND message_id = ? \
-                UNION ALL \
-                SELECT count() AS c FROM telegram_messages_new WHERE id = ? AND message_id = ?\
-            )",
+            "SELECT count() FROM events_log \
+             WHERE chat_id = ? AND message_id = ? AND event = ? AND NOT ephemeral",
         )
         .bind(chat_id)
         .bind(message_id as i64)
-        .bind(chat_id)
-        .bind(message_id as u64)
+        .bind(crate::db::SEND)
         .fetch_one::<u64>()
         .await
     {

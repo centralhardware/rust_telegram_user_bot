@@ -2,12 +2,12 @@ use grammers_client::update::Message;
 use grammers_client::Client;
 use log::info;
 
-use crate::db::IncomingMessage;
+use crate::db::Event;
 use crate::utils::log_ignore::is_log_ignored;
 use super::extract::extract_community_tag_from_update;
 use crate::utils::peer_info::{chat_info, sender_info};
 
-pub async fn save_incoming(message: &Message, client: &Client, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, Box<dyn std::error::Error>> {
     let media_desc = crate::utils::media_description::describe(message);
 
     let sender = sender_info(client, message).await;
@@ -71,7 +71,7 @@ pub async fn save_incoming(message: &Message, client: &Client, client_id: u64) -
         if let Some(action) = message.action() {
             crate::utils::service_action::format(action, Some(sender_bare_id), Some(&sender_display))
         } else {
-            serde_json::to_string(&message.raw).unwrap_or_default()
+            media_desc.clone().unwrap_or_default()
         }
     } else {
         text.to_string()
@@ -84,8 +84,17 @@ pub async fn save_incoming(message: &Message, client: &Client, client_id: u64) -
     }
 
     let reply_to = crate::utils::reply_target::reply_target(message).unwrap_or(0) as u64;
+    let reply_to_user_id = if reply_to == 0 {
+        0
+    } else {
+        crate::db::find_sender(chat_id, reply_to as i64).await
+    };
+    let (topic_id, topic_name) = crate::utils::topic::topic_of(client, message).await;
 
-    crate::db::INCOMING_BUF.push(IncomingMessage {
+    let meta = crate::utils::media_description::media_meta(message).unwrap_or_default();
+    let meta_msg = crate::utils::message_meta::of(&std::ops::Deref::deref(message).raw);
+
+    let event = Event {
         date_time: message.date().as_second() as u32,
         message: msg_content,
         chat_title: chat.chat_title,
@@ -95,11 +104,43 @@ pub async fn save_incoming(message: &Message, client: &Client, client_id: u64) -
         second_name: sender.second_name,
         user_id: sender.user_id,
         community_tag,
+        community_id: chat.community_id,
         message_id: message.id() as i64,
         chat_usernames: chat.chat_usernames,
         reply_to,
-        client_id,
-    }).await;
+        reply_to_user_id,
+        topic_id,
+        topic_name,
+        raw: serde_json::to_string(&message.raw).unwrap_or_default(),
+        media_type: meta.media_type,
+        file_name: meta.file_name,
+        mime_type: meta.mime_type,
+        size: meta.size,
+        fwd_from_user_id: meta_msg.fwd_from_user_id,
+        fwd_from_chat_id: meta_msg.fwd_from_chat_id,
+        fwd_from_msg_id: meta_msg.fwd_from_msg_id,
+        fwd_from_name: meta_msg.fwd_from_name,
+        fwd_date: meta_msg.fwd_date,
+        action: meta_msg.action,
+        grouped_id: meta_msg.grouped_id,
+        via_bot_id: meta_msg.via_bot_id,
+        guest_from_id: meta_msg.guest_from_id,
+        post_author: meta_msg.post_author,
+        pinned: meta_msg.pinned,
+        silent: meta_msg.silent,
+        noforwards: meta_msg.noforwards,
+        ttl_period: meta_msg.ttl_period,
+        duration: meta.duration,
+        width: meta.width,
+        height: meta.height,
+        lat: meta.lat,
+        lon: meta.lon,
+        poll_question: meta.poll_question,
+        poll_options: meta.poll_options,
+        ..Event::send()
+    };
 
-    Ok(())
+    crate::db::EVENTS_BUF.push(event.clone()).await;
+
+    Ok(event)
 }

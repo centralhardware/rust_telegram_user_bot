@@ -7,6 +7,7 @@ pub(crate) mod extract;
 mod incoming;
 mod media;
 mod outgoing;
+mod reactions;
 
 pub use auto_cat::handle_auto_cat;
 pub use backfill_reply::backfill_reply;
@@ -16,4 +17,5 @@ pub use ephemeral::{save_ephemeral, save_ephemeral_deleted};
 pub use incoming::save_incoming;
 pub use media::{save_media, start as start_media};
 pub use outgoing::save_outgoing;
+pub use reactions::save_reactions;
 

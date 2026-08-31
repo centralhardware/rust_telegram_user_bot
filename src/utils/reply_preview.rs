@@ -63,9 +63,9 @@ fn highlight_quote(text: &str, quote: &str) -> String {
 }
 
 async fn lookup_message_text(chat_id: i64, message_id: i32) -> (Option<String>, Option<String>) {
-    // Check unflushed incoming buffer first
-    let from_buf = crate::db::INCOMING_BUF.find_last(|m| {
-        if m.chat_id == chat_id && m.message_id == message_id as i64 {
+    // Check the unflushed buffer first
+    let from_buf = crate::db::EVENTS_BUF.find_last(|m| {
+        if m.event == crate::db::SEND && m.chat_id == chat_id && m.message_id == message_id as i64 {
             let sender = if m.second_name.is_empty() {
                 m.first_name.clone()
             } else {
@@ -80,28 +80,26 @@ async fn lookup_message_text(chat_id: i64, message_id: i32) -> (Option<String>, 
         return (Some(text), Some(sender));
     }
 
-    // Query ClickHouse: try chats_log (incoming), then telegram_messages_new (outgoing)
-    let db = crate::db::clickhouse();
-
-    if let Ok((text, first, second)) = db
-        .query("SELECT message, first_name, second_name FROM chats_log WHERE chat_id = ? AND message_id = ? ORDER BY date_time DESC LIMIT 1")
+    // Incoming and outgoing now share one table, so one query covers both. The row
+    // says who sent it, `peer_names` says what they are called.
+    if let Ok((text, user_id)) = crate::db::clickhouse()
+        .query(
+            "SELECT message, user_id FROM events_log \
+             WHERE chat_id = ? AND message_id = ? AND event = ? \
+             ORDER BY date_time DESC LIMIT 1",
+        )
         .bind(chat_id)
         .bind(message_id as i64)
-        .fetch_one::<(String, String, String)>()
+        .bind(crate::db::SEND)
+        .fetch_one::<(String, u64)>()
         .await
     {
-        let sender = if second.is_empty() { first } else { format!("{first} {second}") };
+        let sender = match crate::utils::peer_names::load(user_id as i64).await {
+            Some(n) if !n.last_name.is_empty() => format!("{} {}", n.first_name, n.last_name),
+            Some(n) => n.first_name,
+            None => String::new(),
+        };
         return (Some(text), Some(sender));
-    }
-
-    if let Ok(text) = db
-        .query("SELECT message FROM telegram_messages_new WHERE id = ? AND message_id = ? ORDER BY date_time DESC LIMIT 1")
-        .bind(chat_id)
-        .bind(message_id as u64)
-        .fetch_one::<String>()
-        .await
-    {
-        return (Some(text), None);
     }
 
     (None, None)

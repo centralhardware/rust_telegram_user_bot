@@ -5,16 +5,17 @@ use grammers_client::Client;
 use log::info;
 use serde::Deserialize;
 
-use crate::db::OutgoingMessage;
+use crate::db::Event;
 
 #[derive(Row, Deserialize)]
 struct LastChatRow {
-    title: String,
-    usernames: Vec<String>,
+    chat_title: String,
+    chat_usernames: Vec<String>,
 }
 
-pub async fn save_outgoing(message: &Message, client: &Client, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Result<Event, Box<dyn std::error::Error>> {
     let chat = crate::utils::peer_info::chat_info(client, message).await;
+    let community_id = chat.community_id;
     let (title, usernames) = (chat.chat_title, chat.chat_usernames);
 
     let chat_id = message.peer_id().bare_id_unchecked();
@@ -23,12 +24,17 @@ pub async fn save_outgoing(message: &Message, client: &Client, client_id: u64) -
     // name it last went by here.
     let (title, usernames) = if title.is_empty() {
         match crate::db::clickhouse()
-            .query("SELECT title, usernames FROM telegram_messages_new WHERE id = ? AND title != '' ORDER BY date_time DESC LIMIT 1")
+            .query(
+                "SELECT chat_title, chat_usernames FROM events_log \
+                 WHERE chat_id = ? AND event = ? AND chat_title != '' \
+                 ORDER BY date_time DESC LIMIT 1",
+            )
             .bind(chat_id)
+            .bind(crate::db::SEND)
             .fetch_one::<LastChatRow>()
             .await
         {
-            Ok(row) => (row.title, row.usernames),
+            Ok(row) => (row.chat_title, row.chat_usernames),
             Err(_) => (title, usernames),
         }
     } else {
@@ -38,8 +44,6 @@ pub async fn save_outgoing(message: &Message, client: &Client, client_id: u64) -
     let text = crate::utils::format_entities::formatted_text(message);
     let raw = serde_json::to_string(&message.raw).unwrap_or_default();
     let reply_to = crate::utils::reply_target::reply_target(message).unwrap_or(0) as u64;
-
-    let admins: Vec<String> = Vec::new();
 
     let media_desc = crate::utils::media_description::describe(message);
     let buttons = crate::utils::inline_buttons::format_buttons(message);
@@ -102,20 +106,61 @@ pub async fn save_outgoing(message: &Message, client: &Client, client_id: u64) -
         msg_content.push_str(b);
     }
 
-    let mut insert = crate::db::clickhouse().insert::<OutgoingMessage>("telegram_messages_new").await?;
-    insert.write(&OutgoingMessage {
+    let reply_to_user_id = if reply_to == 0 {
+        0
+    } else {
+        crate::db::find_sender(chat_id, reply_to as i64).await
+    };
+    let (topic_id, topic_name) = crate::utils::topic::topic_of(client, message).await;
+
+    let meta = crate::utils::media_description::media_meta(message).unwrap_or_default();
+    let meta_msg = crate::utils::message_meta::of(&std::ops::Deref::deref(message).raw);
+
+    let event = Event {
         date_time: message.date().as_second() as u32,
         message: msg_content,
-        title,
-        id: chat_id,
-        admins2: admins,
-        usernames,
-        message_id: message.id() as u64,
+        chat_title: title,
+        chat_id,
+        chat_usernames: usernames,
+        community_id,
+        message_id: message.id() as i64,
+        // The account's own message.
+        user_id: me,
+        out: true,
         reply_to,
+        reply_to_user_id,
+        topic_id,
+        topic_name,
         raw,
-        client_id,
-    }).await?;
-    insert.end().await?;
+        media_type: meta.media_type,
+        file_name: meta.file_name,
+        mime_type: meta.mime_type,
+        size: meta.size,
+        fwd_from_user_id: meta_msg.fwd_from_user_id,
+        fwd_from_chat_id: meta_msg.fwd_from_chat_id,
+        fwd_from_msg_id: meta_msg.fwd_from_msg_id,
+        fwd_from_name: meta_msg.fwd_from_name,
+        fwd_date: meta_msg.fwd_date,
+        action: meta_msg.action,
+        grouped_id: meta_msg.grouped_id,
+        via_bot_id: meta_msg.via_bot_id,
+        guest_from_id: meta_msg.guest_from_id,
+        post_author: meta_msg.post_author,
+        pinned: meta_msg.pinned,
+        silent: meta_msg.silent,
+        noforwards: meta_msg.noforwards,
+        ttl_period: meta_msg.ttl_period,
+        duration: meta.duration,
+        width: meta.width,
+        height: meta.height,
+        lat: meta.lat,
+        lon: meta.lon,
+        poll_question: meta.poll_question,
+        poll_options: meta.poll_options,
+        ..Event::send()
+    };
 
-    Ok(())
+    crate::db::EVENTS_BUF.push(event.clone()).await;
+
+    Ok(event)
 }

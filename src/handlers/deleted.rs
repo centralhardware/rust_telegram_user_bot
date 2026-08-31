@@ -2,12 +2,11 @@ use grammers_client::update::MessageDeletion;
 use log::info;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::db::DeletedMessage;
+use crate::db::Event;
 use crate::utils::log_ignore::is_log_ignored;
 
 pub async fn save_deleted(
     deletion: &MessageDeletion,
-    client_id: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let channel_id = match deletion.channel_id() {
         Some(id) => id,
@@ -27,6 +26,7 @@ pub async fn save_deleted(
         };
         let sender_name = info.first_name;
         let message = info.message;
+        let (topic_id, topic_name) = (info.topic_id, info.topic_name);
         let sender_short: String = sender_name.chars().take(10).collect();
 
         if !is_log_ignored(channel_id) {
@@ -37,15 +37,23 @@ pub async fn save_deleted(
                 msg_id,
                 title_short,
                 sender_short,
-                message,
+                &message,
             );
         }
 
-        crate::db::DELETED_BUF.push(DeletedMessage {
+        // Telegram names nothing but the id, so the row keeps what the message
+        // was: on its own a delete row would say only that something vanished.
+        crate::db::EVENTS_BUF.push(Event {
             date_time: now,
             chat_id: channel_id,
+            chat_title,
             message_id: msg_id as i64,
-            client_id,
+            message,
+            user_id: info.user_id,
+            first_name: sender_name,
+            topic_id,
+            topic_name,
+            ..Event::delete()
         }).await;
     }
 

@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
-use crate::db::MediaFile;
+use crate::db::Event;
 use crate::utils::admin_chats;
 use crate::utils::log_ignore::is_log_ignored;
 
@@ -23,11 +23,9 @@ const DOWNLOAD_GAP: std::time::Duration = std::time::Duration::from_millis(500);
 
 struct Job {
     media: Media,
-    chat_id: i64,
-    chat_title: String,
-    message_id: i64,
-    user_id: u64,
-    date_time: u32,
+    /// The `events_log` row this file belongs to, written again with the S3
+    /// columns filled once the upload is done.
+    event: Event,
 }
 
 static QUEUE: OnceLock<UnboundedSender<Job>> = OnceLock::new();
@@ -55,7 +53,7 @@ pub fn start(client: Client) {
             if let Err(e) = archive(&client, &job).await {
                 error!(
                     "media archive: chat {} message {}: {:?}",
-                    job.chat_id, job.message_id, e
+                    job.event.chat_id, job.event.message_id, e
                 );
             }
             tokio::time::sleep(DOWNLOAD_GAP).await;
@@ -65,7 +63,7 @@ pub fn start(client: Client) {
 
 /// Queues the message's media if it comes from a chat we administer. Returns
 /// immediately — the download happens on the worker, off the update loop.
-pub async fn save_media(message: &Message, client: &Client) {
+pub async fn save_media(message: &Message, event: &Event) {
     let Some(queue) = QUEUE.get() else {
         return;
     };
@@ -82,22 +80,7 @@ pub async fn save_media(message: &Message, client: &Client) {
         return;
     }
 
-    let chat_title = crate::utils::peer_info::chat_info(client, message)
-        .await
-        .chat_title;
-    let user_id = message
-        .sender()
-        .and_then(|s| s.id().bare_id())
-        .unwrap_or_default() as u64;
-
-    let _ = queue.send(Job {
-        media,
-        chat_id,
-        chat_title,
-        message_id: message.id() as i64,
-        user_id,
-        date_time: message.date().as_second() as u32,
-    });
+    let _ = queue.send(Job { media, event: event.clone() });
 }
 
 /// Stickers and custom emoji are the same handful of files over and over, and the
@@ -112,21 +95,21 @@ async fn archive(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let storage = crate::s3::storage().expect("worker only starts when configured");
 
-    let (file_name, mime_type, media_type) = match &job.media {
-        Media::Photo(_) => (None, Some("image/jpeg".to_string()), "photo"),
+    let (file_name, mime_type) = match &job.media {
+        Media::Photo(_) => (None, Some("image/jpeg".to_string())),
         Media::Document(doc) => (
             doc.name().map(str::to_string),
             doc.mime_type().map(str::to_string),
-            "document",
         ),
         _ => return Ok(()),
     };
+    let media_type = job.event.media_type.as_str();
 
     if let Some(size) = Downloadable::size(&job.media) {
         if size as u64 > storage.max_bytes {
             warn!(
                 "media archive: skipping {} B file in chat {} (limit {} B)",
-                size, job.chat_id, storage.max_bytes
+                size, job.event.chat_id, storage.max_bytes
             );
             return Ok(());
         }
@@ -139,7 +122,7 @@ async fn archive(
         if bytes.len() as u64 > storage.max_bytes {
             warn!(
                 "media archive: aborting download in chat {}, over the {} B limit",
-                job.chat_id, storage.max_bytes
+                job.event.chat_id, storage.max_bytes
             );
             return Ok(());
         }
@@ -177,21 +160,8 @@ async fn archive(
         }
     };
 
-    crate::db::MEDIA_BUF
-        .push(MediaFile {
-            date_time: job.date_time,
-            chat_id: job.chat_id,
-            chat_title: job.chat_title.clone(),
-            message_id: job.message_id,
-            user_id: job.user_id,
-            media_type: media_type.to_string(),
-            file_name: file_name.unwrap_or_default(),
-            mime_type: mime_type.unwrap_or_default(),
-            size,
-            sha256,
-            s3_bucket: storage.bucket.clone(),
-            s3_key: key,
-        })
+    crate::db::EVENTS_BUF
+        .push(job.event.archived(sha256, storage.bucket.clone(), key, size))
         .await;
 
     Ok(())
@@ -201,7 +171,7 @@ async fn archive(
 /// several chats (or forwarded back into one) occupies a single object and the
 /// second upload can be skipped outright. The two nibble directories keep any
 /// single prefix from growing to the size of the whole archive; which messages
-/// a file belongs to is a `media_log` query, not a key prefix.
+/// a file belongs to is an `events_log` query, not a key prefix.
 fn object_key(sha256: &str, file_name: Option<&str>, mime: Option<&str>) -> String {
     let ext = file_name
         .and_then(|n| n.rsplit_once('.').map(|(_, e)| e.to_lowercase()))
