@@ -96,8 +96,7 @@ fn is_foreign(header: &tl::types::MessageReplyHeader) -> bool {
 /// it out of an ordinary same-chat reply.
 ///
 /// Kept as a bare id, the way `chat_id` is: the point of the column is to be
-/// joined against it, so the two have to be counted the same way. That is the
-/// opposite convention from `fwd_from_chat_id`, which carries the Bot API sign.
+/// joined against it, so the two have to be counted the same way.
 fn foreign_chat_id(header: &tl::types::MessageReplyHeader) -> Option<i64> {
     header
         .reply_to_peer_id

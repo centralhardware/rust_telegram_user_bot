@@ -74,8 +74,10 @@ fn of_message(msg: &tl::types::Message) -> MessageMeta {
             Some(peer @ tl::enums::Peer::User(_)) => {
                 meta.fwd_from_user_id = PeerId::from(peer).bare_id_unchecked() as u64;
             }
+            // Kept as a bare id, the way `chat_id` is, so the two can be
+            // joined: no -100 channel prefix.
             Some(peer) => {
-                meta.fwd_from_chat_id = PeerId::from(peer).bot_api_dialog_id_unchecked();
+                meta.fwd_from_chat_id = PeerId::from(peer).bare_id_unchecked();
             }
             None => {}
         }
