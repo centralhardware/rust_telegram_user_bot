@@ -93,18 +93,3 @@ async fn resolve(
     peer_names::remember(&names).await;
     Some(names)
 }
-
-/// The chat's display name, for handlers that only log a name.
-pub async fn chat_title(client: &Client, message: &Message) -> String {
-    chat_info(client, message).await.chat_title
-}
-
-/// The sender's display name ("First Last"), for handlers that only log a name.
-pub async fn sender_display(client: &Client, message: &Message) -> String {
-    let sender = sender_info(client, message).await;
-    if sender.second_name.is_empty() {
-        sender.first_name
-    } else {
-        format!("{} {}", sender.first_name, sender.second_name)
-    }
-}
