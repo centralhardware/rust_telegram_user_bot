@@ -28,11 +28,13 @@ pub async fn save_ephemeral(message: &tl::enums::EphemeralMessage, event: &str) 
 
     // A bot can also send one outside a group, straight to the receiver: then
     // there is no group peer and the bot itself is the chat.
-    let chat_id = PeerId::from(msg.peer_id.as_ref().unwrap_or(&msg.from_id))
-        .bot_api_dialog_id_unchecked();
+    // The row carries the bare id, like every other message path; the dialog id
+    // is only what `peer_names` is keyed by.
+    let peer = PeerId::from(msg.peer_id.as_ref().unwrap_or(&msg.from_id));
+    let chat_id = peer.bare_id_unchecked();
     let sender = PeerId::from(&msg.from_id);
 
-    let chat_title = title_of(chat_id).await;
+    let chat_title = title_of(peer.bot_api_dialog_id_unchecked()).await;
     let sender_title = title_of(sender.bot_api_dialog_id_unchecked()).await;
 
     let text = body(msg);
@@ -74,8 +76,9 @@ pub async fn save_ephemeral(message: &tl::enums::EphemeralMessage, event: &str) 
 /// Ephemeral messages are deleted by id alone: Telegram names the chat and the
 /// ids, and nothing about what was in them.
 pub async fn save_ephemeral_deleted(peer: &tl::enums::Peer, ids: &[i32]) {
-    let chat_id = PeerId::from(peer).bot_api_dialog_id_unchecked();
-    let chat_title = title_of(chat_id).await;
+    let peer = PeerId::from(peer);
+    let chat_id = peer.bare_id_unchecked();
+    let chat_title = title_of(peer.bot_api_dialog_id_unchecked()).await;
     let date_time = chrono::Utc::now().timestamp() as u32;
 
     if !is_log_ignored(chat_id) {
