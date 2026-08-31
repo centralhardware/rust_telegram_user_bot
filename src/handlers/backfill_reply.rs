@@ -11,12 +11,24 @@ use crate::utils::peer_info::{chat_info, sender_info};
 /// If the message is a reply and the replied-to message is not yet in ClickHouse,
 /// fetch it from Telegram and save it.
 pub async fn backfill_reply(client: &Client, message: &Message) {
-    let reply_id = match crate::utils::reply_target::reply_target(message) {
-        Some(id) => id,
-        None => return,
+    let quoted = crate::utils::reply_target::reply_info(message);
+    let reply_id = match quoted.reply_to {
+        0 => return,
+        id => id as i32,
     };
 
     let chat_id = message.peer_id().bare_id_unchecked();
+
+    // A quote of another chat names a message id over there. Backfilling it here
+    // would look for it in the wrong chat and, if that id happens to exist,
+    // write the wrong message under it — so leave the quote to `quote_text`.
+    if quoted.reply_to_chat_id != 0 {
+        debug!(
+            "reply_to {} is quoted from chat {}, not backfilling",
+            reply_id, quoted.reply_to_chat_id
+        );
+        return;
+    }
 
     if message_exists(chat_id, reply_id).await {
         return;
@@ -61,12 +73,8 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
         serde_json::to_string(&reply.raw).unwrap_or_default()
     };
 
-    let reply_to = crate::utils::reply_target::reply_target(&reply).unwrap_or(0) as u64;
-    let reply_to_user_id = if reply_to == 0 {
-        0
-    } else {
-        crate::db::find_sender(chat_id, reply_to as i64).await
-    };
+    let reply_reply = crate::utils::reply_target::reply_info(&reply);
+    let reply_to_user_id = crate::db::find_reply_sender(chat_id, &reply_reply).await;
     let (topic_id, topic_name) = crate::utils::topic::topic_of(client, &reply).await;
 
     // A backfilled message is a message: it gets the same columns a live one
@@ -91,8 +99,10 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
             // A backfilled message can be one this account sent: `Event::send()`
             // defaults to incoming, which would be wrong for half of them.
             out: reply.outgoing(),
-            reply_to,
+            reply_to: reply_reply.reply_to,
             reply_to_user_id,
+            reply_to_chat_id: reply_reply.reply_to_chat_id,
+            quote_text: reply_reply.quote_text,
             topic_id,
             topic_name,
             raw: serde_json::to_string(&reply.raw).unwrap_or_default(),

@@ -43,7 +43,7 @@ pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Resul
 
     let text = crate::utils::format_entities::formatted_text(message);
     let raw = serde_json::to_string(&message.raw).unwrap_or_default();
-    let reply_to = crate::utils::reply_target::reply_target(message).unwrap_or(0) as u64;
+    let reply = crate::utils::reply_target::reply_info(message);
 
     let media_desc = crate::utils::media_description::describe(message);
     let buttons = crate::utils::inline_buttons::format_buttons(message);
@@ -106,11 +106,7 @@ pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Resul
         msg_content.push_str(b);
     }
 
-    let reply_to_user_id = if reply_to == 0 {
-        0
-    } else {
-        crate::db::find_sender(chat_id, reply_to as i64).await
-    };
+    let reply_to_user_id = crate::db::find_reply_sender(chat_id, &reply).await;
     let (topic_id, topic_name) = crate::utils::topic::topic_of(client, message).await;
 
     let meta = crate::utils::media_description::media_meta(message).unwrap_or_default();
@@ -127,8 +123,10 @@ pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Resul
         // The account's own message.
         user_id: me,
         out: true,
-        reply_to,
+        reply_to: reply.reply_to,
         reply_to_user_id,
+        reply_to_chat_id: reply.reply_to_chat_id,
+        quote_text: reply.quote_text,
         topic_id,
         topic_name,
         raw,

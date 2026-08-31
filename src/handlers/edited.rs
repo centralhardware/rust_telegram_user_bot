@@ -34,12 +34,8 @@ pub async fn save_edited(
     let sender = crate::utils::peer_info::sender_info(client, message).await;
     let user_id = sender.user_id;
 
-    let reply_to = crate::utils::reply_target::reply_target(message).unwrap_or(0) as u64;
-    let reply_to_user_id = if reply_to == 0 {
-        0
-    } else {
-        crate::db::find_sender(chat_id, reply_to as i64).await
-    };
+    let reply = crate::utils::reply_target::reply_info(message);
+    let reply_to_user_id = crate::db::find_reply_sender(chat_id, &reply).await;
 
     let chat = crate::utils::peer_info::chat_info(client, message).await;
     let chat_name = chat.chat_title.clone();
@@ -93,8 +89,10 @@ pub async fn save_edited(
         first_name: sender.first_name,
         second_name: sender.second_name,
         community_tag: super::extract::extract_community_tag_from_update(&message.raw),
-        reply_to,
+        reply_to: reply.reply_to,
         reply_to_user_id,
+        reply_to_chat_id: reply.reply_to_chat_id,
+        quote_text: reply.quote_text,
         chat_usernames: chat.chat_usernames,
         community_id: chat.community_id,
         media_type: meta.media_type,
