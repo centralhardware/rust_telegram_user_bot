@@ -205,8 +205,9 @@ pub struct Event {
     pub out: bool,
     /// The message object as Telegram sent it.
     pub raw: String,
-    /// Edits: the text the edit replaced, and the unified diff between the two.
-    pub original_message: String,
+    /// Edits: the unified diff against the text this edit replaced. That text is
+    /// the `message` of the send — or of the previous edit — of the same message,
+    /// so it is not stored again here.
     pub diff: String,
     /// What the message carries besides text, and — once the archiver has run —
     /// where the file itself was stored.

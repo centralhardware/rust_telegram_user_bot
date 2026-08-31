@@ -63,7 +63,6 @@ pub async fn save_edited(
         chat_id,
         chat_title: chat_name,
         message_id: msg_id,
-        original_message: original,
         message: message_content,
         diff,
         user_id: user_id as u64,

@@ -19,7 +19,10 @@
 -- separate row.
 --
 -- The old tables are kept as `*_legacy` and their names are given to views over
--- `events_log`, so the Grafana boards and every existing query keep working.
+-- `events_log`, so the Grafana boards and every existing query keep working. Nothing
+-- is backfilled: the history stays in the `*_legacy` tables and the views show what
+-- is logged from here on. Run this with the bot stopped — the moment the old names
+-- become views they stop accepting inserts.
 
 SET allow_suspicious_low_cardinality_types = 1;
 
@@ -45,8 +48,9 @@ CREATE TABLE IF NOT EXISTS events_log
     out              Bool,
     -- The message object as Telegram sent it.
     raw              String,
-    -- Edits only: the text the edit replaced, and the unified diff between the two.
-    original_message String,
+    -- Edits only: the unified diff against the text this edit replaced. That text
+    -- is the `message` of the send — or of the previous edit — of the same message,
+    -- so it is not stored a second time.
     diff             String,
     -- What the message carries besides text, and where the file was archived.
     media_type       LowCardinality(String),
@@ -63,66 +67,6 @@ CREATE TABLE IF NOT EXISTS events_log
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(date_time)
 ORDER BY (chat_id, message_id, event, date_time);
-
-
--- ---------------------------------------------------------------------------
--- Backfill. Run before the views are created and before the new build is
--- deployed, with the bot stopped: the old tables must not be written while they
--- are being read, and the moment they become views they stop accepting inserts.
--- ---------------------------------------------------------------------------
-
--- Received messages. Rows where the sender is this account are the ones
--- `mv_my_messages_to_chats_log` copied over from `telegram_messages_new`; they are
--- inserted below from that table instead, which is where their `raw` lives.
-INSERT INTO events_log
-    (date_time, event, chat_id, chat_title, message_id, message, user_id, username,
-     first_name, second_name, community_tag, chat_usernames, reply_to, out, client_id, version)
-SELECT
-    date_time, 'send', chat_id, chat_title, message_id, message, user_id, username,
-    first_name, second_name, community_tag, chat_usernames, reply_to, false, client_id, date_time
-FROM chats_log
-WHERE user_id != client_id;
-
--- Sent by this account.
-INSERT INTO events_log
-    (date_time, event, chat_id, chat_title, message_id, message, user_id,
-     chat_usernames, reply_to, out, raw, client_id, version)
-SELECT
-    date_time, 'send', id, title, toInt64(message_id), message, client_id,
-    usernames, reply_to, true, raw, client_id, date_time
-FROM telegram_messages_new;
-
--- Edits.
-INSERT INTO events_log
-    (date_time, event, chat_id, message_id, message, original_message, diff, user_id, client_id, version)
-SELECT
-    date_time, 'edit', chat_id, message_id, message, original_message, diff,
-    toUInt64(user_id), client_id, date_time
-FROM edited_log;
-
--- Deletions. `message` stays empty for these: what the message said is only
--- recoverable through the send row, which is what `delete_log_hr` joins in. Rows
--- written from here on carry the text themselves.
-INSERT INTO events_log
-    (date_time, event, chat_id, message_id, client_id, version)
-SELECT date_time, 'delete', chat_id, message_id, client_id, date_time
-FROM deleted_log;
-
--- Archived media, folded onto the send row it belongs to — the same row again with
--- the file columns filled and a newer version.
-INSERT INTO events_log
-    (date_time, event, chat_id, chat_title, message_id, message, user_id, username,
-     first_name, second_name, community_tag, chat_usernames, reply_to, out, raw,
-     original_message, diff, media_type, file_name, mime_type, size, sha256,
-     s3_bucket, s3_key, client_id, version)
-SELECT
-    e.date_time, e.event, e.chat_id, e.chat_title, e.message_id, e.message, e.user_id, e.username,
-    e.first_name, e.second_name, e.community_tag, e.chat_usernames, e.reply_to, e.out, e.raw,
-    e.original_message, e.diff, m.media_type, m.file_name, m.mime_type, m.size, m.sha256,
-    m.s3_bucket, m.s3_key, e.client_id, now()
-FROM events_log AS e
-INNER JOIN media_log AS m USING (chat_id, message_id)
-WHERE e.event = 'send';
 
 
 -- ---------------------------------------------------------------------------
@@ -159,10 +103,24 @@ SELECT date_time, message, chat_title AS title, chat_id AS id,
 FROM events_log
 WHERE event = 'send' AND out;
 
+-- `original_message` is no longer stored: for an edit it is simply the text the
+-- message had one event earlier, so the view reads it back off the preceding send
+-- or edit row instead of keeping a second copy of it.
 CREATE VIEW edited_log AS
 SELECT date_time, chat_id, message_id, original_message, message, diff,
        toInt64(user_id) AS user_id, client_id
-FROM events_log
+FROM
+(
+    SELECT
+        date_time, chat_id, message_id, message, diff, user_id, client_id, event,
+        lagInFrame(message) OVER
+        (
+            PARTITION BY chat_id, message_id ORDER BY date_time ASC
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS original_message
+    FROM events_log
+    WHERE event IN ('send', 'edit')
+)
 WHERE event = 'edit';
 
 CREATE VIEW deleted_log AS
@@ -178,9 +136,9 @@ WHERE event = 'send' AND s3_key != '';
 
 
 -- ---------------------------------------------------------------------------
--- The aggregates again, on the new source. Their targets are explicit tables now,
--- so the history can be inserted after the view is attached — a POPULATE would
--- have missed whatever arrived while it ran.
+-- The aggregates again, on the new source. Their target tables are the existing
+-- ones and are left untouched, so the counters carry on from where the old
+-- materialized views left them.
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS chat_stat
@@ -211,20 +169,6 @@ FROM events_log
 WHERE event = 'send' AND s3_key = ''
 GROUP BY client_id, chat_id;
 
-INSERT INTO chat_stat
-SELECT
-    client_id,
-    chat_id,
-    anyLast(chat_title) AS last_title,
-    countState() AS msg_count,
-    sumState(if(reply_to != 0, 1, 0)) AS reply_msg_count,
-    groupUniqArrayState(user_id) AS participants,
-    maxState(message_id) AS last_message_id
-FROM events_log
--- The archiver rewrites a send row once its file is in S3; that rewrite must not
--- be counted a second time, and the row it replaces was already counted.
-WHERE event = 'send' AND s3_key = ''
-GROUP BY client_id, chat_id;
 
 CREATE TABLE IF NOT EXISTS user_stat
 (
@@ -254,19 +198,6 @@ FROM events_log
 WHERE event = 'send' AND s3_key = ''
 GROUP BY client_id, user_id;
 
-INSERT INTO user_stat
-SELECT
-    client_id,
-    user_id,
-    anyLast(username) AS username,
-    anyLast(first_name) AS first_name,
-    anyLast(second_name) AS second_name,
-    groupUniqArrayState(chat_id) AS chats,
-    countState() AS msg_count,
-    sumState(if(reply_to != 0, 1, 0)) AS reply_msg_count
-FROM events_log
-WHERE event = 'send' AND s3_key = ''
-GROUP BY client_id, user_id;
 
 CREATE TABLE IF NOT EXISTS message_stats
 (
@@ -288,15 +219,6 @@ FROM events_log
 WHERE event = 'send' AND out AND s3_key = ''
 GROUP BY id, client_id;
 
-INSERT INTO message_stats
-SELECT
-    chat_id AS id,
-    client_id,
-    anyLastState(chat_title) AS last_title,
-    countState() AS cnt_state
-FROM events_log
-WHERE event = 'send' AND out AND s3_key = ''
-GROUP BY id, client_id;
 
 -- The edit-chain counters keep their existing target table, so there is nothing to
 -- backfill: only the source changes.
