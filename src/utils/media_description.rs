@@ -264,6 +264,15 @@ pub fn media_meta(message: &Message) -> Option<MediaMeta> {
     extract_media(message).map(meta_of)
 }
 
+/// The same, for a message that arrived as a message rather than as an update —
+/// one fetched to backfill a reply, say, which has no `Update` around it.
+pub fn media_meta_of(message: &tl::enums::Message) -> Option<MediaMeta> {
+    match message {
+        tl::enums::Message::Message(msg) => msg.media.as_ref().map(meta_of),
+        _ => None,
+    }
+}
+
 fn meta_of(media: &tl::enums::MessageMedia) -> MediaMeta {
     let mut meta = MediaMeta {
         media_type: kind_of(media).to_string(),
