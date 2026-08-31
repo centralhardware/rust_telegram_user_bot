@@ -105,6 +105,13 @@ pub async fn save_outgoing(message: &Message, client: &Client, client_id: u64) -
         msg_content.push_str(b);
     }
 
+    let reply_to_user_id = if reply_to == 0 {
+        0
+    } else {
+        crate::db::find_sender(chat_id, reply_to as i64).await
+    };
+    let (topic_id, topic_name) = crate::utils::topic::topic_of(client, message).await;
+
     let meta = crate::utils::media_description::media_meta(message).unwrap_or_default();
 
     let event = Event {
@@ -118,6 +125,9 @@ pub async fn save_outgoing(message: &Message, client: &Client, client_id: u64) -
         user_id: client_id,
         out: true,
         reply_to,
+        reply_to_user_id,
+        topic_id,
+        topic_name,
         raw,
         media_type: meta.media_type,
         file_name: meta.file_name,

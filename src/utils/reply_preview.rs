@@ -80,20 +80,25 @@ async fn lookup_message_text(chat_id: i64, message_id: i32) -> (Option<String>, 
         return (Some(text), Some(sender));
     }
 
-    // Incoming and outgoing now share one table, so one query covers both.
-    if let Ok((text, first, second)) = crate::db::clickhouse()
+    // Incoming and outgoing now share one table, so one query covers both. The row
+    // says who sent it, `peer_names` says what they are called.
+    if let Ok((text, user_id)) = crate::db::clickhouse()
         .query(
-            "SELECT message, first_name, second_name FROM events_log \
+            "SELECT message, user_id FROM events_log \
              WHERE chat_id = ? AND message_id = ? AND event = ? \
              ORDER BY date_time DESC LIMIT 1",
         )
         .bind(chat_id)
         .bind(message_id as i64)
         .bind(crate::db::SEND)
-        .fetch_one::<(String, String, String)>()
+        .fetch_one::<(String, u64)>()
         .await
     {
-        let sender = if second.is_empty() { first } else { format!("{first} {second}") };
+        let sender = match crate::utils::peer_names::load(user_id as i64).await {
+            Some(n) if !n.last_name.is_empty() => format!("{} {}", n.first_name, n.last_name),
+            Some(n) => n.first_name,
+            None => String::new(),
+        };
         return (Some(text), Some(sender));
     }
 

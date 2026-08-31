@@ -1,5 +1,5 @@
 use clickhouse::{Client, Row};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
 
@@ -102,7 +102,19 @@ pub const DELETE: &str = "delete";
 pub struct MessageInfo {
     pub message: String,
     pub chat_title: String,
+    pub user_id: u64,
     pub first_name: String,
+    pub topic_id: i32,
+    pub topic_name: String,
+}
+
+/// What the send row of a message says about who posted it and where. Read back
+/// for a deletion, which Telegram reports as a bare id.
+#[derive(Row, Deserialize, Default)]
+struct SendRow {
+    user_id: u64,
+    topic_id: i32,
+    topic_name: String,
 }
 
 /// Find message info by chat_id + message_id: the text as it stands now — the
@@ -111,8 +123,18 @@ pub struct MessageInfo {
 pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
     let sent = EVENTS_BUF
         .find_last(|e| {
-            (e.event == SEND && e.chat_id == chat_id && e.message_id == message_id)
-                .then(|| (e.message.clone(), e.chat_title.clone(), e.first_name.clone()))
+            (e.event == SEND && e.chat_id == chat_id && e.message_id == message_id).then(|| {
+                (
+                    e.message.clone(),
+                    e.chat_title.clone(),
+                    e.first_name.clone(),
+                    SendRow {
+                        user_id: e.user_id,
+                        topic_id: e.topic_id,
+                        topic_name: e.topic_name.clone(),
+                    },
+                )
+            })
         })
         .await;
 
@@ -125,7 +147,7 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
 
     let message = if let Some(msg) = edited {
         msg
-    } else if let Some((msg, _, _)) = sent.as_ref() {
+    } else if let Some((msg, _, _, _)) = sent.as_ref() {
         msg.clone()
     } else {
         clickhouse()
@@ -144,8 +166,8 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
             .unwrap_or_default()
     };
 
-    let (chat_title, first_name) = if let Some((_, t, f)) = sent {
-        (t, f)
+    let (chat_title, first_name, send) = if let Some((_, title, name, send)) = sent {
+        (title, name, send)
     } else {
         let title = clickhouse()
             .query(
@@ -159,23 +181,69 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
             .await
             .unwrap_or_default();
 
-        let name = clickhouse()
+        // The row says who sent it and where; the name itself comes from
+        // `peer_names`, which is kept current for every peer that passes through —
+        // so a sender renamed since the message was logged is named as they are now.
+        let send = clickhouse()
             .query(
-                "SELECT first_name FROM events_log \
+                "SELECT user_id, topic_id, topic_name FROM events_log \
                  WHERE chat_id = ? AND message_id = ? AND event = ? \
                  ORDER BY date_time DESC LIMIT 1",
             )
             .bind(chat_id)
             .bind(message_id)
             .bind(SEND)
-            .fetch_one::<String>()
+            .fetch_one::<SendRow>()
             .await
             .unwrap_or_default();
 
-        (title, name)
+        let name = match send.user_id {
+            0 => String::new(),
+            id => crate::utils::peer_names::load(id as i64)
+                .await
+                .map(|n| n.first_name)
+                .unwrap_or_default(),
+        };
+
+        (title, name, send)
     };
 
-    MessageInfo { message, chat_title, first_name }
+    MessageInfo {
+        message,
+        chat_title,
+        user_id: send.user_id,
+        first_name,
+        topic_id: send.topic_id,
+        topic_name: send.topic_name,
+    }
+}
+
+/// Who sent a message, for the `reply_to_user_id` of the message answering it.
+/// The unflushed buffer first, then ClickHouse; 0 when the message is older than
+/// the log or was never seen.
+pub async fn find_sender(chat_id: i64, message_id: i64) -> u64 {
+    if let Some(user_id) = EVENTS_BUF
+        .find_last(|e| {
+            (e.event == SEND && e.chat_id == chat_id && e.message_id == message_id)
+                .then_some(e.user_id)
+        })
+        .await
+    {
+        return user_id;
+    }
+
+    clickhouse()
+        .query(
+            "SELECT user_id FROM events_log \
+             WHERE chat_id = ? AND message_id = ? AND event = ? \
+             ORDER BY date_time DESC LIMIT 1",
+        )
+        .bind(chat_id)
+        .bind(message_id)
+        .bind(SEND)
+        .fetch_one::<u64>()
+        .await
+        .unwrap_or_default()
 }
 
 /// One `events_log` row. Built through `Event::send()` / `edit()` / `delete()`,
@@ -200,7 +268,12 @@ pub struct Event {
     pub second_name: String,
     pub community_tag: String,
     pub chat_usernames: Vec<String>,
+    /// The message this one replies to, and who sent that message.
     pub reply_to: u64,
+    pub reply_to_user_id: u64,
+    /// The forum topic the message was posted in, 0 outside a forum.
+    pub topic_id: i32,
+    pub topic_name: String,
     /// This account is the sender.
     pub out: bool,
     /// The message object as Telegram sent it.

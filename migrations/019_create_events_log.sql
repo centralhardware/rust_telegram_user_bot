@@ -44,7 +44,13 @@ CREATE TABLE IF NOT EXISTS events_log
     second_name      String,
     community_tag    LowCardinality(String),
     chat_usernames   Array(LowCardinality(String)),
+    -- The message this one replies to, and who sent that message.
     reply_to         UInt64,
+    reply_to_user_id UInt64,
+    -- The forum topic it was posted in: 0 and empty outside a forum. A delete
+    -- copies both off the send row it refers to.
+    topic_id         Int32,
+    topic_name       LowCardinality(String),
     -- This account is the sender.
     out              Bool,
     -- The message object as Telegram sent it.

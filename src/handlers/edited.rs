@@ -54,6 +54,8 @@ pub async fn save_edited(
         );
     }
 
+    let (topic_id, topic_name) = crate::utils::topic::topic_of(client, message).await;
+
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs() as u32;
@@ -65,6 +67,8 @@ pub async fn save_edited(
         message_id: msg_id,
         message: message_content,
         diff,
+        topic_id,
+        topic_name,
         user_id: user_id as u64,
         client_id,
         ..Event::edit()

@@ -9,6 +9,15 @@ use tokio::sync::Mutex;
 static TOPIC_NAMES: LazyLock<Mutex<HashMap<(i64, i32), String>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// The topic a message was posted in, ready for the `events_log` row: its id and
+/// its title, or `(0, "")` outside a forum topic.
+pub async fn topic_of(client: &Client, message: &Message) -> (i32, String) {
+    match crate::utils::reply_target::topic_id(message) {
+        Some(id) => (id, topic_name(client, message).await),
+        None => (0, String::new()),
+    }
+}
+
 /// The topic's title, or an empty string when the message is not in a topic or
 /// the title cannot be fetched.
 pub async fn topic_name(client: &Client, message: &Message) -> String {

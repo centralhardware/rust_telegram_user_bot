@@ -27,6 +27,7 @@ pub async fn save_deleted(
         };
         let sender_name = info.first_name;
         let message = info.message;
+        let (topic_id, topic_name) = (info.topic_id, info.topic_name);
         let sender_short: String = sender_name.chars().take(10).collect();
 
         if !is_log_ignored(channel_id) {
@@ -49,7 +50,10 @@ pub async fn save_deleted(
             chat_title,
             message_id: msg_id as i64,
             message,
+            user_id: info.user_id,
             first_name: sender_name,
+            topic_id,
+            topic_name,
             client_id,
             ..Event::delete()
         }).await;
