@@ -157,17 +157,28 @@ ORDER BY (chat_id, ephemeral, message_id, event, date_time);
 -- counters no longer come from three places that could not be joined, and a daily
 -- rollup — the thing the boards actually plot — becomes a single view.
 --
--- Two rules run through all of them:
+-- Three rules run through all of them:
 --
---   * `WHERE s3_key = ''` — the archiver writes the send row a second time once the
---     file is in S3, with the same key and a newer version. ReplacingMergeTree
---     collapses that at merge time, but a materialized view fires per insert and
---     would count the message twice, so the enrichment write is skipped. It carries
---     nothing the counters need: `media_type` and `size` are already on the first
---     write, only `sha256` / `s3_bucket` / `s3_key` arrive with the second.
+--   * Nothing is counted with `count()`. A materialized view fires once per
+--     INSERT, before any merge, so the deduplication `ReplacingMergeTree` gives
+--     the table gives the aggregates nothing: a message Telegram delivers twice
+--     collapses to one row and would still be counted twice. Every counter is
+--     therefore `uniqExact` over the row's identity — its message id, its event
+--     and its time, which is what the sort key collapses on — so a redelivery is
+--     as harmless here as it is in the table.
 --
---   * every counter is an `-If` state over one scan of the row rather than one view
---     per event, so a chat's sends, edits and deletes stay in one row.
+--   * `WHERE s3_key = ''` — the archiver writes the send row a second time once
+--     the file is in S3, and that second write is a different row to a counter
+--     that cannot see the first. It carries nothing the counters need:
+--     `media_type` and `size` are already on the first write, only `sha256` /
+--     `s3_bucket` / `s3_key` arrive with the second.
+--
+--   * `NOT ephemeral` — only one member of the group ever saw those, so counting
+--     them as the chat's traffic would make every number wrong.
+--
+-- Bytes are the one thing `uniqExact` cannot give, since a sum has no notion of
+-- having seen a row before. They are kept per day only, as the set of
+-- (message, size) pairs, where the group is one day and the set stays small.
 -- ---------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------
@@ -178,13 +189,12 @@ CREATE TABLE IF NOT EXISTS events_chat_stat
 (
     chat_id         Int64,
     last_title      AggregateFunction(anyLastIf, String, UInt8),
-    messages        AggregateFunction(countIf, UInt8),
-    outgoing        AggregateFunction(countIf, UInt8),
-    replies         AggregateFunction(countIf, UInt8),
-    media_messages  AggregateFunction(countIf, UInt8),
-    media_bytes     AggregateFunction(sumIf, UInt64, UInt8),
-    edits           AggregateFunction(countIf, UInt8),
-    deletes         AggregateFunction(countIf, UInt8),
+    messages        AggregateFunction(uniqExactIf, Tuple(Int64, String, DateTime), UInt8),
+    outgoing        AggregateFunction(uniqExactIf, Tuple(Int64, String, DateTime), UInt8),
+    replies         AggregateFunction(uniqExactIf, Tuple(Int64, String, DateTime), UInt8),
+    media_messages  AggregateFunction(uniqExactIf, Tuple(Int64, String, DateTime), UInt8),
+    edits           AggregateFunction(uniqExactIf, Tuple(Int64, String, DateTime), UInt8),
+    deletes         AggregateFunction(uniqExactIf, Tuple(Int64, String, DateTime), UInt8),
     participants    AggregateFunction(groupUniqArrayIf, UInt64, UInt8),
     last_message_id AggregateFunction(maxIf, Int64, UInt8),
     first_seen      AggregateFunction(min, DateTime),
@@ -199,13 +209,12 @@ SELECT
     -- Only a send knows the chat's title; an edit or a delete leaves it empty and
     -- must not be allowed to overwrite it.
     anyLastIfState(toString(chat_title), chat_title != '') AS last_title,
-    countIfState(event = 'send') AS messages,
-    countIfState(toUInt8((event = 'send') AND out)) AS outgoing,
-    countIfState((event = 'send') AND (reply_to != 0)) AS replies,
-    countIfState((event = 'send') AND (media_type != '')) AS media_messages,
-    sumIfState(size, event = 'send') AS media_bytes,
-    countIfState(event = 'edit') AS edits,
-    countIfState(event = 'delete') AS deletes,
+    uniqExactIfState((message_id, event, date_time), event = 'send') AS messages,
+    uniqExactIfState((message_id, event, date_time), toUInt8((event = 'send') AND out)) AS outgoing,
+    uniqExactIfState((message_id, event, date_time), (event = 'send') AND (reply_to != 0)) AS replies,
+    uniqExactIfState((message_id, event, date_time), (event = 'send') AND (media_type != '')) AS media_messages,
+    uniqExactIfState((message_id, event, date_time), event = 'edit') AS edits,
+    uniqExactIfState((message_id, event, date_time), event = 'delete') AS deletes,
     groupUniqArrayIfState(user_id, (event = 'send') AND (user_id != 0)) AS participants,
     maxIfState(message_id, event = 'send') AS last_message_id,
     minState(date_time) AS first_seen,
@@ -218,13 +227,12 @@ CREATE VIEW IF NOT EXISTS v_chat_stat AS
 SELECT
     chat_id,
     anyLastIfMerge(last_title) AS chat_title,
-    countIfMerge(messages) AS messages,
-    countIfMerge(outgoing) AS outgoing,
-    countIfMerge(replies) AS replies,
-    countIfMerge(media_messages) AS media_messages,
-    sumIfMerge(media_bytes) AS media_bytes,
-    countIfMerge(edits) AS edits,
-    countIfMerge(deletes) AS deletes,
+    uniqExactIfMerge(messages) AS messages,
+    uniqExactIfMerge(outgoing) AS outgoing,
+    uniqExactIfMerge(replies) AS replies,
+    uniqExactIfMerge(media_messages) AS media_messages,
+    uniqExactIfMerge(edits) AS edits,
+    uniqExactIfMerge(deletes) AS deletes,
     length(groupUniqArrayIfMerge(participants)) AS participants,
     maxIfMerge(last_message_id) AS last_message_id,
     minMerge(first_seen) AS first_seen,
@@ -240,17 +248,17 @@ GROUP BY chat_id;
 
 CREATE TABLE IF NOT EXISTS events_user_stat
 (
-    user_id      UInt64,
-    username     AggregateFunction(anyLastIf, Array(String), UInt8),
-    first_name   AggregateFunction(anyLastIf, String, UInt8),
-    second_name  AggregateFunction(anyLastIf, String, UInt8),
-    chats        AggregateFunction(groupUniqArray, Int64),
-    messages     AggregateFunction(countIf, UInt8),
-    replies      AggregateFunction(countIf, UInt8),
-    media_messages AggregateFunction(countIf, UInt8),
-    edits        AggregateFunction(countIf, UInt8),
-    first_seen   AggregateFunction(min, DateTime),
-    last_seen    AggregateFunction(max, DateTime)
+    user_id        UInt64,
+    username       AggregateFunction(anyLastIf, Array(String), UInt8),
+    first_name     AggregateFunction(anyLastIf, String, UInt8),
+    second_name    AggregateFunction(anyLastIf, String, UInt8),
+    chats          AggregateFunction(groupUniqArray, Int64),
+    messages       AggregateFunction(uniqExactIf, Tuple(Int64, String, DateTime), UInt8),
+    replies        AggregateFunction(uniqExactIf, Tuple(Int64, String, DateTime), UInt8),
+    media_messages AggregateFunction(uniqExactIf, Tuple(Int64, String, DateTime), UInt8),
+    edits          AggregateFunction(uniqExactIf, Tuple(Int64, String, DateTime), UInt8),
+    first_seen     AggregateFunction(min, DateTime),
+    last_seen      AggregateFunction(max, DateTime)
 )
 ENGINE = AggregatingMergeTree
 ORDER BY user_id;
@@ -264,10 +272,10 @@ SELECT
     anyLastIfState(first_name, first_name != '') AS first_name,
     anyLastIfState(second_name, second_name != '') AS second_name,
     groupUniqArrayState(chat_id) AS chats,
-    countIfState(event = 'send') AS messages,
-    countIfState((event = 'send') AND (reply_to != 0)) AS replies,
-    countIfState((event = 'send') AND (media_type != '')) AS media_messages,
-    countIfState(event = 'edit') AS edits,
+    uniqExactIfState((message_id, event, date_time), event = 'send') AS messages,
+    uniqExactIfState((message_id, event, date_time), (event = 'send') AND (reply_to != 0)) AS replies,
+    uniqExactIfState((message_id, event, date_time), (event = 'send') AND (media_type != '')) AS media_messages,
+    uniqExactIfState((message_id, event, date_time), event = 'edit') AS edits,
     minState(date_time) AS first_seen,
     maxState(date_time) AS last_seen
 FROM events_log
@@ -281,10 +289,10 @@ SELECT
     anyLastIfMerge(first_name) AS first_name,
     anyLastIfMerge(second_name) AS second_name,
     length(groupUniqArrayMerge(chats)) AS chats,
-    countIfMerge(messages) AS messages,
-    countIfMerge(replies) AS replies,
-    countIfMerge(media_messages) AS media_messages,
-    countIfMerge(edits) AS edits,
+    uniqExactIfMerge(messages) AS messages,
+    uniqExactIfMerge(replies) AS replies,
+    uniqExactIfMerge(media_messages) AS media_messages,
+    uniqExactIfMerge(edits) AS edits,
     minMerge(first_seen) AS first_seen,
     maxMerge(last_seen) AS last_seen
 FROM events_user_stat
@@ -292,10 +300,15 @@ GROUP BY user_id;
 
 
 -- ---------------------------------------------------------------------------
--- Per day. One row per client / day / chat / topic / event: the shape the boards
--- plot, and the one the old tables could not produce without a union of three of
--- them. `topic_id` is 0 outside a forum, so a chat that has no topics is one row
--- per day per event exactly as before.
+-- Per day. One row per day / chat / topic / event: the shape the boards plot, and
+-- the one the old tables could not produce without a union of three of them.
+-- `topic_id` is 0 outside a forum, so a chat that has no topics is one row per day
+-- per event exactly as before.
+--
+-- This is also where bytes live. A day's media is a small set, so the sizes are
+-- kept as the (message, size) pairs themselves and summed on read: a redelivered
+-- message contributes the same pair and the set absorbs it, which a running sum
+-- could not.
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS events_daily_stat
@@ -304,9 +317,9 @@ CREATE TABLE IF NOT EXISTS events_daily_stat
     chat_id     Int64,
     topic_id    Int32,
     event       LowCardinality(String),
-    events      AggregateFunction(count),
+    events      AggregateFunction(uniqExact, Tuple(Int64, String, DateTime)),
     senders     AggregateFunction(groupUniqArray, UInt64),
-    media_bytes AggregateFunction(sum, UInt64)
+    media       AggregateFunction(groupUniqArrayIf, Tuple(Int64, UInt64), UInt8)
 )
 ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(day)
@@ -318,9 +331,9 @@ SELECT
     chat_id,
     topic_id,
     event,
-    countState() AS events,
+    uniqExactState((message_id, event, date_time)) AS events,
     groupUniqArrayState(user_id) AS senders,
-    sumState(size) AS media_bytes
+    groupUniqArrayIfState((message_id, size), size != 0) AS media
 FROM events_log
 WHERE (s3_key = '') AND NOT ephemeral
 GROUP BY day, chat_id, topic_id, event;
@@ -331,9 +344,9 @@ SELECT
     chat_id,
     topic_id,
     event,
-    countMerge(events) AS events,
+    uniqExactMerge(events) AS events,
     length(groupUniqArrayMerge(senders)) AS senders,
-    sumMerge(media_bytes) AS media_bytes
+    arraySum(pair -> pair.2, groupUniqArrayIfMerge(media)) AS media_bytes
 FROM events_daily_stat
 GROUP BY day, chat_id, topic_id, event;
 
@@ -350,8 +363,8 @@ CREATE TABLE IF NOT EXISTS events_edit_chain_stat
 (
     chat_id     Int64,
     message_id  Int64,
-    versions    AggregateFunction(countIf, UInt8),
-    edits       AggregateFunction(countIf, UInt8),
+    versions    AggregateFunction(uniqExactIf, Tuple(Int64, String, DateTime), UInt8),
+    edits       AggregateFunction(uniqExactIf, Tuple(Int64, String, DateTime), UInt8),
     first_seen  AggregateFunction(min, DateTime),
     last_edit   AggregateFunction(maxIf, DateTime, UInt8),
     deleted     AggregateFunction(maxIf, DateTime, UInt8)
@@ -363,8 +376,8 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS mv_events_edit_chain_stat TO events_edit_
 SELECT
     chat_id,
     message_id,
-    countIfState(event IN ('send', 'edit')) AS versions,
-    countIfState(event = 'edit') AS edits,
+    uniqExactIfState((message_id, event, date_time), event IN ('send', 'edit')) AS versions,
+    uniqExactIfState((message_id, event, date_time), event = 'edit') AS edits,
     minState(date_time) AS first_seen,
     maxIfState(date_time, event = 'edit') AS last_edit,
     maxIfState(date_time, event = 'delete') AS deleted
@@ -376,8 +389,8 @@ CREATE VIEW IF NOT EXISTS v_edit_chain_stat AS
 SELECT
     chat_id,
     message_id,
-    countIfMerge(versions) AS versions,
-    countIfMerge(edits) AS edits,
+    uniqExactIfMerge(versions) AS versions,
+    uniqExactIfMerge(edits) AS edits,
     minMerge(first_seen) AS first_seen,
     maxIfMerge(last_edit) AS last_edit,
     maxIfMerge(deleted) AS deleted
