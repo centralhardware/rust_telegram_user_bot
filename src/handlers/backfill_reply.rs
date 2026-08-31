@@ -3,7 +3,7 @@ use grammers_client::Client;
 use grammers_tl_types as tl;
 use log::{debug, info, warn};
 
-use crate::db::IncomingMessage;
+use crate::db::Event;
 use crate::utils::log_ignore::is_log_ignored;
 use super::extract::extract_community_tag;
 use crate::utils::peer_info::{chat_info, sender_info};
@@ -63,8 +63,8 @@ pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) 
 
     let reply_to = crate::utils::reply_target::reply_target(&reply).unwrap_or(0) as u64;
 
-    crate::db::INCOMING_BUF
-        .push(IncomingMessage {
+    crate::db::EVENTS_BUF
+        .push(Event {
             date_time: reply.date().as_second() as u32,
             message: msg_content,
             chat_title: chat.chat_title,
@@ -78,6 +78,7 @@ pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) 
             chat_usernames: chat.chat_usernames,
             reply_to,
             client_id,
+            ..Event::send()
         })
         .await;
 
@@ -90,10 +91,11 @@ pub async fn backfill_reply(client: &Client, message: &Message, client_id: u64) 
 }
 
 async fn message_exists(chat_id: i64, message_id: i32) -> bool {
-    // Check unflushed incoming buffer
-    let in_buf = crate::db::INCOMING_BUF
-        .find_last(|m| {
-            if m.chat_id == chat_id && m.message_id == message_id as i64 {
+    // Check the unflushed buffer
+    let in_buf = crate::db::EVENTS_BUF
+        .find_last(|e| {
+            if e.event == crate::db::SEND && e.chat_id == chat_id && e.message_id == message_id as i64
+            {
                 Some(())
             } else {
                 None
@@ -105,20 +107,14 @@ async fn message_exists(chat_id: i64, message_id: i32) -> bool {
         return true;
     }
 
-    let db = crate::db::clickhouse();
-
-    if let Ok(count) = db
+    if let Ok(count) = crate::db::clickhouse()
         .query(
-            "SELECT sum(c) AS cnt FROM (\
-                SELECT count() AS c FROM chats_log WHERE chat_id = ? AND message_id = ? \
-                UNION ALL \
-                SELECT count() AS c FROM telegram_messages_new WHERE id = ? AND message_id = ?\
-            )",
+            "SELECT count() FROM events_log \
+             WHERE chat_id = ? AND message_id = ? AND event = ?",
         )
         .bind(chat_id)
         .bind(message_id as i64)
-        .bind(chat_id)
-        .bind(message_id as u64)
+        .bind(crate::db::SEND)
         .fetch_one::<u64>()
         .await
     {

@@ -2,12 +2,12 @@ use grammers_client::update::Message;
 use grammers_client::Client;
 use log::info;
 
-use crate::db::IncomingMessage;
+use crate::db::Event;
 use crate::utils::log_ignore::is_log_ignored;
 use super::extract::extract_community_tag_from_update;
 use crate::utils::peer_info::{chat_info, sender_info};
 
-pub async fn save_incoming(message: &Message, client: &Client, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn save_incoming(message: &Message, client: &Client, client_id: u64) -> Result<Event, Box<dyn std::error::Error>> {
     let media_desc = crate::utils::media_description::describe(message);
 
     let sender = sender_info(client, message).await;
@@ -71,7 +71,7 @@ pub async fn save_incoming(message: &Message, client: &Client, client_id: u64) -
         if let Some(action) = message.action() {
             crate::utils::service_action::format(action, Some(sender_bare_id), Some(&sender_display))
         } else {
-            serde_json::to_string(&message.raw).unwrap_or_default()
+            media_desc.clone().unwrap_or_default()
         }
     } else {
         text.to_string()
@@ -85,7 +85,9 @@ pub async fn save_incoming(message: &Message, client: &Client, client_id: u64) -
 
     let reply_to = crate::utils::reply_target::reply_target(message).unwrap_or(0) as u64;
 
-    crate::db::INCOMING_BUF.push(IncomingMessage {
+    let meta = crate::utils::media_description::media_meta(message).unwrap_or_default();
+
+    let event = Event {
         date_time: message.date().as_second() as u32,
         message: msg_content,
         chat_title: chat.chat_title,
@@ -98,8 +100,16 @@ pub async fn save_incoming(message: &Message, client: &Client, client_id: u64) -
         message_id: message.id() as i64,
         chat_usernames: chat.chat_usernames,
         reply_to,
+        raw: serde_json::to_string(&message.raw).unwrap_or_default(),
+        media_type: meta.media_type,
+        file_name: meta.file_name,
+        mime_type: meta.mime_type,
+        size: meta.size,
         client_id,
-    }).await;
+        ..Event::send()
+    };
 
-    Ok(())
+    crate::db::EVENTS_BUF.push(event.clone()).await;
+
+    Ok(event)
 }

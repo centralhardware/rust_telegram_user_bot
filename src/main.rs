@@ -57,16 +57,17 @@ async fn main() -> Result<()> {
                 match update {
                     Update::NewMessage(message) => {
                         handlers::backfill_reply(&client, &message, client_id).await;
-                        if message.outgoing() {
-                            if let Err(e) = handlers::save_outgoing(&message, &client, client_id).await {
-                                error!("Failed to save outgoing message: {:?}", e);
-                            }
+                        let saved = if message.outgoing() {
+                            handlers::save_outgoing(&message, &client, client_id).await
                         } else {
-                            if let Err(e) = handlers::save_incoming(&message, &client, client_id).await {
-                                error!("Failed to save incoming message: {:?}", e);
-                            }
+                            handlers::save_incoming(&message, &client, client_id).await
+                        };
+                        match saved {
+                            // The archiver writes the same row again once the file
+                            // is in S3, so it needs the row as it was logged.
+                            Ok(event) => handlers::save_media(&message, &event).await,
+                            Err(e) => error!("Failed to save message: {:?}", e),
                         }
-                        handlers::save_media(&message, &client).await;
                         if let Err(e) = handlers::handle_auto_cat(&message).await {
                             error!("Failed to handle auto cat: {:?}", e);
                         }

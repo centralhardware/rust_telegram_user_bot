@@ -2,7 +2,7 @@ use grammers_client::update::Message;
 use grammers_client::Client;
 use log::info;
 
-use crate::db::EditedMessage;
+use crate::db::Event;
 use crate::utils::log_ignore::is_log_ignored;
 
 pub async fn save_edited(
@@ -58,15 +58,17 @@ pub async fn save_edited(
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs() as u32;
 
-    crate::db::EDITED_BUF.push(EditedMessage {
+    crate::db::EVENTS_BUF.push(Event {
         date_time: now,
         chat_id,
+        chat_title: chat_name,
         message_id: msg_id,
         original_message: original,
         message: message_content,
         diff,
-        user_id,
+        user_id: user_id as u64,
         client_id,
+        ..Event::edit()
     }).await;
 
     Ok(())

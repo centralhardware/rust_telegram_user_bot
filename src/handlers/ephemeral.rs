@@ -8,7 +8,7 @@
 //! account sees them and the log does not.
 //!
 //! Their ids are a separate sequence from the chat's, so they get their own
-//! table rather than a corner of `chats_log`; see `018_create_ephemeral_log.sql`.
+//! table rather than a corner of `events_log`; see `018_create_ephemeral_log.sql`.
 
 use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;

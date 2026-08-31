@@ -5,15 +5,15 @@ use grammers_client::Client;
 use log::info;
 use serde::Deserialize;
 
-use crate::db::OutgoingMessage;
+use crate::db::Event;
 
 #[derive(Row, Deserialize)]
 struct LastChatRow {
-    title: String,
-    usernames: Vec<String>,
+    chat_title: String,
+    chat_usernames: Vec<String>,
 }
 
-pub async fn save_outgoing(message: &Message, client: &Client, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn save_outgoing(message: &Message, client: &Client, client_id: u64) -> Result<Event, Box<dyn std::error::Error>> {
     let chat = crate::utils::peer_info::chat_info(client, message).await;
     let (title, usernames) = (chat.chat_title, chat.chat_usernames);
 
@@ -23,12 +23,17 @@ pub async fn save_outgoing(message: &Message, client: &Client, client_id: u64) -
     // name it last went by here.
     let (title, usernames) = if title.is_empty() {
         match crate::db::clickhouse()
-            .query("SELECT title, usernames FROM telegram_messages_new WHERE id = ? AND title != '' ORDER BY date_time DESC LIMIT 1")
+            .query(
+                "SELECT chat_title, chat_usernames FROM events_log \
+                 WHERE chat_id = ? AND event = ? AND chat_title != '' \
+                 ORDER BY date_time DESC LIMIT 1",
+            )
             .bind(chat_id)
+            .bind(crate::db::SEND)
             .fetch_one::<LastChatRow>()
             .await
         {
-            Ok(row) => (row.title, row.usernames),
+            Ok(row) => (row.chat_title, row.chat_usernames),
             Err(_) => (title, usernames),
         }
     } else {
@@ -38,8 +43,6 @@ pub async fn save_outgoing(message: &Message, client: &Client, client_id: u64) -
     let text = crate::utils::format_entities::formatted_text(message);
     let raw = serde_json::to_string(&message.raw).unwrap_or_default();
     let reply_to = crate::utils::reply_target::reply_target(message).unwrap_or(0) as u64;
-
-    let admins: Vec<String> = Vec::new();
 
     let media_desc = crate::utils::media_description::describe(message);
     let buttons = crate::utils::inline_buttons::format_buttons(message);
@@ -102,20 +105,29 @@ pub async fn save_outgoing(message: &Message, client: &Client, client_id: u64) -
         msg_content.push_str(b);
     }
 
-    let mut insert = crate::db::clickhouse().insert::<OutgoingMessage>("telegram_messages_new").await?;
-    insert.write(&OutgoingMessage {
+    let meta = crate::utils::media_description::media_meta(message).unwrap_or_default();
+
+    let event = Event {
         date_time: message.date().as_second() as u32,
         message: msg_content,
-        title,
-        id: chat_id,
-        admins2: admins,
-        usernames,
-        message_id: message.id() as u64,
+        chat_title: title,
+        chat_id,
+        chat_usernames: usernames,
+        message_id: message.id() as i64,
+        // The account's own message: sender and client are the same.
+        user_id: client_id,
+        out: true,
         reply_to,
         raw,
+        media_type: meta.media_type,
+        file_name: meta.file_name,
+        mime_type: meta.mime_type,
+        size: meta.size,
         client_id,
-    }).await?;
-    insert.end().await?;
+        ..Event::send()
+    };
 
-    Ok(())
+    crate::db::EVENTS_BUF.push(event.clone()).await;
+
+    Ok(event)
 }

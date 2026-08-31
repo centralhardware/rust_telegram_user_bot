@@ -89,11 +89,15 @@ where
     }
 }
 
-pub static INCOMING_BUF: WriteBuffer<IncomingMessage> = WriteBuffer::new("chats_log");
-pub static EDITED_BUF: WriteBuffer<EditedMessage> = WriteBuffer::new("edited_log");
-pub static DELETED_BUF: WriteBuffer<DeletedMessage> = WriteBuffer::new("deleted_log");
-pub static MEDIA_BUF: WriteBuffer<MediaFile> = WriteBuffer::new("media_log");
+/// Every message event the account sees — a message sent, edited or deleted — is
+/// one row in `events_log`. Which columns are filled depends on `event`; the rest
+/// stay at their zero value.
+pub static EVENTS_BUF: WriteBuffer<Event> = WriteBuffer::new("events_log");
 pub static EPHEMERAL_BUF: WriteBuffer<EphemeralEvent> = WriteBuffer::new("ephemeral_log");
+
+pub const SEND: &str = "send";
+pub const EDIT: &str = "edit";
+pub const DELETE: &str = "delete";
 
 pub struct MessageInfo {
     pub message: String,
@@ -101,57 +105,69 @@ pub struct MessageInfo {
     pub first_name: String,
 }
 
-/// Find message info by chat_id + message_id.
-/// Priority: buffers (EDITED_BUF / INCOMING_BUF) → ClickHouse.
+/// Find message info by chat_id + message_id: the text as it stands now — the
+/// last edit if there was one, the sent text otherwise.
+/// Priority: the unflushed buffer → ClickHouse.
 pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
-    let from_incoming = INCOMING_BUF
-        .find_last(|m| {
-            (m.chat_id == chat_id && m.message_id == message_id)
-                .then(|| (m.message.clone(), m.chat_title.clone(), m.first_name.clone()))
+    let sent = EVENTS_BUF
+        .find_last(|e| {
+            (e.event == SEND && e.chat_id == chat_id && e.message_id == message_id)
+                .then(|| (e.message.clone(), e.chat_title.clone(), e.first_name.clone()))
         })
         .await;
 
-    let message = if let Some(msg) = EDITED_BUF
+    let edited = EVENTS_BUF
         .find_last(|e| {
-            (e.chat_id == chat_id && e.message_id == message_id).then(|| e.message.clone())
+            (e.event == EDIT && e.chat_id == chat_id && e.message_id == message_id)
+                .then(|| e.message.clone())
         })
-        .await
-    {
+        .await;
+
+    let message = if let Some(msg) = edited {
         msg
-    } else if let Some((msg, _, _)) = from_incoming.as_ref() {
+    } else if let Some((msg, _, _)) = sent.as_ref() {
         msg.clone()
     } else {
         clickhouse()
             .query(
-                "SELECT message FROM (\
-                    SELECT message, 1 AS p, date_time FROM edited_log WHERE chat_id = ? AND message_id = ? \
-                    UNION ALL \
-                    SELECT message, 2 AS p, date_time FROM chats_log WHERE chat_id = ? AND message_id = ?\
-                ) ORDER BY p, date_time DESC LIMIT 1",
+                "SELECT message FROM events_log \
+                 WHERE chat_id = ? AND message_id = ? AND event IN (?, ?) \
+                 ORDER BY event = ? DESC, date_time DESC LIMIT 1",
             )
             .bind(chat_id)
             .bind(message_id)
-            .bind(chat_id)
-            .bind(message_id)
+            .bind(SEND)
+            .bind(EDIT)
+            .bind(EDIT)
             .fetch_one::<String>()
             .await
             .unwrap_or_default()
     };
 
-    let (chat_title, first_name) = if let Some((_, t, f)) = from_incoming {
+    let (chat_title, first_name) = if let Some((_, t, f)) = sent {
         (t, f)
     } else {
         let title = clickhouse()
-            .query("SELECT chat_title FROM chats_log WHERE chat_id = ? ORDER BY date_time DESC LIMIT 1")
+            .query(
+                "SELECT chat_title FROM events_log \
+                 WHERE chat_id = ? AND event = ? AND chat_title != '' \
+                 ORDER BY date_time DESC LIMIT 1",
+            )
             .bind(chat_id)
+            .bind(SEND)
             .fetch_one::<String>()
             .await
             .unwrap_or_default();
 
         let name = clickhouse()
-            .query("SELECT first_name FROM chats_log WHERE chat_id = ? AND message_id = ? ORDER BY date_time DESC LIMIT 1")
+            .query(
+                "SELECT first_name FROM events_log \
+                 WHERE chat_id = ? AND message_id = ? AND event = ? \
+                 ORDER BY date_time DESC LIMIT 1",
+            )
             .bind(chat_id)
             .bind(message_id)
+            .bind(SEND)
             .fetch_one::<String>()
             .await
             .unwrap_or_default();
@@ -162,64 +178,38 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
     MessageInfo { message, chat_title, first_name }
 }
 
-#[derive(Row, Serialize)]
-pub struct IncomingMessage {
+/// One `events_log` row. Built through `Event::send()` / `edit()` / `delete()`,
+/// which name the event and leave every column the event does not use empty.
+///
+/// A message is one row whatever it carries: the text representation in
+/// `message`, the message object itself in `raw`, and — when it carries media —
+/// what that media is in the `media_*` columns. A file archived to S3 is the
+/// same row written again with `sha256` / `s3_*` filled and a newer `version`,
+/// which the ReplacingMergeTree collapses onto the original.
+#[derive(Row, Serialize, Default, Clone)]
+pub struct Event {
     pub date_time: u32,
-    pub message: String,
-    pub chat_title: String,
+    pub event: String,
     pub chat_id: i64,
+    pub chat_title: String,
+    pub message_id: i64,
+    pub message: String,
+    pub user_id: u64,
     pub username: Vec<String>,
     pub first_name: String,
     pub second_name: String,
-    pub user_id: u64,
     pub community_tag: String,
-    pub message_id: i64,
     pub chat_usernames: Vec<String>,
     pub reply_to: u64,
-    pub client_id: u64,
-}
-
-#[derive(Row, Serialize)]
-pub struct OutgoingMessage {
-    pub date_time: u32,
-    pub message: String,
-    pub title: String,
-    pub id: i64,
-    pub admins2: Vec<String>,
-    pub usernames: Vec<String>,
-    pub message_id: u64,
-    pub reply_to: u64,
+    /// This account is the sender.
+    pub out: bool,
+    /// The message object as Telegram sent it.
     pub raw: String,
-    pub client_id: u64,
-}
-
-#[derive(Row, Serialize)]
-pub struct EditedMessage {
-    pub date_time: u32,
-    pub chat_id: i64,
-    pub message_id: i64,
+    /// Edits: the text the edit replaced, and the unified diff between the two.
     pub original_message: String,
-    pub message: String,
     pub diff: String,
-    pub user_id: i64,
-    pub client_id: u64,
-}
-
-#[derive(Row, Serialize)]
-pub struct DeletedMessage {
-    pub date_time: u32,
-    pub chat_id: i64,
-    pub message_id: i64,
-    pub client_id: u64,
-}
-
-#[derive(Row, Serialize)]
-pub struct MediaFile {
-    pub date_time: u32,
-    pub chat_id: i64,
-    pub chat_title: String,
-    pub message_id: i64,
-    pub user_id: u64,
+    /// What the message carries besides text, and — once the archiver has run —
+    /// where the file itself was stored.
     pub media_type: String,
     pub file_name: String,
     pub mime_type: String,
@@ -227,6 +217,48 @@ pub struct MediaFile {
     pub sha256: String,
     pub s3_bucket: String,
     pub s3_key: String,
+    pub client_id: u64,
+    /// Ingest time, the ReplacingMergeTree version: the newest write of a key
+    /// wins, which is how the archiver's enrichment lands on the message row.
+    pub version: u32,
+}
+
+impl Event {
+    fn of(event: &str) -> Self {
+        Self { event: event.to_string(), version: now(), ..Self::default() }
+    }
+
+    pub fn send() -> Self {
+        Self::of(SEND)
+    }
+
+    pub fn edit() -> Self {
+        Self::of(EDIT)
+    }
+
+    pub fn delete() -> Self {
+        Self::of(DELETE)
+    }
+
+    /// The same message row again, carrying what the archiver learned about its
+    /// file. Newer `version`, same key: it replaces the row it enriches.
+    pub fn archived(&self, sha256: String, bucket: String, key: String, size: u64) -> Self {
+        Self {
+            sha256,
+            s3_bucket: bucket,
+            s3_key: key,
+            size,
+            version: now(),
+            ..self.clone()
+        }
+    }
+}
+
+fn now() -> u32 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as u32)
+        .unwrap_or_default()
 }
 
 /// One `ephemeral_log` row: a bot message in a group that only `receiver_id` can
