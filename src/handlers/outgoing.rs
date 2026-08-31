@@ -142,6 +142,7 @@ pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Resul
         action: meta_msg.action,
         grouped_id: meta_msg.grouped_id,
         via_bot_id: meta_msg.via_bot_id,
+        guest_from_id: meta_msg.guest_from_id,
         post_author: meta_msg.post_author,
         pinned: meta_msg.pinned,
         silent: meta_msg.silent,

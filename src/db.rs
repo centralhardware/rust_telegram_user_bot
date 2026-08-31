@@ -301,6 +301,9 @@ pub struct Event {
     /// The inline bot it was sent through, and the signature a channel post
     /// carries instead of a sender.
     pub via_bot_id: u64,
+    /// The peer a guest-chat message actually came from, when `user_id` is only
+    /// the relay it arrived through.
+    pub guest_from_id: i64,
     pub post_author: String,
     /// Telegram's own flags. `ttl_period` is the self-destruct timer in seconds.
     pub pinned: bool,

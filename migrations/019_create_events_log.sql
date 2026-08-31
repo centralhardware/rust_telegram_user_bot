@@ -90,6 +90,9 @@ CREATE TABLE IF NOT EXISTS events_log
     -- post carries instead of a sender.
     via_bot_id       UInt64,
     post_author      String,
+    -- A guest chat relays a message from someone who is not in the chat: `user_id`
+    -- is then the relay it arrived through, and this is the peer it came from.
+    guest_from_id    Int64,
     -- Telegram's own flags. `ttl_period` is the self-destruct timer in seconds.
     pinned           Bool,
     silent           Bool,

@@ -18,6 +18,7 @@ pub struct MessageMeta {
     pub action: String,
     pub grouped_id: u64,
     pub via_bot_id: u64,
+    pub guest_from_id: i64,
     pub post_author: String,
     pub pinned: bool,
     pub silent: bool,
@@ -43,6 +44,15 @@ fn of_message(msg: &tl::types::Message) -> MessageMeta {
     let mut meta = MessageMeta {
         grouped_id: msg.grouped_id.unwrap_or(0).max(0) as u64,
         via_bot_id: msg.via_bot_id.unwrap_or(0).max(0) as u64,
+        // A guest chat relays a message from someone who is not in the chat; the
+        // peer it actually came from is only in this field, and `from_id` names
+        // the relay. Kept as a dialog id, since a guest can be a chat as well as
+        // a user.
+        guest_from_id: msg
+            .guestchat_via_from
+            .as_ref()
+            .map(|peer| PeerId::from(peer).bot_api_dialog_id_unchecked())
+            .unwrap_or(0),
         post_author: msg.post_author.clone().unwrap_or_default(),
         pinned: msg.pinned,
         silent: msg.silent,
