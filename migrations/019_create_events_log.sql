@@ -48,7 +48,12 @@ CREATE TABLE IF NOT EXISTS events_log
     username         Array(String),
     first_name       String,
     second_name      String,
+    -- The sender's rank badge in the chat, Telegram's `from_rank`.
     community_tag    LowCardinality(String),
+    -- The community the chat belongs to, 0 when it belongs to none. A property of
+    -- the chat, so it is remembered with the chat's other identity in `peer_names`
+    -- and copied onto the row from there.
+    community_id     Int64,
     chat_usernames   Array(LowCardinality(String)),
     -- The message this one replies to, and who sent that message.
     reply_to         UInt64,

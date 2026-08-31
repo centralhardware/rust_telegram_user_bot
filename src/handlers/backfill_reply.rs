@@ -85,6 +85,7 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
             second_name: sender.second_name,
             user_id: sender.user_id,
             community_tag: extract_community_tag(&reply.raw),
+            community_id: chat.community_id,
             message_id: reply.id() as i64,
             chat_usernames: chat.chat_usernames,
             reply_to,

@@ -12,6 +12,7 @@ pub struct SenderInfo {
 pub struct ChatInfo {
     pub chat_title: String,
     pub chat_usernames: Vec<String>,
+    pub community_id: i64,
 }
 
 pub fn extract_community_tag_from_update(update: &tl::enums::Update) -> String {

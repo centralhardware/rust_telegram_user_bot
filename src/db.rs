@@ -266,7 +266,10 @@ pub struct Event {
     pub username: Vec<String>,
     pub first_name: String,
     pub second_name: String,
+    /// The sender's rank badge in the chat — Telegram's `from_rank`.
     pub community_tag: String,
+    /// The community the chat belongs to, 0 when it belongs to none.
+    pub community_id: i64,
     pub chat_usernames: Vec<String>,
     /// The message this one replies to, and who sent that message.
     pub reply_to: u64,

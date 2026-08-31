@@ -13,6 +13,20 @@ use serde::{Deserialize, Serialize};
 
 use crate::handlers::extract::{ChatInfo, SenderInfo};
 
+/// The community a chat belongs to. Only a channel or a supergroup can be in
+/// one, and Telegram reports it on the chat rather than on its messages.
+fn community_of(peer: &Peer) -> i64 {
+    let channel = match peer {
+        Peer::Channel(channel) => &channel.raw,
+        Peer::Group(group) => match &group.raw {
+            grammers_tl_types::enums::Chat::Channel(channel) => channel,
+            _ => return 0,
+        },
+        _ => return 0,
+    };
+    channel.linked_community_id.unwrap_or(0)
+}
+
 #[derive(Row, Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 pub struct PeerNames {
     /// Bot API dialog id: users positive, legacy groups `-id`, channels `-100…`.
@@ -22,6 +36,10 @@ pub struct PeerNames {
     pub first_name: String,
     pub last_name: String,
     pub usernames: Vec<String>,
+    /// The community the chat belongs to, 0 when it belongs to none. A property
+    /// of the chat rather than of the message, which is why it is remembered
+    /// here with the chat's other identity.
+    pub community_id: i64,
 }
 
 impl PeerNames {
@@ -68,6 +86,7 @@ impl PeerNames {
             first_name,
             last_name,
             usernames,
+            community_id: community_of(peer),
         })
     }
 
@@ -75,6 +94,7 @@ impl PeerNames {
         ChatInfo {
             chat_title: self.title.clone(),
             chat_usernames: self.usernames.clone(),
+            community_id: self.community_id,
         }
     }
 
@@ -102,7 +122,7 @@ impl PeerNames {
 pub async fn load(peer_id: i64) -> Option<PeerNames> {
     match crate::db::clickhouse()
         .query(
-            "SELECT peer_id, title, first_name, last_name, usernames \
+            "SELECT peer_id, title, first_name, last_name, usernames, community_id \
              FROM peer_names FINAL WHERE peer_id = ?",
         )
         .bind(peer_id)
