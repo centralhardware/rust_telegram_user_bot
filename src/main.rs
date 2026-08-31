@@ -85,13 +85,17 @@ async fn main() -> Result<()> {
                     // Ephemeral messages have no friendly variant in grammers yet.
                     Update::Raw(raw) => match &raw.raw {
                         tl::enums::Update::NewEphemeralMessage(u) => {
-                            handlers::save_ephemeral(&u.message, "new", client_id).await;
+                            handlers::save_ephemeral(&u.message, "new").await;
                         }
                         tl::enums::Update::EditEphemeralMessage(u) => {
-                            handlers::save_ephemeral(&u.message, "edit", client_id).await;
+                            handlers::save_ephemeral(&u.message, "edit").await;
                         }
                         tl::enums::Update::DeleteEphemeralMessages(u) => {
-                            handlers::save_ephemeral_deleted(&u.peer, &u.ids, client_id).await;
+                            handlers::save_ephemeral_deleted(&u.peer, &u.ids).await;
+                        }
+                        // Reactions have none either.
+                        tl::enums::Update::MessageReactions(u) => {
+                            handlers::save_reactions(u).await;
                         }
                         _ => {}
                     },

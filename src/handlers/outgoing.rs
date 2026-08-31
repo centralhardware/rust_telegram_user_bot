@@ -113,6 +113,7 @@ pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Resul
     let (topic_id, topic_name) = crate::utils::topic::topic_of(client, message).await;
 
     let meta = crate::utils::media_description::media_meta(message).unwrap_or_default();
+    let meta_msg = crate::utils::message_meta::of(&std::ops::Deref::deref(message).raw);
 
     let event = Event {
         date_time: message.date().as_second() as u32,
@@ -133,6 +134,26 @@ pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Resul
         file_name: meta.file_name,
         mime_type: meta.mime_type,
         size: meta.size,
+        fwd_from_user_id: meta_msg.fwd_from_user_id,
+        fwd_from_chat_id: meta_msg.fwd_from_chat_id,
+        fwd_from_msg_id: meta_msg.fwd_from_msg_id,
+        fwd_from_name: meta_msg.fwd_from_name,
+        fwd_date: meta_msg.fwd_date,
+        action: meta_msg.action,
+        grouped_id: meta_msg.grouped_id,
+        via_bot_id: meta_msg.via_bot_id,
+        post_author: meta_msg.post_author,
+        pinned: meta_msg.pinned,
+        silent: meta_msg.silent,
+        noforwards: meta_msg.noforwards,
+        ttl_period: meta_msg.ttl_period,
+        duration: meta.duration,
+        width: meta.width,
+        height: meta.height,
+        lat: meta.lat,
+        lon: meta.lon,
+        poll_question: meta.poll_question,
+        poll_options: meta.poll_options,
         ..Event::send()
     };
 

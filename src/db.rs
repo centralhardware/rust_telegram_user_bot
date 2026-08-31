@@ -93,11 +93,11 @@ where
 /// one row in `events_log`. Which columns are filled depends on `event`; the rest
 /// stay at their zero value.
 pub static EVENTS_BUF: WriteBuffer<Event> = WriteBuffer::new("events_log");
-pub static EPHEMERAL_BUF: WriteBuffer<EphemeralEvent> = WriteBuffer::new("ephemeral_log");
 
 pub const SEND: &str = "send";
 pub const EDIT: &str = "edit";
 pub const DELETE: &str = "delete";
+pub const REACTION: &str = "reaction";
 
 pub struct MessageInfo {
     pub message: String,
@@ -274,10 +274,39 @@ pub struct Event {
     /// The forum topic the message was posted in, 0 outside a forum.
     pub topic_id: i32,
     pub topic_name: String,
+    /// Where a forward came from. `fwd_from_name` is all Telegram gives for a
+    /// sender who hides their account behind their name.
+    pub fwd_from_user_id: u64,
+    pub fwd_from_chat_id: i64,
+    pub fwd_from_msg_id: i64,
+    pub fwd_from_name: String,
+    pub fwd_date: u32,
+    /// The service action the message announces, named rather than only spelled
+    /// out in `message`. Empty for an ordinary message.
+    pub action: String,
+    /// The album the message belongs to: one caption, one id, one row per file.
+    pub grouped_id: u64,
+    /// A 'reaction' row: the counts as they stand after the change.
+    pub reactions: Vec<(String, u32)>,
+    /// A message only one member of the group can see, whose id belongs to the
+    /// ephemeral sequence rather than the chat's.
+    pub ephemeral: bool,
+    pub receiver_id: u64,
+    pub reply_to_ephemeral: bool,
+    pub welcome: bool,
     /// This account is the sender.
     pub out: bool,
     /// The message object as Telegram sent it.
     pub raw: String,
+    /// The inline bot it was sent through, and the signature a channel post
+    /// carries instead of a sender.
+    pub via_bot_id: u64,
+    pub post_author: String,
+    /// Telegram's own flags. `ttl_period` is the self-destruct timer in seconds.
+    pub pinned: bool,
+    pub silent: bool,
+    pub noforwards: bool,
+    pub ttl_period: u32,
     /// Edits: the unified diff against the text this edit replaced. That text is
     /// the `message` of the send — or of the previous edit — of the same message,
     /// so it is not stored again here.
@@ -288,6 +317,13 @@ pub struct Event {
     pub file_name: String,
     pub mime_type: String,
     pub size: u64,
+    pub duration: u32,
+    pub width: u32,
+    pub height: u32,
+    pub lat: f64,
+    pub lon: f64,
+    pub poll_question: String,
+    pub poll_options: Vec<String>,
     pub sha256: String,
     pub s3_bucket: String,
     pub s3_key: String,
@@ -313,6 +349,16 @@ impl Event {
         Self::of(DELETE)
     }
 
+    pub fn reaction() -> Self {
+        Self::of(REACTION)
+    }
+
+    /// An ephemeral message's own event name: Telegram calls a new one "new", the
+    /// log calls a new message "send".
+    pub fn of_ephemeral(event: &str) -> Self {
+        Self::of(if event == "new" { SEND } else { event })
+    }
+
     /// The same message row again, carrying what the archiver learned about its
     /// file. Newer `version`, same key: it replaces the row it enriches.
     pub fn archived(&self, sha256: String, bucket: String, key: String, size: u64) -> Self {
@@ -332,27 +378,6 @@ fn now() -> u32 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as u32)
         .unwrap_or_default()
-}
-
-/// One `ephemeral_log` row: a bot message in a group that only `receiver_id` can
-/// see, as it was created, edited or deleted.
-#[derive(Row, Serialize)]
-pub struct EphemeralEvent {
-    pub date_time: u32,
-    pub event: String,
-    pub chat_id: i64,
-    pub chat_title: String,
-    pub message_id: i64,
-    pub message: String,
-    pub sender_id: u64,
-    pub sender_title: String,
-    pub out: bool,
-    pub receiver_id: u64,
-    pub top_msg_id: u32,
-    pub reply_to: u64,
-    pub reply_to_ephemeral: bool,
-    pub welcome: bool,
-    pub client_id: u64,
 }
 
 #[derive(Row, Serialize)]

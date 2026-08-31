@@ -248,6 +248,16 @@ pub struct MediaMeta {
     pub file_name: String,
     pub mime_type: String,
     pub size: u64,
+    /// Seconds, for voice, audio and video.
+    pub duration: u32,
+    /// Pixels, for a photo or a video.
+    pub width: u32,
+    pub height: u32,
+    /// Degrees, for a location, a live location or a venue.
+    pub lat: f64,
+    pub lon: f64,
+    pub poll_question: String,
+    pub poll_options: Vec<String>,
 }
 
 pub fn media_meta(message: &Message) -> Option<MediaMeta> {
@@ -261,7 +271,50 @@ fn meta_of(media: &tl::enums::MessageMedia) -> MediaMeta {
     };
 
     match media {
-        tl::enums::MessageMedia::Photo(_) => meta.mime_type = "image/jpeg".into(),
+        tl::enums::MessageMedia::Photo(p) => {
+            meta.mime_type = "image/jpeg".into();
+            // The sizes are the same image at several resolutions; the largest is
+            // the one the message actually shows.
+            if let Some(tl::enums::Photo::Photo(photo)) = p.photo.as_ref() {
+                for size in &photo.sizes {
+                    if let tl::enums::PhotoSize::Size(s) = size {
+                        if (s.w as u32) > meta.width {
+                            meta.width = s.w.max(0) as u32;
+                            meta.height = s.h.max(0) as u32;
+                        }
+                    }
+                }
+            }
+        }
+        tl::enums::MessageMedia::Geo(g) => {
+            let tl::enums::GeoPoint::Point(p) = &g.geo else { return meta };
+            (meta.lat, meta.lon) = (p.lat, p.long);
+        }
+        tl::enums::MessageMedia::GeoLive(g) => {
+            let tl::enums::GeoPoint::Point(p) = &g.geo else { return meta };
+            (meta.lat, meta.lon) = (p.lat, p.long);
+        }
+        tl::enums::MessageMedia::Venue(v) => {
+            if let tl::enums::GeoPoint::Point(p) = &v.geo {
+                (meta.lat, meta.lon) = (p.lat, p.long);
+            }
+        }
+        tl::enums::MessageMedia::Poll(p) => {
+            let tl::enums::Poll::Poll(poll) = &p.poll;
+            let tl::enums::TextWithEntities::Entities(q) = &poll.question;
+            meta.poll_question = q.text.clone();
+            meta.poll_options = poll
+                .answers
+                .iter()
+                .filter_map(|a| match a {
+                    tl::enums::PollAnswer::Answer(a) => {
+                        let tl::enums::TextWithEntities::Entities(t) = &a.text;
+                        Some(t.text.clone())
+                    }
+                    _ => None,
+                })
+                .collect();
+        }
         tl::enums::MessageMedia::Document(d) => {
             if let Some(tl::enums::Document::Document(doc)) = d.document.as_ref() {
                 meta.mime_type = doc.mime_type.clone();
@@ -275,7 +328,8 @@ fn meta_of(media: &tl::enums::MessageMedia) -> MediaMeta {
                             meta.media_type = "sticker".into()
                         }
                         tl::enums::DocumentAttribute::Audio(a) => {
-                            meta.media_type = if a.voice { "voice" } else { "audio" }.into()
+                            meta.media_type = if a.voice { "voice" } else { "audio" }.into();
+                            meta.duration = a.duration.max(0) as u32;
                         }
                         tl::enums::DocumentAttribute::Video(v) => {
                             meta.media_type = if v.round_message {
@@ -285,7 +339,10 @@ fn meta_of(media: &tl::enums::MessageMedia) -> MediaMeta {
                             } else {
                                 "video"
                             }
-                            .into()
+                            .into();
+                            meta.duration = v.duration.max(0.0) as u32;
+                            meta.width = v.w.max(0) as u32;
+                            meta.height = v.h.max(0) as u32;
                         }
                         _ => {}
                     }

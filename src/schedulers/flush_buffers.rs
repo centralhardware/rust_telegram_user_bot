@@ -4,9 +4,8 @@ use crate::db;
 
 pub async fn flush_all() {
     let events = db::EVENTS_BUF.flush().await;
-    let ephemeral = db::EPHEMERAL_BUF.flush().await;
-    if events + ephemeral > 0 {
-        log::info!("flushed events: {events}, ephemeral: {ephemeral}");
+    if events > 0 {
+        log::info!("flushed events: {events}");
     }
 }
 

@@ -4,6 +4,7 @@ pub mod format_entities;
 pub mod inline_buttons;
 pub mod log_ignore;
 pub mod media_description;
+pub mod message_meta;
 pub mod peer_info;
 pub mod peer_names;
 pub mod reply_preview;

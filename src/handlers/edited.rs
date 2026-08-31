@@ -55,9 +55,15 @@ pub async fn save_edited(
 
     let (topic_id, topic_name) = crate::utils::topic::topic_of(client, message).await;
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_secs() as u32;
+    // Telegram's own edit time, not the moment this process got round to it: the
+    // row is when the message changed, and a reconnect replaying a backlog of
+    // edits must not stamp them all with the time it caught up.
+    let now = match message.edit_date() {
+        Some(date) => date.as_second() as u32,
+        None => std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as u32,
+    };
 
     crate::db::EVENTS_BUF.push(Event {
         date_time: now,

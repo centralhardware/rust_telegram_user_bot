@@ -6,10 +6,15 @@
 -- reassembled by joining all five.
 --
 -- `events_log` is append-only, one row per event, `event` naming which: 'send',
--- 'edit' or 'delete'. Media is not an event of its own — a photo is an ordinary
--- message that carries a file instead of text, so it is the send row that carries
--- `media_type` / `file_name` / `mime_type` / `size`, and `raw` keeps the message
--- object behind the text representation in `message`.
+-- 'edit', 'delete' or 'reaction'. Media is not an event of its own — a photo is an
+-- ordinary message that carries a file instead of text, so it is the send row that
+-- carries `media_type` / `file_name` / `mime_type` / `size`, and `raw` keeps the
+-- message object behind the text representation in `message`.
+--
+-- Ephemeral messages (Bot API 10.2) live here too, under `ephemeral`. Their ids
+-- are a sequence of their own, so an ephemeral id and an ordinary one can name
+-- different messages in the same chat — which is why `ephemeral` sits in the sort
+-- key ahead of `message_id` and the two can never collapse onto each other.
 --
 -- The archiver runs after the message is already logged, so it writes the same row
 -- again with `sha256` / `s3_*` filled and a newer `version`; ReplacingMergeTree(version)
@@ -52,10 +57,44 @@ CREATE TABLE IF NOT EXISTS events_log
     -- copies both off the send row it refers to.
     topic_id         Int32,
     topic_name       LowCardinality(String),
+    -- Where the message came from, when it is a forward. `fwd_from_name` is all
+    -- Telegram gives for a sender who hides their account behind their name.
+    fwd_from_user_id UInt64,
+    fwd_from_chat_id Int64,
+    fwd_from_msg_id  Int64,
+    fwd_from_name    String,
+    fwd_date         DateTime,
+    -- The service action the message announces — a join, a pin, a title change —
+    -- named rather than only spelled out in `message`. Empty for an ordinary
+    -- message.
+    action           LowCardinality(String),
+    -- The album a media message belongs to: one caption, one `grouped_id`, one row
+    -- per file. 0 when the message stands alone.
+    grouped_id       UInt64,
+    -- Reactions, for a 'reaction' row: the counts as they stand after the change,
+    -- keyed by emoji (a custom emoji by its document id).
+    reactions        Map(String, UInt32),
+    -- A message only one member of the group can see. Its id belongs to the
+    -- ephemeral sequence, not the chat's.
+    ephemeral        Bool,
+    receiver_id      UInt64,
+    -- Whether `reply_to` points into the ephemeral id space or at a real message.
+    reply_to_ephemeral Bool,
+    -- A welcome template: sent by the bot on its own, not answering a command.
+    welcome          Bool,
     -- This account is the sender.
     out              Bool,
     -- The message object as Telegram sent it.
     raw              String,
+    -- The inline bot the message was sent through, and the signature a channel
+    -- post carries instead of a sender.
+    via_bot_id       UInt64,
+    post_author      String,
+    -- Telegram's own flags. `ttl_period` is the self-destruct timer in seconds.
+    pinned           Bool,
+    silent           Bool,
+    noforwards       Bool,
+    ttl_period       UInt32,
     -- Edits only: the unified diff against the text this edit replaced. That text
     -- is the `message` of the send — or of the previous edit — of the same message,
     -- so it is not stored a second time.
@@ -65,6 +104,17 @@ CREATE TABLE IF NOT EXISTS events_log
     file_name        String,
     mime_type        LowCardinality(String),
     size             UInt64,
+    -- The media's own measurements, kept as numbers rather than only spelled out
+    -- in `message`: seconds for voice, audio and video; pixels for photo and
+    -- video; degrees for a location or a venue; the question and the answers for
+    -- a poll.
+    duration         UInt32,
+    width            UInt32,
+    height           UInt32,
+    lat              Float64,
+    lon              Float64,
+    poll_question    String,
+    poll_options     Array(String),
     sha256           String,
     s3_bucket        LowCardinality(String),
     s3_key           String,
@@ -73,7 +123,7 @@ CREATE TABLE IF NOT EXISTS events_log
 )
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(date_time)
-ORDER BY (chat_id, message_id, event, date_time);
+ORDER BY (chat_id, ephemeral, message_id, event, date_time);
 
 
 -- ---------------------------------------------------------------------------
@@ -143,7 +193,7 @@ SELECT
     minState(date_time) AS first_seen,
     maxState(date_time) AS last_seen
 FROM events_log
-WHERE s3_key = ''
+WHERE (s3_key = '') AND NOT ephemeral
 GROUP BY chat_id;
 
 CREATE VIEW IF NOT EXISTS v_chat_stat AS
@@ -203,7 +253,7 @@ SELECT
     minState(date_time) AS first_seen,
     maxState(date_time) AS last_seen
 FROM events_log
-WHERE (s3_key = '') AND (event != 'delete') AND (user_id != 0)
+WHERE (s3_key = '') AND NOT ephemeral AND (event != 'delete') AND (user_id != 0)
 GROUP BY user_id;
 
 CREATE VIEW IF NOT EXISTS v_user_stat AS
@@ -254,7 +304,7 @@ SELECT
     groupUniqArrayState(user_id) AS senders,
     sumState(size) AS media_bytes
 FROM events_log
-WHERE s3_key = ''
+WHERE (s3_key = '') AND NOT ephemeral
 GROUP BY day, chat_id, topic_id, event;
 
 CREATE VIEW IF NOT EXISTS v_daily_stat AS
@@ -274,7 +324,8 @@ GROUP BY day, chat_id, topic_id, event;
 -- Edit chains. The old `edited_chain_stats` counted edit rows only, so a message
 -- edited once showed a chain of one and the send it started from had to be
 -- subtracted by hand in the reading view. Here the send row is counted with them,
--- so `versions` is the number of texts the message actually had.
+-- so `versions` is the number of texts the message actually had — a reaction is
+-- not one of them, and a delete is not a version either.
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS events_edit_chain_stat
@@ -294,13 +345,13 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS mv_events_edit_chain_stat TO events_edit_
 SELECT
     chat_id,
     message_id,
-    countIfState(event != 'delete') AS versions,
+    countIfState(event IN ('send', 'edit')) AS versions,
     countIfState(event = 'edit') AS edits,
     minState(date_time) AS first_seen,
     maxIfState(date_time, event = 'edit') AS last_edit,
     maxIfState(date_time, event = 'delete') AS deleted
 FROM events_log
-WHERE s3_key = ''
+WHERE (s3_key = '') AND NOT ephemeral
 GROUP BY chat_id, message_id;
 
 CREATE VIEW IF NOT EXISTS v_edit_chain_stat AS

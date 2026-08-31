@@ -7,20 +7,23 @@
 //! variant for yet and hands over as `Update::Raw`. Without this handler the
 //! account sees them and the log does not.
 //!
-//! Their ids are a separate sequence from the chat's, so they get their own
-//! table rather than a corner of `events_log`; see `018_create_ephemeral_log.sql`.
+//! Their ids are a separate sequence from the chat's, so an ephemeral id and an
+//! ordinary one can name different messages in the same chat. That is what the
+//! `ephemeral` flag is for: it sits in the sort key ahead of `message_id`, so the
+//! two can never collapse onto each other, and they share `events_log` like every
+//! other message event.
 
 use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;
 use log::info;
 
-use crate::db::{EPHEMERAL_BUF, EphemeralEvent};
+use crate::db::{EVENTS_BUF, Event};
 use crate::utils::log_ignore::is_log_ignored;
 use crate::utils::peer_names;
 
 /// A new or edited ephemeral message. `event` is the column the two share a
 /// table under: `"new"` or `"edit"`.
-pub async fn save_ephemeral(message: &tl::enums::EphemeralMessage, event: &str, client_id: u64) {
+pub async fn save_ephemeral(message: &tl::enums::EphemeralMessage, event: &str) {
     let tl::enums::EphemeralMessage::Message(msg) = message;
 
     // A bot can also send one outside a group, straight to the receiver: then
@@ -48,30 +51,29 @@ pub async fn save_ephemeral(message: &tl::enums::EphemeralMessage, event: &str, 
         );
     }
 
-    EPHEMERAL_BUF
-        .push(EphemeralEvent {
+    EVENTS_BUF
+        .push(Event {
             date_time: msg.date as u32,
-            event: event.to_string(),
             chat_id,
             chat_title,
             message_id: msg.id as i64,
             message: text,
-            sender_id: sender.bare_id_unchecked() as u64,
-            sender_title,
+            user_id: sender.bare_id_unchecked() as u64,
             out: msg.out,
             receiver_id: msg.receiver_id as u64,
-            top_msg_id: msg.top_msg_id.unwrap_or(0) as u32,
+            topic_id: msg.top_msg_id.unwrap_or(0),
             reply_to,
             reply_to_ephemeral,
             welcome: msg.welcome_template,
-            client_id,
+            ephemeral: true,
+            ..Event::of_ephemeral(event)
         })
         .await;
 }
 
 /// Ephemeral messages are deleted by id alone: Telegram names the chat and the
 /// ids, and nothing about what was in them.
-pub async fn save_ephemeral_deleted(peer: &tl::enums::Peer, ids: &[i32], client_id: u64) {
+pub async fn save_ephemeral_deleted(peer: &tl::enums::Peer, ids: &[i32]) {
     let chat_id = PeerId::from(peer).bot_api_dialog_id_unchecked();
     let chat_title = title_of(chat_id).await;
     let date_time = chrono::Utc::now().timestamp() as u32;
@@ -87,23 +89,14 @@ pub async fn save_ephemeral_deleted(peer: &tl::enums::Peer, ids: &[i32], client_
     }
 
     for id in ids {
-        EPHEMERAL_BUF
-            .push(EphemeralEvent {
+        EVENTS_BUF
+            .push(Event {
                 date_time,
-                event: "delete".to_string(),
                 chat_id,
                 chat_title: chat_title.clone(),
                 message_id: *id as i64,
-                message: String::new(),
-                sender_id: 0,
-                sender_title: String::new(),
-                out: false,
-                receiver_id: 0,
-                top_msg_id: 0,
-                reply_to: 0,
-                reply_to_ephemeral: false,
-                welcome: false,
-                client_id,
+                ephemeral: true,
+                ..Event::delete()
             })
             .await;
     }
