@@ -72,6 +72,9 @@ pub async fn save_edited(
         message_id: msg_id,
         message: message_content,
         diff,
+        // An edit of the account's own message, so `out` means the same thing on
+        // an edit row as it does on the send it follows.
+        out: message.outgoing(),
         topic_id,
         topic_name,
         user_id: user_id as u64,

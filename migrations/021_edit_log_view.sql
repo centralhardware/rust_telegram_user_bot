@@ -16,6 +16,8 @@ SELECT
     chat_title,
     message_id,
     user_id,
+    -- The account edited its own message.
+    out,
     topic_id,
     topic_name,
     original_message,
@@ -24,7 +26,7 @@ SELECT
 FROM
 (
     SELECT
-        date_time, chat_id, chat_title, message_id, user_id, topic_id, topic_name,
+        date_time, chat_id, chat_title, message_id, user_id, out, topic_id, topic_name,
         message, diff, event,
         lagInFrame(message) OVER
         (
