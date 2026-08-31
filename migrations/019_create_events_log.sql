@@ -18,9 +18,12 @@
 -- under rewrites, while each edit and each delete has a time of its own and stays a
 -- separate row.
 --
--- The old tables are left untouched: nothing is backfilled and nothing is renamed.
--- They keep the history they already hold and simply stop being written, and the
--- Grafana boards are re-pointed at `events_log` for everything from here on.
+-- This migration creates the table and nothing else. The old tables keep their
+-- names and their history and are not touched, not renamed and not backfilled;
+-- they simply stop being written. Their materialized views are left attached to
+-- them too, so the aggregates (`chat_stat`, `user_stat`, `message_stats`,
+-- `edited_chain_stats`) keep what they hold and stop advancing — re-pointing them
+-- at `events_log` is a separate step, as is moving the Grafana boards over.
 
 SET allow_suspicious_low_cardinality_types = 1;
 
@@ -65,117 +68,3 @@ CREATE TABLE IF NOT EXISTS events_log
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(date_time)
 ORDER BY (chat_id, message_id, event, date_time);
-
-
--- ---------------------------------------------------------------------------
--- The old tables are left exactly as they are: they keep their history and their
--- names, they simply stop being written — the bot logs into `events_log` only, and
--- the Grafana boards are being re-pointed at it. `mv_my_messages_to_chats_log`
--- has nothing left to copy, and the aggregates have to be re-attached to the new
--- source, so those views are the only ones dropped here.
--- ---------------------------------------------------------------------------
-
-DROP VIEW IF EXISTS mv_my_messages_to_chats_log;
-DROP VIEW IF EXISTS mv_chat_stat;
-DROP VIEW IF EXISTS mv_user_stat;
-DROP VIEW IF EXISTS mv_message_stats;
-DROP VIEW IF EXISTS mv_edited_chain_stats;
-
-
--- ---------------------------------------------------------------------------
--- The aggregates, re-attached to the new source. Their target tables are the
--- existing ones and are left as they are, so the counters carry on from where the
--- old materialized views left them.
--- ---------------------------------------------------------------------------
-
-CREATE TABLE IF NOT EXISTS chat_stat
-(
-    client_id       UInt64,
-    chat_id         Int64,
-    last_title      String,
-    msg_count       AggregateFunction(count),
-    reply_msg_count AggregateFunction(sum, UInt8),
-    participants    AggregateFunction(groupUniqArray, UInt64),
-    last_message_id AggregateFunction(max, Int64)
-)
-ENGINE = AggregatingMergeTree
-ORDER BY (client_id, chat_id);
-
-CREATE MATERIALIZED VIEW mv_chat_stat TO chat_stat AS
-SELECT
-    client_id,
-    chat_id,
-    anyLast(chat_title) AS last_title,
-    countState() AS msg_count,
-    sumState(if(reply_to != 0, 1, 0)) AS reply_msg_count,
-    groupUniqArrayState(user_id) AS participants,
-    maxState(message_id) AS last_message_id
-FROM events_log
--- The archiver rewrites a send row once its file is in S3; that rewrite must not
--- be counted a second time, and the row it replaces was already counted.
-WHERE event = 'send' AND s3_key = ''
-GROUP BY client_id, chat_id;
-
-
-CREATE TABLE IF NOT EXISTS user_stat
-(
-    client_id       UInt64,
-    user_id         UInt64,
-    username        Array(String),
-    first_name      String,
-    second_name     String,
-    chats           AggregateFunction(groupUniqArray, Int64),
-    msg_count       AggregateFunction(count),
-    reply_msg_count AggregateFunction(sum, UInt8)
-)
-ENGINE = AggregatingMergeTree
-ORDER BY (client_id, user_id);
-
-CREATE MATERIALIZED VIEW mv_user_stat TO user_stat AS
-SELECT
-    client_id,
-    user_id,
-    anyLast(username) AS username,
-    anyLast(first_name) AS first_name,
-    anyLast(second_name) AS second_name,
-    groupUniqArrayState(chat_id) AS chats,
-    countState() AS msg_count,
-    sumState(if(reply_to != 0, 1, 0)) AS reply_msg_count
-FROM events_log
-WHERE event = 'send' AND s3_key = ''
-GROUP BY client_id, user_id;
-
-
-CREATE TABLE IF NOT EXISTS message_stats
-(
-    id         Int64,
-    client_id  UInt64,
-    last_title AggregateFunction(anyLast, String),
-    cnt_state  AggregateFunction(count)
-)
-ENGINE = AggregatingMergeTree
-ORDER BY (id, client_id);
-
-CREATE MATERIALIZED VIEW mv_message_stats TO message_stats AS
-SELECT
-    chat_id AS id,
-    client_id,
-    anyLastState(chat_title) AS last_title,
-    countState() AS cnt_state
-FROM events_log
-WHERE event = 'send' AND out AND s3_key = ''
-GROUP BY id, client_id;
-
-
--- The edit-chain counters keep their existing target table, so there is nothing to
--- backfill: only the source changes.
-CREATE MATERIALIZED VIEW mv_edited_chain_stats TO edited_chain_stats AS
-SELECT
-    chat_id,
-    message_id,
-    countState() AS versions_state,
-    minState(date_time) AS first_time_state,
-    maxState(date_time) AS last_time_state
-FROM events_log
-WHERE event = 'edit'
-GROUP BY chat_id, message_id;
