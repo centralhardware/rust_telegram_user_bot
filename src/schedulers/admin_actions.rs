@@ -504,7 +504,7 @@ fn format_log_output(
                 .missing_newline_hint(false)
                 .to_string();
             if colorize {
-                crate::utils::diff::colorize_unified_diff(&diff, &prev, &new)
+                crate::utils::diff::inline_diff(&prev, &new)
             } else {
                 diff.trim_end().to_string()
             }
