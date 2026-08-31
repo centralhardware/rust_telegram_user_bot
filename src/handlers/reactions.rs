@@ -16,7 +16,10 @@ use crate::db::{EVENTS_BUF, Event};
 use crate::utils::log_ignore::is_log_ignored;
 
 pub async fn save_reactions(update: &tl::types::UpdateMessageReactions) {
-    let chat_id = PeerId::from(&update.peer).bot_api_dialog_id_unchecked();
+    // `chat_id` in `events_log` is the bare id every message path writes; the
+    // dialog id is only what `peer_names` is keyed by.
+    let peer = PeerId::from(&update.peer);
+    let chat_id = peer.bare_id_unchecked();
     let tl::enums::MessageReactions::Reactions(reactions) = &update.reactions;
 
     let counts: Vec<(String, u32)> = reactions
@@ -28,7 +31,7 @@ pub async fn save_reactions(update: &tl::types::UpdateMessageReactions) {
         })
         .collect();
 
-    let chat_title = crate::utils::peer_names::load(chat_id)
+    let chat_title = crate::utils::peer_names::load(peer.bot_api_dialog_id_unchecked())
         .await
         .map(|names| names.title)
         .unwrap_or_default();
