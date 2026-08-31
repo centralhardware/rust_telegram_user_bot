@@ -333,14 +333,20 @@ pub struct Event {
     pub sha256: String,
     pub s3_bucket: String,
     pub s3_key: String,
-    /// Ingest time, the ReplacingMergeTree version: the newest write of a key
-    /// wins, which is how the archiver's enrichment lands on the message row.
+    /// The ReplacingMergeTree version. 0 for a message as it was logged, and the
+    /// archiver's ingest time on the row it enriches — so the enrichment always
+    /// wins, and a message Telegram delivers a second time cannot blank it.
     pub version: u32,
 }
 
 impl Event {
     fn of(event: &str) -> Self {
-        Self { event: event.to_string(), version: now(), ..Self::default() }
+        // Version 0, deliberately, not the ingest time: Telegram redelivers
+        // updates after a reconnect, and an ingest-time version would make the
+        // late copy of a message beat the archiver's enriched row and blank the
+        // S3 columns off it. As it stands a redelivery is a no-op — same key,
+        // same version — and only the archiver ever raises it.
+        Self { event: event.to_string(), ..Self::default() }
     }
 
     pub fn send() -> Self {

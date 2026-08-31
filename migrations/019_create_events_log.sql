@@ -23,6 +23,12 @@
 -- under rewrites, while each edit and each delete has a time of its own and stays a
 -- separate row.
 --
+-- Which makes a redelivered message — a reconnect replaying its backlog — land on
+-- exactly the key it landed on the first time, and collapse away. That only works
+-- because an ordinary row's `version` is 0 rather than the moment it was written:
+-- an ingest-time version would let the late copy outrank the archived row and
+-- blank the S3 columns off it.
+--
 -- The migration creates the table and the aggregates over it. The old tables keep
 -- their names and their history and are not touched, not renamed and not
 -- backfilled; they simply stop being written, and their materialized views are
@@ -126,7 +132,11 @@ CREATE TABLE IF NOT EXISTS events_log
     sha256           String,
     s3_bucket        LowCardinality(String),
     s3_key           String,
-    -- Ingest time: the newest write of a key wins.
+    -- The version the ReplacingMergeTree collapses on: 0 for a message as it was
+    -- logged, the archiver's ingest time on the row it enriches. So the enrichment
+    -- always wins, and a message Telegram delivers a second time — a reconnect
+    -- replaying its backlog — is a no-op rather than a row that blanks the S3
+    -- columns off the one that was already archived.
     version          DateTime
 )
 ENGINE = ReplacingMergeTree(version)
