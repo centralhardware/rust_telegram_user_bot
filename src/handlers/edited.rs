@@ -29,7 +29,7 @@ pub async fn save_edited(
         return Ok(());
     }
 
-    let diff = unified_diff(&original, &message_content);
+    let diff = crate::utils::diff::html_diff(&original, &message_content);
 
     let sender = crate::utils::peer_info::sender_info(client, message).await;
     let user_id = sender.user_id;
@@ -63,7 +63,9 @@ pub async fn save_edited(
 
     // An edit is the message as it now stands, so the row carries what a send row
     // carries: the object itself, whatever media it holds, and the rest of what
-    // Telegram says about it. Only `diff` is the edit's own.
+    // Telegram says about it. Only `diff` is the edit's own -- the same inline
+    // rendering the console line above shows, in HTML, so a board only has to
+    // print it.
     let meta = crate::utils::media_description::media_meta(message).unwrap_or_default();
     let meta_msg = crate::utils::message_meta::of(&std::ops::Deref::deref(message).raw);
 
@@ -131,11 +133,3 @@ pub async fn save_edited(
 
     Ok(())
 }
-
-fn unified_diff(original: &str, modified: &str) -> String {
-    similar::TextDiff::from_lines(original, modified)
-        .unified_diff()
-        .missing_newline_hint(false)
-        .to_string()
-}
-
