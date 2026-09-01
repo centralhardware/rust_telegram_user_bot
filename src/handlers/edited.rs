@@ -23,7 +23,7 @@ pub async fn save_edited(
         return Ok(());
     }
 
-    let original = crate::db::find_message(chat_id, msg_id).await.message;
+    let original = crate::db::find_message(chat_id, msg_id).await;
 
     if original.is_empty() || original == message_content {
         return Ok(());

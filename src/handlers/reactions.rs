@@ -31,13 +31,7 @@ pub async fn save_reactions(update: &tl::types::UpdateMessageReactions) {
         })
         .collect();
 
-    let chat_title = crate::utils::peer_names::load(peer.bot_api_dialog_id_unchecked())
-        .await
-        .map(|names| names.title)
-        .unwrap_or_default();
-
     if !is_log_ignored(chat_id) {
-        let chat_short: String = chat_title.chars().take(25).collect();
         let rendered = counts
             .iter()
             .map(|(name, count)| format!("{name}×{count}"))
@@ -45,7 +39,7 @@ pub async fn save_reactions(update: &tl::types::UpdateMessageReactions) {
             .join(" ");
         info!(
             "\x1b[95m{:<8} {:>8} {:<25} \x1b[90m│\x1b[95m {}\x1b[0m",
-            "reaction", update.msg_id, chat_short, rendered,
+            "reaction", update.msg_id, chat_id, rendered,
         );
     }
 
@@ -53,9 +47,7 @@ pub async fn save_reactions(update: &tl::types::UpdateMessageReactions) {
         .push(Event {
             date_time: chrono::Utc::now().timestamp() as u32,
             chat_id,
-            chat_title,
             message_id: update.msg_id as i64,
-            topic_id: update.top_msg_id.unwrap_or(0),
             reactions: counts,
             ..Event::reaction()
         })
