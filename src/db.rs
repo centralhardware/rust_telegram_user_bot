@@ -339,7 +339,8 @@ pub struct Event {
     pub silent: bool,
     pub noforwards: bool,
     pub ttl_period: u32,
-    /// Edits: the unified diff against the text this edit replaced. That text is
+    /// Edits: the inline word diff against the text this edit replaced, rendered
+    /// as HTML — the same marking the console line shows in ANSI. That text is
     /// the `message` of the send — or of the previous edit — of the same message,
     /// so it is not stored again here.
     pub diff: String,
