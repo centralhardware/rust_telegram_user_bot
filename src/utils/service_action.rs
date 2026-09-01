@@ -34,7 +34,10 @@ pub fn format(action: &MessageAction, sender_id: Option<i64>, sender_name: Optio
             format!("[migrated to supergroup {}]", a.channel_id)
         }
         MessageAction::ChannelMigrateFrom(a) => {
-            format!("[supergroup created from chat \"{}\", chat {}]", a.title, a.chat_id)
+            format!(
+                "[supergroup created from chat \"{}\", chat {}]",
+                a.title, a.chat_id
+            )
         }
         MessageAction::PinMessage => "[message pinned]".into(),
         MessageAction::HistoryClear => "[history cleared]".into(),
@@ -81,12 +84,10 @@ pub fn format(action: &MessageAction, sender_id: Option<i64>, sender_name: Optio
             }
         }
         MessageAction::GroupCallScheduled(a) => {
-            {
-                let dt = chrono::DateTime::from_timestamp(a.schedule_date as i64, 0)
-                    .map(|d| d.format("%Y-%m-%d %H:%M UTC").to_string())
-                    .unwrap_or_else(|| a.schedule_date.to_string());
-                format!("[group call scheduled at {dt}]")
-            }
+            let dt = chrono::DateTime::from_timestamp(a.schedule_date as i64, 0)
+                .map(|d| d.format("%Y-%m-%d %H:%M UTC").to_string())
+                .unwrap_or_else(|| a.schedule_date.to_string());
+            format!("[group call scheduled at {dt}]")
         }
         MessageAction::SetChatTheme(a) => format!("[chat theme changed: {:?}]", a.theme),
         MessageAction::WebViewDataSentMe(a) => {
@@ -96,7 +97,10 @@ pub fn format(action: &MessageAction, sender_id: Option<i64>, sender_name: Optio
             format!("[webview data sent: {}]", a.text)
         }
         MessageAction::GiftPremium(a) => {
-            format!("[gift Premium, {} days, {} {}]", a.days, a.amount, a.currency)
+            format!(
+                "[gift Premium, {} days, {} {}]",
+                a.days, a.amount, a.currency
+            )
         }
         MessageAction::TopicCreate(a) => format!("[topic created: \"{}\"]", a.title),
         MessageAction::TopicEdit(a) => {
@@ -152,20 +156,33 @@ pub fn format(action: &MessageAction, sender_id: Option<i64>, sender_name: Optio
             format!("[gift {} stars, {} {}]", a.stars, a.amount, a.currency)
         }
         MessageAction::PrizeStars(a) => {
-            format!("[prize {} stars, giveaway msg {}]", a.stars, a.giveaway_msg_id)
+            format!(
+                "[prize {} stars, giveaway msg {}]",
+                a.stars, a.giveaway_msg_id
+            )
         }
         MessageAction::StarGift(a) => {
             let mut s = "[star gift".to_string();
-            if a.converted { s.push_str(", converted"); }
-            if a.upgraded { s.push_str(", upgraded"); }
-            if a.refunded { s.push_str(", refunded"); }
+            if a.converted {
+                s.push_str(", converted");
+            }
+            if a.upgraded {
+                s.push_str(", upgraded");
+            }
+            if a.refunded {
+                s.push_str(", refunded");
+            }
             s.push(']');
             s
         }
         MessageAction::StarGiftUnique(a) => {
             let mut s = "[unique star gift".to_string();
-            if a.upgrade { s.push_str(", upgrade"); }
-            if a.transferred { s.push_str(", transferred"); }
+            if a.upgrade {
+                s.push_str(", upgrade");
+            }
+            if a.transferred {
+                s.push_str(", transferred");
+            }
             if let Some(stars) = a.transfer_stars {
                 s.push_str(&format!(", transfer cost: {stars}"));
             }
@@ -173,13 +190,20 @@ pub fn format(action: &MessageAction, sender_id: Option<i64>, sender_name: Optio
             s
         }
         MessageAction::PaidMessagesRefunded(a) => {
-            format!("[paid messages refunded: {} msgs, {} stars]", a.count, a.stars)
+            format!(
+                "[paid messages refunded: {} msgs, {} stars]",
+                a.count, a.stars
+            )
         }
         MessageAction::PaidMessagesPrice(a) => {
             format!("[paid message price: {} stars]", a.stars)
         }
         MessageAction::ConferenceCall(a) => {
-            let kind = if a.video { "video conference" } else { "conference call" };
+            let kind = if a.video {
+                "video conference"
+            } else {
+                "conference call"
+            };
             let status = if a.missed {
                 ", missed"
             } else if a.active {
@@ -214,17 +238,30 @@ pub fn format(action: &MessageAction, sender_id: Option<i64>, sender_name: Optio
         }
         MessageAction::SuggestedPostSuccess(_) => "[suggested post published]".into(),
         MessageAction::SuggestedPostRefund(a) => {
-            let who = if a.payer_initiated { " (payer initiated)" } else { "" };
+            let who = if a.payer_initiated {
+                " (payer initiated)"
+            } else {
+                ""
+            };
             format!("[suggested post refund{who}]")
         }
         MessageAction::GiftTon(a) => {
-            format!("[gift TON: {} {}, {} {}]", a.crypto_amount, a.crypto_currency, a.amount, a.currency)
+            format!(
+                "[gift TON: {} {}, {} {}]",
+                a.crypto_amount, a.crypto_currency, a.amount, a.currency
+            )
         }
         MessageAction::SuggestBirthday(a) => {
             format!("[birthday suggested: {:?}]", a.birthday)
         }
         MessageAction::StarGiftPurchaseOffer(a) => {
-            let status = if a.accepted { ", accepted" } else if a.declined { ", declined" } else { "" };
+            let status = if a.accepted {
+                ", accepted"
+            } else if a.declined {
+                ", declined"
+            } else {
+                ""
+            };
             format!("[star gift purchase offer{status}]")
         }
         MessageAction::StarGiftPurchaseOfferDeclined(a) => {
@@ -271,7 +308,10 @@ pub fn format(action: &MessageAction, sender_id: Option<i64>, sender_name: Optio
 }
 
 fn format_ids(ids: &[i64]) -> String {
-    ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ")
+    ids.iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The action's own name, snake_cased, for the `action` column: `chat_add_user`,

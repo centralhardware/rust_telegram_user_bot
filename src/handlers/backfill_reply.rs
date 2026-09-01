@@ -1,11 +1,11 @@
-use grammers_client::update::Message;
 use grammers_client::Client;
+use grammers_client::update::Message;
 use grammers_tl_types as tl;
 use log::{debug, info, warn};
 
+use super::extract::extract_community_tag;
 use crate::db::Event;
 use crate::utils::log_ignore::is_log_ignored;
-use super::extract::extract_community_tag;
 use crate::utils::peer_info::{chat_info, sender_info};
 
 /// If the message is a reply and the replied-to message is not yet in ClickHouse,
@@ -51,7 +51,10 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
     };
 
     if matches!(reply.raw, tl::enums::Message::Empty(_)) {
-        info!("reply_to {} is an empty message, skipping backfill", reply_id);
+        info!(
+            "reply_to {} is an empty message, skipping backfill",
+            reply_id
+        );
         return;
     }
 

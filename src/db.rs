@@ -372,7 +372,10 @@ impl Event {
         // late copy of a message beat the archiver's enriched row and blank the
         // S3 columns off it. As it stands a redelivery is a no-op — same key,
         // same version — and only the archiver ever raises it.
-        Self { event: event.to_string(), ..Self::default() }
+        Self {
+            event: event.to_string(),
+            ..Self::default()
+        }
     }
 
     pub fn send() -> Self {

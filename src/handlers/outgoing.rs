@@ -1,7 +1,7 @@
 use clickhouse::Row;
+use grammers_client::Client;
 use grammers_client::peer::Peer;
 use grammers_client::update::Message;
-use grammers_client::Client;
 use log::info;
 use serde::Deserialize;
 
@@ -13,7 +13,11 @@ struct LastChatRow {
     chat_usernames: Vec<String>,
 }
 
-pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Result<Event, Box<dyn std::error::Error>> {
+pub async fn save_outgoing(
+    message: &Message,
+    client: &Client,
+    me: u64,
+) -> Result<Event, Box<dyn std::error::Error>> {
     let chat = crate::utils::peer_info::chat_info(client, message).await;
     let community_id = chat.community_id;
     let (title, usernames) = (chat.chat_title, chat.chat_usernames);
@@ -53,7 +57,9 @@ pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Resul
         _ => p.name().unwrap_or_default().to_string(),
     });
     let action_desc = if text.is_empty() {
-        message.action().map(|a| crate::utils::service_action::format(a, sender_id, sender_name.as_deref()))
+        message
+            .action()
+            .map(|a| crate::utils::service_action::format(a, sender_id, sender_name.as_deref()))
     } else {
         None
     };
@@ -80,7 +86,10 @@ pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Resul
         let title_short: String = if topic_name.is_empty() {
             title.chars().take(25).collect()
         } else {
-            format!("{} / {}", title, topic_name).chars().take(25).collect()
+            format!("{} / {}", title, topic_name)
+                .chars()
+                .take(25)
+                .collect()
         };
         let reply_line = crate::utils::reply_preview::format_reply_line(message).await;
         if !reply_line.is_empty() {
@@ -88,7 +97,11 @@ pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Resul
         }
         info!(
             "\x1b[95m{:<8} {:>8} {:<25} \x1b[90m│\x1b[95m {:<10} \x1b[90m│\x1b[95m {}\x1b[0m",
-            "outgoing", message.id(), title_short, "", &preview
+            "outgoing",
+            message.id(),
+            title_short,
+            "",
+            &preview
         );
     }
 

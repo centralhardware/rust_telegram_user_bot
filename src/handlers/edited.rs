@@ -1,5 +1,5 @@
-use grammers_client::update::Message;
 use grammers_client::Client;
+use grammers_client::update::Message;
 use log::info;
 
 use crate::db::Event;
@@ -77,57 +77,59 @@ pub async fn save_edited(
             .as_secs() as u32,
     };
 
-    crate::db::EVENTS_BUF.push(Event {
-        date_time: now,
-        chat_id,
-        chat_title: chat_name,
-        message_id: msg_id,
-        message: message_content,
-        diff,
-        raw: serde_json::to_string(&message.raw).unwrap_or_default(),
-        username: sender.username,
-        first_name: sender.first_name,
-        second_name: sender.second_name,
-        community_tag: super::extract::extract_community_tag_from_update(&message.raw),
-        reply_to: reply.reply_to,
-        reply_to_user_id,
-        reply_to_chat_id: reply.reply_to_chat_id,
-        quote_text: reply.quote_text,
-        chat_usernames: chat.chat_usernames,
-        community_id: chat.community_id,
-        media_type: meta.media_type,
-        file_name: meta.file_name,
-        mime_type: meta.mime_type,
-        size: meta.size,
-        duration: meta.duration,
-        width: meta.width,
-        height: meta.height,
-        lat: meta.lat,
-        lon: meta.lon,
-        poll_question: meta.poll_question,
-        poll_options: meta.poll_options,
-        fwd_from_user_id: meta_msg.fwd_from_user_id,
-        fwd_from_chat_id: meta_msg.fwd_from_chat_id,
-        fwd_from_msg_id: meta_msg.fwd_from_msg_id,
-        fwd_from_name: meta_msg.fwd_from_name,
-        fwd_date: meta_msg.fwd_date,
-        action: meta_msg.action,
-        grouped_id: meta_msg.grouped_id,
-        via_bot_id: meta_msg.via_bot_id,
-        guest_from_id: meta_msg.guest_from_id,
-        post_author: meta_msg.post_author,
-        pinned: meta_msg.pinned,
-        silent: meta_msg.silent,
-        noforwards: meta_msg.noforwards,
-        ttl_period: meta_msg.ttl_period,
-        // An edit of the account's own message, so `out` means the same thing on
-        // an edit row as it does on the send it follows.
-        out: crate::utils::self_id::is_outgoing(message),
-        topic_id,
-        topic_name,
-        user_id,
-        ..Event::edit()
-    }).await;
+    crate::db::EVENTS_BUF
+        .push(Event {
+            date_time: now,
+            chat_id,
+            chat_title: chat_name,
+            message_id: msg_id,
+            message: message_content,
+            diff,
+            raw: serde_json::to_string(&message.raw).unwrap_or_default(),
+            username: sender.username,
+            first_name: sender.first_name,
+            second_name: sender.second_name,
+            community_tag: super::extract::extract_community_tag_from_update(&message.raw),
+            reply_to: reply.reply_to,
+            reply_to_user_id,
+            reply_to_chat_id: reply.reply_to_chat_id,
+            quote_text: reply.quote_text,
+            chat_usernames: chat.chat_usernames,
+            community_id: chat.community_id,
+            media_type: meta.media_type,
+            file_name: meta.file_name,
+            mime_type: meta.mime_type,
+            size: meta.size,
+            duration: meta.duration,
+            width: meta.width,
+            height: meta.height,
+            lat: meta.lat,
+            lon: meta.lon,
+            poll_question: meta.poll_question,
+            poll_options: meta.poll_options,
+            fwd_from_user_id: meta_msg.fwd_from_user_id,
+            fwd_from_chat_id: meta_msg.fwd_from_chat_id,
+            fwd_from_msg_id: meta_msg.fwd_from_msg_id,
+            fwd_from_name: meta_msg.fwd_from_name,
+            fwd_date: meta_msg.fwd_date,
+            action: meta_msg.action,
+            grouped_id: meta_msg.grouped_id,
+            via_bot_id: meta_msg.via_bot_id,
+            guest_from_id: meta_msg.guest_from_id,
+            post_author: meta_msg.post_author,
+            pinned: meta_msg.pinned,
+            silent: meta_msg.silent,
+            noforwards: meta_msg.noforwards,
+            ttl_period: meta_msg.ttl_period,
+            // An edit of the account's own message, so `out` means the same thing on
+            // an edit row as it does on the send it follows.
+            out: crate::utils::self_id::is_outgoing(message),
+            topic_id,
+            topic_name,
+            user_id,
+            ..Event::edit()
+        })
+        .await;
 
     Ok(())
 }
@@ -138,4 +140,3 @@ fn unified_diff(original: &str, modified: &str) -> String {
         .missing_newline_hint(false)
         .to_string()
 }
-

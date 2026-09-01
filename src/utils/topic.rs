@@ -1,5 +1,5 @@
-use grammers_client::message::Message;
 use grammers_client::Client;
+use grammers_client::message::Message;
 use grammers_tl_types as tl;
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -37,7 +37,10 @@ pub async fn topic_name(client: &Client, message: &Message) -> String {
     // Only cache a real title: a failed fetch (offline, no access) must not
     // pin an empty name onto the topic for the rest of the process's life.
     if !name.is_empty() {
-        TOPIC_NAMES.lock().await.insert((chat_id, topic_id), name.clone());
+        TOPIC_NAMES
+            .lock()
+            .await
+            .insert((chat_id, topic_id), name.clone());
     }
     name
 }

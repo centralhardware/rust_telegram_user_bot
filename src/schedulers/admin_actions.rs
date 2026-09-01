@@ -381,7 +381,10 @@ fn banned_rights(p: &tl::enums::ChannelParticipant) -> Option<&tl::types::ChatBa
     }
 }
 
-fn is_restricted(rights: Option<&tl::types::ChatBannedRights>, has: fn(&tl::types::ChatBannedRights) -> bool) -> bool {
+fn is_restricted(
+    rights: Option<&tl::types::ChatBannedRights>,
+    has: fn(&tl::types::ChatBannedRights) -> bool,
+) -> bool {
     rights.is_some_and(has)
 }
 
@@ -453,7 +456,11 @@ fn describe_ban_change(
     }
 
     // One right per line, names padded, so a long list can be skimmed down the arrows.
-    let width = changed.iter().map(|(right, _)| right.len()).max().unwrap_or(0);
+    let width = changed
+        .iter()
+        .map(|(right, _)| right.len())
+        .max()
+        .unwrap_or(0);
     let lines: Vec<String> = changed
         .iter()
         .map(|(right, restricted)| {
@@ -490,8 +497,14 @@ fn format_log_output(
         ChangeAbout(a) => format!("about: {} -> {}", a.prev_value, a.new_value),
         ChangeUsername(a) => format!("username: {} -> {}", a.prev_value, a.new_value),
         ChangePhoto(_) => "photo changed".to_string(),
-        ToggleInvites(a) => format!("invites: {}", if a.new_value { "enabled" } else { "disabled" }),
-        ToggleSignatures(a) => format!("signatures: {}", if a.new_value { "enabled" } else { "disabled" }),
+        ToggleInvites(a) => format!(
+            "invites: {}",
+            if a.new_value { "enabled" } else { "disabled" }
+        ),
+        ToggleSignatures(a) => format!(
+            "signatures: {}",
+            if a.new_value { "enabled" } else { "disabled" }
+        ),
         UpdatePinned(_) => "message pinned/unpinned".to_string(),
         EditMessage(a) => {
             let prev = message_text(&a.prev_message);
@@ -518,9 +531,15 @@ fn format_log_output(
             &a.new_participant,
             &participant_name(&a.new_participant, users),
         ),
-        ParticipantToggleAdmin(a) => format!("{} admin toggled", participant_name(&a.new_participant, users)),
+        ParticipantToggleAdmin(a) => format!(
+            "{} admin toggled",
+            participant_name(&a.new_participant, users)
+        ),
         ChangeStickerSet(_) => "sticker set changed".to_string(),
-        TogglePreHistoryHidden(a) => format!("pre-history: {}", if a.new_value { "hidden" } else { "visible" }),
+        TogglePreHistoryHidden(a) => format!(
+            "pre-history: {}",
+            if a.new_value { "hidden" } else { "visible" }
+        ),
         DefaultBannedRights(_) => "default banned rights changed".to_string(),
         StopPoll(_) => "poll stopped".to_string(),
         ChangeLinkedChat(a) => format!("linked chat: {} -> {}", a.prev_value, a.new_value),
@@ -538,27 +557,50 @@ fn format_log_output(
         ParticipantVolume(_) => format!("{} volume changed in call", user_title),
         ChangeHistoryTtl(a) => format!("history TTL: {}s -> {}s", a.prev_value, a.new_value),
         ParticipantJoinByRequest(_) => format!("{} joined by request", user_title),
-        ToggleNoForwards(a) => format!("no forwards: {}", if a.new_value { "enabled" } else { "disabled" }),
+        ToggleNoForwards(a) => format!(
+            "no forwards: {}",
+            if a.new_value { "enabled" } else { "disabled" }
+        ),
         SendMessage(a) => message_text(&a.message),
         ChangeAvailableReactions(_) => "available reactions changed".to_string(),
         ChangeUsernames(a) => format!("usernames: {:?} -> {:?}", a.prev_value, a.new_value),
-        ToggleForum(a) => format!("forum: {}", if a.new_value { "enabled" } else { "disabled" }),
+        ToggleForum(a) => format!(
+            "forum: {}",
+            if a.new_value { "enabled" } else { "disabled" }
+        ),
         CreateTopic(_) => "topic created".to_string(),
         EditTopic(_) => "topic edited".to_string(),
         DeleteTopic(_) => "topic deleted".to_string(),
         PinTopic(_) => "topic pinned/unpinned".to_string(),
-        ToggleAntiSpam(a) => format!("anti-spam: {}", if a.new_value { "enabled" } else { "disabled" }),
+        ToggleAntiSpam(a) => format!(
+            "anti-spam: {}",
+            if a.new_value { "enabled" } else { "disabled" }
+        ),
         ChangePeerColor(_) => "peer color changed".to_string(),
         ChangeProfilePeerColor(_) => "profile peer color changed".to_string(),
         ChangeWallpaper(_) => "wallpaper changed".to_string(),
         ChangeEmojiStatus(_) => "emoji status changed".to_string(),
         ChangeEmojiStickerSet(_) => "emoji sticker set changed".to_string(),
-        ToggleSignatureProfiles(a) => format!("signature profiles: {}", if a.new_value { "enabled" } else { "disabled" }),
+        ToggleSignatureProfiles(a) => format!(
+            "signature profiles: {}",
+            if a.new_value { "enabled" } else { "disabled" }
+        ),
         ParticipantSubExtend(_) => format!("{} subscription extended", user_title),
-        ToggleAutotranslation(a) => format!("autotranslation: {}", if a.new_value { "enabled" } else { "disabled" }),
+        ToggleAutotranslation(a) => format!(
+            "autotranslation: {}",
+            if a.new_value { "enabled" } else { "disabled" }
+        ),
         ParticipantEditRank(a) => {
-            let prev = if a.prev_rank.is_empty() { "none" } else { &a.prev_rank };
-            let new = if a.new_rank.is_empty() { "none" } else { &a.new_rank };
+            let prev = if a.prev_rank.is_empty() {
+                "none"
+            } else {
+                &a.prev_rank
+            };
+            let new = if a.new_rank.is_empty() {
+                "none"
+            } else {
+                &a.new_rank
+            };
             format!("{}: rank {} -> {}", user_title, prev, new)
         }
     }
@@ -568,12 +610,11 @@ fn action_message_json(action: &tl::enums::ChannelAdminLogEventAction) -> String
     serde_json::to_string(action).unwrap_or_default()
 }
 
-fn extract_user_info(
-    users: &[tl::enums::User],
-    user_id: i64,
-) -> (String, Vec<String>) {
+fn extract_user_info(users: &[tl::enums::User], user_id: i64) -> (String, Vec<String>) {
     for u in users {
-        let tl::enums::User::User(user) = u else { continue };
+        let tl::enums::User::User(user) = u else {
+            continue;
+        };
         if user.id == user_id {
             let title = match (&user.first_name, &user.last_name) {
                 (Some(first), Some(last)) if !last.is_empty() => format!("{} {}", first, last),
@@ -597,7 +638,6 @@ fn extract_user_info(
     }
     (String::new(), Vec::new())
 }
-
 
 async fn get_last_event_id(chat_id: u64) -> Result<u64, Box<dyn std::error::Error>> {
     let max_id: u64 = crate::db::clickhouse()
@@ -687,10 +727,14 @@ async fn log_admin_actions(
 
         insert.end().await?;
 
-        let (batch_min, batch_max) = result.events.iter().fold((i64::MAX, 0u64), |(min, max), e| {
-            let tl::enums::ChannelAdminLogEvent::Event(ev) = e;
-            (min.min(ev.id), max.max(ev.id as u64))
-        });
+        let (batch_min, batch_max) =
+            result
+                .events
+                .iter()
+                .fold((i64::MAX, 0u64), |(min, max), e| {
+                    let tl::enums::ChannelAdminLogEvent::Event(ev) = e;
+                    (min.min(ev.id), max.max(ev.id as u64))
+                });
 
         total_inserted += result.events.len();
         if batch_max > new_last_id {

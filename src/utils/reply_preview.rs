@@ -37,16 +37,24 @@ pub async fn format_reply_line(message: &Message) -> String {
             } else {
                 text
             };
-            let formatted = highlighted.lines().enumerate().map(|(i, line)| {
-                if i == 0 {
-                    format!("{id_col}\x1b[90m│ {:<10} │ > {line}", sender_short)
-                } else {
-                    format!("{pad_text}\x1b[90m    {line}")
-                }
-            }).collect::<Vec<_>>().join("\n");
+            let formatted = highlighted
+                .lines()
+                .enumerate()
+                .map(|(i, line)| {
+                    if i == 0 {
+                        format!("{id_col}\x1b[90m│ {:<10} │ > {line}", sender_short)
+                    } else {
+                        format!("{pad_text}\x1b[90m    {line}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
             format!("{formatted}\x1b[0m")
         }
-        _ => format!("{id_col}\x1b[90m│ {:<10} │ > [{reply_id}]\x1b[0m", sender_short),
+        _ => format!(
+            "{id_col}\x1b[90m│ {:<10} │ > [{reply_id}]\x1b[0m",
+            sender_short
+        ),
     }
 }
 
@@ -64,18 +72,23 @@ fn highlight_quote(text: &str, quote: &str) -> String {
 
 async fn lookup_message_text(chat_id: i64, message_id: i32) -> (Option<String>, Option<String>) {
     // Check the unflushed buffer first
-    let from_buf = crate::db::EVENTS_BUF.find_last(|m| {
-        if m.event == crate::db::SEND && m.chat_id == chat_id && m.message_id == message_id as i64 {
-            let sender = if m.second_name.is_empty() {
-                m.first_name.clone()
+    let from_buf = crate::db::EVENTS_BUF
+        .find_last(|m| {
+            if m.event == crate::db::SEND
+                && m.chat_id == chat_id
+                && m.message_id == message_id as i64
+            {
+                let sender = if m.second_name.is_empty() {
+                    m.first_name.clone()
+                } else {
+                    format!("{} {}", m.first_name, m.second_name)
+                };
+                Some((m.message.clone(), sender))
             } else {
-                format!("{} {}", m.first_name, m.second_name)
-            };
-            Some((m.message.clone(), sender))
-        } else {
-            None
-        }
-    }).await;
+                None
+            }
+        })
+        .await;
     if let Some((text, sender)) = from_buf {
         return (Some(text), Some(sender));
     }

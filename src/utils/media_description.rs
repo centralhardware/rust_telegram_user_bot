@@ -62,31 +62,34 @@ pub fn describe_media(media: &tl::enums::MessageMedia) -> String {
                 format!("[contact, {}, {}]", name, c.phone_number)
             }
         }
-        tl::enums::MessageMedia::Geo(g) => {
-            match &g.geo {
-                tl::enums::GeoPoint::Point(p) => format!("[location, {:.5}, {:.5}]", p.lat, p.long),
-                tl::enums::GeoPoint::Empty => "[location]".into(),
+        tl::enums::MessageMedia::Geo(g) => match &g.geo {
+            tl::enums::GeoPoint::Point(p) => format!("[location, {:.5}, {:.5}]", p.lat, p.long),
+            tl::enums::GeoPoint::Empty => "[location]".into(),
+        },
+        tl::enums::MessageMedia::GeoLive(g) => match &g.geo {
+            tl::enums::GeoPoint::Point(p) => {
+                format!("[live location, {:.5}, {:.5}]", p.lat, p.long)
             }
-        }
-        tl::enums::MessageMedia::GeoLive(g) => {
-            match &g.geo {
-                tl::enums::GeoPoint::Point(p) => format!("[live location, {:.5}, {:.5}]", p.lat, p.long),
-                tl::enums::GeoPoint::Empty => "[live location]".into(),
-            }
-        }
+            tl::enums::GeoPoint::Empty => "[live location]".into(),
+        },
         tl::enums::MessageMedia::Venue(v) => format!("[venue, {}]", v.title),
         tl::enums::MessageMedia::Poll(p) => {
             let tl::enums::Poll::Poll(poll) = &p.poll;
             let tl::enums::TextWithEntities::Entities(q) = &poll.question;
             let kind = if poll.quiz { "quiz" } else { "poll" };
-            let answers: Vec<String> = poll.answers.iter().map(|a| {
-                let tl::enums::TextWithEntities::Entities(t) = a.text();
-                t.text
-            }).collect();
+            let answers: Vec<String> = poll
+                .answers
+                .iter()
+                .map(|a| {
+                    let tl::enums::TextWithEntities::Entities(t) = a.text();
+                    t.text
+                })
+                .collect();
             if answers.is_empty() {
                 format!("[{}: {}]", kind, q.text)
             } else {
-                let opts = answers.iter()
+                let opts = answers
+                    .iter()
                     .map(|a| format!("* {}", a))
                     .collect::<Vec<_>>()
                     .join("\n");
@@ -166,11 +169,17 @@ fn describe_document(media: &tl::types::MessageMediaDocument) -> String {
     }
 
     if is_voice {
-        return format!("[voice, {}]", format_duration_secs(audio_duration.unwrap_or(0)));
+        return format!(
+            "[voice, {}]",
+            format_duration_secs(audio_duration.unwrap_or(0))
+        );
     }
 
     if is_round {
-        return format!("[video message, {}]", format_duration_f64(video_duration.unwrap_or(0.0)));
+        return format!(
+            "[video message, {}]",
+            format_duration_f64(video_duration.unwrap_or(0.0))
+        );
     }
 
     if let Some(dur) = audio_duration {
@@ -208,10 +217,18 @@ pub fn format_human_duration(seconds: i32) -> String {
     let mins = (seconds % 3600) / 60;
     let secs = seconds % 60;
     let mut parts = Vec::new();
-    if days > 0 { parts.push(format!("{days}d")); }
-    if hours > 0 { parts.push(format!("{hours}h")); }
-    if mins > 0 { parts.push(format!("{mins}m")); }
-    if secs > 0 || parts.is_empty() { parts.push(format!("{secs}s")); }
+    if days > 0 {
+        parts.push(format!("{days}d"));
+    }
+    if hours > 0 {
+        parts.push(format!("{hours}h"));
+    }
+    if mins > 0 {
+        parts.push(format!("{mins}m"));
+    }
+    if secs > 0 || parts.is_empty() {
+        parts.push(format!("{secs}s"));
+    }
     parts.join(" ")
 }
 
@@ -232,7 +249,8 @@ fn format_duration_f64(seconds: f64) -> String {
 }
 
 fn join_non_empty(sep: &str, parts: &[&str]) -> String {
-    parts.iter()
+    parts
+        .iter()
         .filter(|s| !s.is_empty())
         .copied()
         .collect::<Vec<_>>()
@@ -296,11 +314,15 @@ fn meta_of(media: &tl::enums::MessageMedia) -> MediaMeta {
             }
         }
         tl::enums::MessageMedia::Geo(g) => {
-            let tl::enums::GeoPoint::Point(p) = &g.geo else { return meta };
+            let tl::enums::GeoPoint::Point(p) = &g.geo else {
+                return meta;
+            };
             (meta.lat, meta.lon) = (p.lat, p.long);
         }
         tl::enums::MessageMedia::GeoLive(g) => {
-            let tl::enums::GeoPoint::Point(p) = &g.geo else { return meta };
+            let tl::enums::GeoPoint::Point(p) = &g.geo else {
+                return meta;
+            };
             (meta.lat, meta.lon) = (p.lat, p.long);
         }
         tl::enums::MessageMedia::Venue(v) => {

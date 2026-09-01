@@ -1,7 +1,7 @@
-mod health;
-mod user_sessions;
 mod admin_actions;
 mod flush_buffers;
+mod health;
+mod user_sessions;
 
 pub use flush_buffers::flush_all;
 

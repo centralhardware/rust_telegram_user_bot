@@ -1,13 +1,16 @@
-use grammers_client::update::Message;
 use grammers_client::Client;
+use grammers_client::update::Message;
 use log::info;
 
+use super::extract::extract_community_tag_from_update;
 use crate::db::Event;
 use crate::utils::log_ignore::is_log_ignored;
-use super::extract::extract_community_tag_from_update;
 use crate::utils::peer_info::{chat_info, sender_info};
 
-pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, Box<dyn std::error::Error>> {
+pub async fn save_incoming(
+    message: &Message,
+    client: &Client,
+) -> Result<Event, Box<dyn std::error::Error>> {
     let media_desc = crate::utils::media_description::describe(message);
 
     let sender = sender_info(client, message).await;
@@ -27,7 +30,9 @@ pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, 
         let text = crate::utils::format_entities::formatted_text(message);
         let sender_bare_id = sender.user_id as i64;
         let action_desc = if text.is_empty() {
-            message.action().map(|a| crate::utils::service_action::format(a, Some(sender_bare_id), Some(&sender_display)))
+            message.action().map(|a| {
+                crate::utils::service_action::format(a, Some(sender_bare_id), Some(&sender_display))
+            })
         } else {
             None
         };
@@ -52,7 +57,10 @@ pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, 
         let chat_name_short: String = if topic_name.is_empty() {
             chat.chat_title.chars().take(25).collect()
         } else {
-            format!("{} / {}", chat.chat_title, topic_name).chars().take(25).collect()
+            format!("{} / {}", chat.chat_title, topic_name)
+                .chars()
+                .take(25)
+                .collect()
         };
 
         let reply_line = crate::utils::reply_preview::format_reply_line(message).await;
@@ -61,7 +69,11 @@ pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, 
         }
         info!(
             "\x1b[92m{:<8} {:>8} {:<25} \x1b[90m│\x1b[92m {:<10} \x1b[90m│\x1b[92m {}\x1b[0m",
-            "incoming", message.id(), chat_name_short, sender_short, &preview
+            "incoming",
+            message.id(),
+            chat_name_short,
+            sender_short,
+            &preview
         );
     }
 
@@ -69,7 +81,11 @@ pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, 
     let sender_bare_id = sender.user_id as i64;
     let mut msg_content = if text.is_empty() {
         if let Some(action) = message.action() {
-            crate::utils::service_action::format(action, Some(sender_bare_id), Some(&sender_display))
+            crate::utils::service_action::format(
+                action,
+                Some(sender_bare_id),
+                Some(&sender_display),
+            )
         } else {
             media_desc.clone().unwrap_or_default()
         }

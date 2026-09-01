@@ -1,5 +1,5 @@
-use grammers_client::message::Message;
 use grammers_client::Client;
+use grammers_client::message::Message;
 
 use crate::handlers::extract::{ChatInfo, SenderInfo};
 use crate::utils::peer_names::{self, PeerNames};
