@@ -98,7 +98,7 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
             chat_usernames: chat.chat_usernames,
             // A backfilled message can be one this account sent: `Event::send()`
             // defaults to incoming, which would be wrong for half of them.
-            out: reply.outgoing(),
+            out: crate::utils::self_id::is_outgoing(&reply),
             reply_to: reply_reply.reply_to,
             reply_to_user_id,
             reply_to_chat_id: reply_reply.reply_to_chat_id,

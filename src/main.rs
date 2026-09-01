@@ -45,6 +45,7 @@ async fn main() -> Result<()> {
     log::info!("Listening for messages...");
 
     let client_id = client.get_me().await?.id().bare_id().unwrap() as u64;
+    utils::self_id::set(client_id);
     handlers::start_media(client.clone());
     schedulers::start(client.clone(), client_id);
 
@@ -57,7 +58,7 @@ async fn main() -> Result<()> {
                 match update {
                     Update::NewMessage(message) => {
                         handlers::backfill_reply(&client, &message).await;
-                        let saved = if message.outgoing() {
+                        let saved = if utils::self_id::is_outgoing(&message) {
                             handlers::save_outgoing(&message, &client, client_id).await
                         } else {
                             handlers::save_incoming(&message, &client).await

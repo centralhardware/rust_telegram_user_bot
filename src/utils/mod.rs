@@ -10,5 +10,6 @@ pub mod peer_names;
 pub mod reply_preview;
 pub mod reply_target;
 pub mod rich_message;
+pub mod self_id;
 pub mod service_action;
 pub mod topic;
