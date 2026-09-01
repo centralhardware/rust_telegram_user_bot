@@ -18,15 +18,30 @@ pub async fn save_deleted(
         .as_secs() as u32;
 
     for &msg_id in deletion.messages() {
+        let info = crate::db::find_message(channel_id, msg_id as i64).await;
+        let chat_title = if info.chat_title.is_empty() {
+            channel_id.to_string()
+        } else {
+            info.chat_title
+        };
+        let sender_name = info.first_name;
+        let message = info.message;
+        let sender_short: String = sender_name.chars().take(10).collect();
+
         if !is_log_ignored(channel_id) {
+            let title_short: String = chat_title.chars().take(25).collect();
             info!(
-                "\x1b[91m{:<8} {:>8} {}\x1b[0m",
-                "deleted", msg_id, channel_id,
+                "\x1b[91m{:<8} {:>8} {:<25} \x1b[90m│\x1b[91m {:<10} \x1b[90m│\x1b[91m {}\x1b[0m",
+                "deleted",
+                msg_id,
+                title_short,
+                sender_short,
+                &message,
             );
         }
 
         // Telegram names nothing but the chat and the id, and that is all the
-        // row keeps: the message it points at is already in the log.
+        // row keeps: what the message was is already on its send row.
         crate::db::EVENTS_BUF.push(Event {
             date_time: now,
             chat_id: channel_id,

@@ -1,5 +1,5 @@
 use clickhouse::{Client, Row};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
 
@@ -99,43 +99,106 @@ pub const EDIT: &str = "edit";
 pub const DELETE: &str = "delete";
 pub const REACTION: &str = "reaction";
 
-/// The text of a message as it stands now — the last edit if there was one, the
-/// sent text otherwise. Priority: the unflushed buffer → ClickHouse.
-pub async fn find_message(chat_id: i64, message_id: i64) -> String {
-    if let Some(msg) = EVENTS_BUF
+pub struct MessageInfo {
+    pub message: String,
+    pub chat_title: String,
+    pub first_name: String,
+}
+
+/// Who the send row of a message says posted it. Read back for a deletion,
+/// which Telegram reports as a bare id.
+#[derive(Row, Deserialize, Default)]
+struct SendRow {
+    user_id: u64,
+}
+
+/// Find message info by chat_id + message_id: the text as it stands now — the
+/// last edit if there was one, the sent text otherwise.
+/// Priority: the unflushed buffer → ClickHouse.
+pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
+    let sent = EVENTS_BUF
+        .find_last(|e| {
+            (e.event == SEND && e.chat_id == chat_id && e.message_id == message_id).then(|| {
+                (e.message.clone(), e.chat_title.clone(), e.first_name.clone())
+            })
+        })
+        .await;
+
+    let edited = EVENTS_BUF
         .find_last(|e| {
             (e.event == EDIT && e.chat_id == chat_id && e.message_id == message_id)
                 .then(|| e.message.clone())
         })
-        .await
-    {
-        return msg;
-    }
+        .await;
 
-    if let Some(msg) = EVENTS_BUF
-        .find_last(|e| {
-            (e.event == SEND && e.chat_id == chat_id && e.message_id == message_id)
-                .then(|| e.message.clone())
-        })
-        .await
-    {
-        return msg;
-    }
+    let message = if let Some(msg) = edited {
+        msg
+    } else if let Some((msg, _, _)) = sent.as_ref() {
+        msg.clone()
+    } else {
+        clickhouse()
+            .query(
+                "SELECT message FROM events_log \
+                 WHERE chat_id = ? AND message_id = ? AND event IN (?, ?) \
+                 ORDER BY event = ? DESC, date_time DESC LIMIT 1",
+            )
+            .bind(chat_id)
+            .bind(message_id)
+            .bind(SEND)
+            .bind(EDIT)
+            .bind(EDIT)
+            .fetch_one::<String>()
+            .await
+            .unwrap_or_default()
+    };
 
-    clickhouse()
-        .query(
-            "SELECT message FROM events_log \
-             WHERE chat_id = ? AND message_id = ? AND event IN (?, ?) \
-             ORDER BY event = ? DESC, date_time DESC LIMIT 1",
-        )
-        .bind(chat_id)
-        .bind(message_id)
-        .bind(SEND)
-        .bind(EDIT)
-        .bind(EDIT)
-        .fetch_one::<String>()
-        .await
-        .unwrap_or_default()
+    let (chat_title, first_name) = if let Some((_, title, name)) = sent {
+        (title, name)
+    } else {
+        let title = clickhouse()
+            .query(
+                "SELECT chat_title FROM events_log \
+                 WHERE chat_id = ? AND event = ? AND chat_title != '' \
+                 ORDER BY date_time DESC LIMIT 1",
+            )
+            .bind(chat_id)
+            .bind(SEND)
+            .fetch_one::<String>()
+            .await
+            .unwrap_or_default();
+
+        // The row says who sent it and where; the name itself comes from
+        // `peer_names`, which is kept current for every peer that passes through —
+        // so a sender renamed since the message was logged is named as they are now.
+        let send = clickhouse()
+            .query(
+                "SELECT user_id FROM events_log \
+                 WHERE chat_id = ? AND message_id = ? AND event = ? \
+                 ORDER BY date_time DESC LIMIT 1",
+            )
+            .bind(chat_id)
+            .bind(message_id)
+            .bind(SEND)
+            .fetch_one::<SendRow>()
+            .await
+            .unwrap_or_default();
+
+        let name = match send.user_id {
+            0 => String::new(),
+            id => crate::utils::peer_names::load(id as i64)
+                .await
+                .map(|n| n.first_name)
+                .unwrap_or_default(),
+        };
+
+        (title, name)
+    };
+
+    MessageInfo {
+        message,
+        chat_title,
+        first_name,
+    }
 }
 
 /// Who sent a message, for the `reply_to_user_id` of the message answering it.
