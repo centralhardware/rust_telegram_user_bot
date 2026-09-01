@@ -122,7 +122,7 @@ pub async fn save_edited(
         ttl_period: meta_msg.ttl_period,
         // An edit of the account's own message, so `out` means the same thing on
         // an edit row as it does on the send it follows.
-        out: message.outgoing(),
+        out: crate::utils::self_id::is_outgoing(message),
         topic_id,
         topic_name,
         user_id,
