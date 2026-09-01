@@ -1,11 +1,13 @@
+use console::Style as Ansi;
 use similar::{ChangeTag, TextDiff};
+use std::sync::LazyLock;
 
-/// How a changed run is marked up: what opens a removal, an insertion, and what
-/// closes either, plus whether the text between needs escaping for the target.
+/// How a changed run is marked up: what wraps a removal, what wraps an
+/// insertion, what wraps the diff as a whole, and whether the text between
+/// needs escaping for the target.
 pub struct Style {
-    del: &'static str,
-    ins: &'static str,
-    off: &'static str,
+    del: Mark,
+    ins: Mark,
     /// Wrapped around the whole diff -- nothing for a terminal, the block that
     /// keeps line breaks and spacing for HTML.
     open: &'static str,
@@ -13,28 +15,50 @@ pub struct Style {
     escape: bool,
 }
 
+/// The marking itself. Neither form is written by hand: the terminal one is a
+/// `console::Style`, which knows the escape codes and where the reset goes, and
+/// the HTML one is an element opened and closed around the run.
+enum Mark {
+    Ansi(Ansi),
+    Tag(&'static str, &'static str),
+}
+
 /// Red on a red tint, struck through, for what the edit removed; green on a
 /// green tint for what replaced it.
-pub const ANSI: Style = Style {
-    del: "\x1b[9;38;5;203;48;5;52m",
-    ins: "\x1b[38;5;114;48;5;22m",
-    off: "\x1b[0m",
+///
+/// Styling is forced on: the log goes through `log` to stderr and is read back
+/// with `docker logs`, so waiting for a terminal to be attached would leave it
+/// colourless where it is actually looked at.
+pub static ANSI: LazyLock<Style> = LazyLock::new(|| Style {
+    del: Mark::Ansi(
+        Ansi::new()
+            .color256(203)
+            .on_color256(52)
+            .strikethrough()
+            .force_styling(true),
+    ),
+    ins: Mark::Ansi(Ansi::new().color256(114).on_color256(22).force_styling(true)),
     open: "",
     close: "",
     escape: false,
-};
+});
 
 /// The same two colours as the terminal, in the form the Grafana table cell
 /// wants: inline styles, because the cell has no stylesheet of ours, and
 /// `white-space: pre-wrap` so the message's own line breaks survive.
-pub const HTML: Style = Style {
-    del: "<del style=\"color:#f85149;background:rgba(248,81,73,0.20);text-decoration:line-through\">",
-    ins: "<ins style=\"color:#3fb950;background:rgba(46,160,67,0.20);text-decoration:none\">",
-    off: "",
+pub static HTML: LazyLock<Style> = LazyLock::new(|| Style {
+    del: Mark::Tag(
+        "<del style=\"color:#f85149;background:rgba(248,81,73,0.20);text-decoration:line-through\">",
+        "</del>",
+    ),
+    ins: Mark::Tag(
+        "<ins style=\"color:#3fb950;background:rgba(46,160,67,0.20);text-decoration:none\">",
+        "</ins>",
+    ),
     open: "<div style=\"white-space:pre-wrap;font-family:monospace,monospace\">",
     close: "</div>",
     escape: true,
-};
+});
 
 /// An edit as an inline diff: the message printed **once**, with only the words
 /// that changed marked -- removed struck through in red, their replacement in
@@ -79,45 +103,38 @@ pub fn html_diff(original: &str, modified: &str) -> String {
 
 fn flush(out: &mut String, removed: &mut String, added: &mut String, style: &Style) {
     let both = !removed.trim().is_empty() && !added.trim().is_empty();
-    push_run(out, removed, style.del, style);
+    push_run(out, removed, &style.del, style);
     // The words come without the space that used to sit between them, so the
     // two runs would touch: "wensdeyWensdey".
     if both && !out.ends_with(char::is_whitespace) {
         out.push(' ');
     }
-    push_run(out, added, style.ins, style);
+    push_run(out, added, &style.ins, style);
 }
 
 /// Append one changed run, leaving the whitespace around it unmarked: a
 /// struck-through newline paints the rest of the terminal line.
-fn push_run(out: &mut String, run: &mut String, open: &str, style: &Style) {
+fn push_run(out: &mut String, run: &mut String, mark: &Mark, style: &Style) {
     if run.trim().is_empty() {
         push_text(out, run, style);
     } else {
         let head = run.len() - run.trim_start().len();
         let tail = run.trim_end().len();
-        let (lead, body, trail) = (
-            run[..head].to_string(),
-            run[head..tail].to_string(),
-            run[tail..].to_string(),
-        );
-        push_text(out, &lead, style);
-        out.push_str(open);
-        push_text(out, &body, style);
-        out.push_str(if style.escape { close_of(open) } else { style.off });
-        push_text(out, &trail, style);
+        let (lead, body, trail) = (&run[..head], &run[head..tail], &run[tail..]);
+        let mut marked = String::new();
+        match mark {
+            Mark::Ansi(ansi) => marked.push_str(&ansi.apply_to(body).to_string()),
+            Mark::Tag(open, close) => {
+                marked.push_str(open);
+                push_text(&mut marked, body, style);
+                marked.push_str(close);
+            }
+        }
+        push_text(out, lead, style);
+        out.push_str(&marked);
+        push_text(out, trail, style);
     }
     run.clear();
-}
-
-/// The closing tag for a run: `<del …>` and `<ins …>` are the only two markers
-/// that open one, so the tag name in the opener decides it.
-fn close_of(open: &str) -> &'static str {
-    if open.starts_with("<del") {
-        "</del>"
-    } else {
-        "</ins>"
-    }
 }
 
 /// Text of the message itself, escaped when the target is markup so a message
@@ -141,17 +158,32 @@ fn push_text(out: &mut String, text: &str, style: &Style) {
 mod tests {
     use super::*;
 
+    /// The terminal rendering with the escape codes spelled out, so a test
+    /// reads as the marking and not as the palette. `console` decides what the
+    /// codes are, so they are asked for rather than written down: styling an
+    /// empty marker hands back the prefix and the reset around it.
     fn plain(s: &str) -> String {
-        s.replace(ANSI.del, "[-").replace(ANSI.ins, "{+").replace(ANSI.off, "|")
+        let mut out = s.to_string();
+        for (mark, name) in [(&ANSI.del, "[-"), (&ANSI.ins, "{+")] {
+            let Mark::Ansi(ansi) = mark else { continue };
+            let sample = ansi.apply_to("\0").to_string();
+            let (prefix, reset) = sample.split_once('\0').unwrap();
+            out = out.replace(prefix, name).replace(reset, "|");
+        }
+        out
     }
 
     /// The HTML with its inline styles stripped back to bare tags, so a test
     /// reads as the markup and not as the palette.
     fn bare(s: &str) -> String {
-        s.replace(HTML.open, "")
-            .replace(HTML.close, "")
-            .replace(HTML.del, "<del>")
-            .replace(HTML.ins, "<ins>")
+        let mut out = s.replace(HTML.open, "").replace(HTML.close, "");
+        for (mark, name) in [(&HTML.del, "del"), (&HTML.ins, "ins")] {
+            let Mark::Tag(open, close) = mark else { continue };
+            out = out
+                .replace(open, &format!("<{name}>"))
+                .replace(close, &format!("</{name}>"));
+        }
+        out
     }
 
     #[test]
@@ -173,6 +205,17 @@ mod tests {
     #[test]
     fn a_pure_insertion_has_no_removed_run() {
         assert_eq!(plain(&inline_diff("a c", "a b c")), "a {+b| c");
+    }
+
+    /// The colours the console line has always had, and the styling forced on
+    /// so they survive a log with no terminal attached. `console` is free to
+    /// order the codes as it likes, hence the three separate checks.
+    #[test]
+    fn the_terminal_run_keeps_its_colours() {
+        let out = inline_diff("a c", "a d");
+        for code in ["\x1b[38;5;203m", "\x1b[48;5;52m", "\x1b[9m", "\x1b[38;5;114m", "\x1b[48;5;22m"] {
+            assert!(out.contains(code), "{code:?} missing from {out:?}");
+        }
     }
 
     #[test]
