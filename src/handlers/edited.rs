@@ -32,10 +32,6 @@ pub async fn save_edited(
     let diff = crate::utils::diff::html_diff(&original, &message_content);
 
     let sender = crate::utils::peer_info::sender_info(client, message).await;
-    let user_id = sender.user_id;
-
-    let reply = crate::utils::reply_target::reply_info(message);
-    let reply_to_user_id = crate::db::find_reply_sender(chat_id, &reply).await;
 
     let chat = crate::utils::peer_info::chat_info(client, message).await;
     let chat_name = chat.chat_title.clone();
@@ -59,16 +55,6 @@ pub async fn save_edited(
         );
     }
 
-    let (topic_id, topic_name) = crate::utils::topic::topic_of(client, message).await;
-
-    // An edit is the message as it now stands, so the row carries what a send row
-    // carries: the object itself, whatever media it holds, and the rest of what
-    // Telegram says about it. Only `diff` is the edit's own -- the same inline
-    // rendering the console line above shows, in HTML, so a board only has to
-    // print it.
-    let meta = crate::utils::media_description::media_meta(message).unwrap_or_default();
-    let meta_msg = crate::utils::message_meta::of(&std::ops::Deref::deref(message).raw);
-
     // Telegram's own edit time, not the moment this process got round to it: the
     // row is when the message changed, and a reconnect replaying a backlog of
     // edits must not stamp them all with the time it caught up.
@@ -79,24 +65,19 @@ pub async fn save_edited(
             .as_secs() as u32,
     };
 
+    // An edit row carries only what an edit can change: the message as it now
+    // stands, the diff against what stood before -- the same inline rendering the
+    // console line above shows, in HTML, so a board only has to print it -- and
+    // the media the text describes. Everything else is fixed when the message is
+    // sent and already on its send row.
+    let meta = crate::utils::media_description::media_meta(message).unwrap_or_default();
+
     crate::db::EVENTS_BUF.push(Event {
         date_time: now,
         chat_id,
-        chat_title: chat_name,
         message_id: msg_id,
         message: message_content,
         diff,
-        raw: serde_json::to_string(&message.raw).unwrap_or_default(),
-        username: sender.username,
-        first_name: sender.first_name,
-        second_name: sender.second_name,
-        community_tag: super::extract::extract_community_tag_from_update(&message.raw),
-        reply_to: reply.reply_to,
-        reply_to_user_id,
-        reply_to_chat_id: reply.reply_to_chat_id,
-        quote_text: reply.quote_text,
-        chat_usernames: chat.chat_usernames,
-        community_id: chat.community_id,
         media_type: meta.media_type,
         file_name: meta.file_name,
         mime_type: meta.mime_type,
@@ -108,26 +89,6 @@ pub async fn save_edited(
         lon: meta.lon,
         poll_question: meta.poll_question,
         poll_options: meta.poll_options,
-        fwd_from_user_id: meta_msg.fwd_from_user_id,
-        fwd_from_chat_id: meta_msg.fwd_from_chat_id,
-        fwd_from_msg_id: meta_msg.fwd_from_msg_id,
-        fwd_from_name: meta_msg.fwd_from_name,
-        fwd_date: meta_msg.fwd_date,
-        action: meta_msg.action,
-        grouped_id: meta_msg.grouped_id,
-        via_bot_id: meta_msg.via_bot_id,
-        guest_from_id: meta_msg.guest_from_id,
-        post_author: meta_msg.post_author,
-        pinned: meta_msg.pinned,
-        silent: meta_msg.silent,
-        noforwards: meta_msg.noforwards,
-        ttl_period: meta_msg.ttl_period,
-        // An edit of the account's own message, so `out` means the same thing on
-        // an edit row as it does on the send it follows.
-        out: crate::utils::self_id::is_outgoing(message),
-        topic_id,
-        topic_name,
-        user_id,
         ..Event::edit()
     }).await;
 

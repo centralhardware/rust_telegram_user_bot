@@ -102,19 +102,14 @@ pub const REACTION: &str = "reaction";
 pub struct MessageInfo {
     pub message: String,
     pub chat_title: String,
-    pub user_id: u64,
     pub first_name: String,
-    pub topic_id: i32,
-    pub topic_name: String,
 }
 
-/// What the send row of a message says about who posted it and where. Read back
-/// for a deletion, which Telegram reports as a bare id.
+/// Who the send row of a message says posted it. Read back for a deletion,
+/// which Telegram reports as a bare id.
 #[derive(Row, Deserialize, Default)]
 struct SendRow {
     user_id: u64,
-    topic_id: i32,
-    topic_name: String,
 }
 
 /// Find message info by chat_id + message_id: the text as it stands now — the
@@ -124,16 +119,7 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
     let sent = EVENTS_BUF
         .find_last(|e| {
             (e.event == SEND && e.chat_id == chat_id && e.message_id == message_id).then(|| {
-                (
-                    e.message.clone(),
-                    e.chat_title.clone(),
-                    e.first_name.clone(),
-                    SendRow {
-                        user_id: e.user_id,
-                        topic_id: e.topic_id,
-                        topic_name: e.topic_name.clone(),
-                    },
-                )
+                (e.message.clone(), e.chat_title.clone(), e.first_name.clone())
             })
         })
         .await;
@@ -147,7 +133,7 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
 
     let message = if let Some(msg) = edited {
         msg
-    } else if let Some((msg, _, _, _)) = sent.as_ref() {
+    } else if let Some((msg, _, _)) = sent.as_ref() {
         msg.clone()
     } else {
         clickhouse()
@@ -166,8 +152,8 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
             .unwrap_or_default()
     };
 
-    let (chat_title, first_name, send) = if let Some((_, title, name, send)) = sent {
-        (title, name, send)
+    let (chat_title, first_name) = if let Some((_, title, name)) = sent {
+        (title, name)
     } else {
         let title = clickhouse()
             .query(
@@ -186,7 +172,7 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
         // so a sender renamed since the message was logged is named as they are now.
         let send = clickhouse()
             .query(
-                "SELECT user_id, topic_id, topic_name FROM events_log \
+                "SELECT user_id FROM events_log \
                  WHERE chat_id = ? AND message_id = ? AND event = ? \
                  ORDER BY date_time DESC LIMIT 1",
             )
@@ -205,16 +191,13 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
                 .unwrap_or_default(),
         };
 
-        (title, name, send)
+        (title, name)
     };
 
     MessageInfo {
         message,
         chat_title,
-        user_id: send.user_id,
         first_name,
-        topic_id: send.topic_id,
-        topic_name: send.topic_name,
     }
 }
 

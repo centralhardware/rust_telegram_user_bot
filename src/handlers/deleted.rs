@@ -26,7 +26,6 @@ pub async fn save_deleted(
         };
         let sender_name = info.first_name;
         let message = info.message;
-        let (topic_id, topic_name) = (info.topic_id, info.topic_name);
         let sender_short: String = sender_name.chars().take(10).collect();
 
         if !is_log_ignored(channel_id) {
@@ -41,18 +40,12 @@ pub async fn save_deleted(
             );
         }
 
-        // Telegram names nothing but the id, so the row keeps what the message
-        // was: on its own a delete row would say only that something vanished.
+        // Telegram names nothing but the chat and the id, and that is all the
+        // row keeps: what the message was is already on its send row.
         crate::db::EVENTS_BUF.push(Event {
             date_time: now,
             chat_id: channel_id,
-            chat_title,
             message_id: msg_id as i64,
-            message,
-            user_id: info.user_id,
-            first_name: sender_name,
-            topic_id,
-            topic_name,
             ..Event::delete()
         }).await;
     }

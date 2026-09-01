@@ -53,9 +53,7 @@ pub async fn save_reactions(update: &tl::types::UpdateMessageReactions) {
         .push(Event {
             date_time: chrono::Utc::now().timestamp() as u32,
             chat_id,
-            chat_title,
             message_id: update.msg_id as i64,
-            topic_id: update.top_msg_id.unwrap_or(0),
             reactions: counts,
             ..Event::reaction()
         })
