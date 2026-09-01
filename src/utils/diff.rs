@@ -43,19 +43,24 @@ pub static ANSI: LazyLock<Style> = LazyLock::new(|| Style {
     escape: false,
 });
 
-/// The same two colours as the terminal, in the form the Grafana table cell
-/// wants: inline styles, because the cell has no stylesheet of ours, and
-/// `white-space: pre-wrap` so the message's own line breaks survive.
+/// The stored rendering: the two elements HTML already has for this, and
+/// nothing else.
+///
+/// A mark is repeated on every changed word, so anything declared on it is paid
+/// for again on every word of every stored row. There is nothing worth
+/// declaring: a browser strikes `<del>` through and underlines `<ins>` on its
+/// own, which is the distinction the diff is making. The colours the console
+/// line uses cannot come back from Grafana's side either -- a markdown cell has
+/// no stylesheet of ours, and the `<style>` block a text panel could hold is
+/// stripped unless `disable_sanitize_html` is turned on for the whole instance.
+///
+/// The wrapper stays: `white-space: pre-wrap` is what keeps the message's own
+/// line breaks in a table cell, the table has no option for it, and it is one
+/// per row rather than one per word.
 pub static HTML: LazyLock<Style> = LazyLock::new(|| Style {
-    del: Mark::Tag(
-        "<del style=\"color:#f85149;background:rgba(248,81,73,0.20);text-decoration:line-through\">",
-        "</del>",
-    ),
-    ins: Mark::Tag(
-        "<ins style=\"color:#3fb950;background:rgba(46,160,67,0.20);text-decoration:none\">",
-        "</ins>",
-    ),
-    open: "<div style=\"white-space:pre-wrap;font-family:monospace,monospace\">",
+    del: Mark::Tag("<del>", "</del>"),
+    ins: Mark::Tag("<ins>", "</ins>"),
+    open: "<div style=\"white-space:pre-wrap\">",
     close: "</div>",
     escape: true,
 });
@@ -249,5 +254,22 @@ mod tests {
             bare(&html_diff("one two three four", "1 two three 4")),
             "<del>one</del> <ins>1</ins> two three <del>four</del> <ins>4</ins>"
         );
+    }
+
+    /// A mark is paid for again on every changed word of every stored row, so
+    /// it stays the bare element. The colour and the tint it used to carry said
+    /// what the strike-through and the underline already say, and cost ~85% of
+    /// the markup in a row -- 825 bytes down to 319 on a real three-run edit.
+    #[test]
+    fn html_marks_are_bare_elements() {
+        for (mark, name) in [(&HTML.del, "del"), (&HTML.ins, "ins")] {
+            let Mark::Tag(open, close) = mark else {
+                continue;
+            };
+            assert_eq!(
+                (*open, *close),
+                (&*format!("<{name}>"), &*format!("</{name}>"))
+            );
+        }
     }
 }
