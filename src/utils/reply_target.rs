@@ -14,6 +14,10 @@ pub struct ReplyInfo {
     /// The passage of the replied-to message the sender selected, empty when
     /// they quoted nothing and the whole message stands as the target.
     pub quote_text: String,
+    /// The channel post this message comments on, 0 when it comments on none.
+    /// Filled by `db::resolve_reply`, which is the only place that can tell a
+    /// comment from a reply — it takes looking the target up in the log.
+    pub comment_to: u64,
 }
 
 /// The message this one actually replies to, or `None` when it replies to nothing.
@@ -62,6 +66,7 @@ pub fn reply_info(message: &Message) -> ReplyInfo {
         reply_to: reply_to.max(0) as u64,
         reply_to_chat_id: foreign_chat_id(&header).unwrap_or(0),
         quote_text: header.quote_text.unwrap_or_default(),
+        comment_to: 0,
     }
 }
 

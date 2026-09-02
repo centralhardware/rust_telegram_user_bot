@@ -73,8 +73,8 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
         serde_json::to_string(&reply.raw).unwrap_or_default()
     };
 
-    let reply_reply = crate::utils::reply_target::reply_info(&reply);
-    let reply_to_user_id = crate::db::find_reply_sender(chat_id, &reply_reply).await;
+    let mut reply_reply = crate::utils::reply_target::reply_info(&reply);
+    let reply_to_user_id = crate::db::resolve_reply(chat_id, &mut reply_reply).await;
     let (topic_id, topic_name) = crate::utils::topic::topic_of(client, &reply).await;
 
     // A backfilled message is a message: it gets the same columns a live one
@@ -103,6 +103,7 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
             reply_to_user_id,
             reply_to_chat_id: reply_reply.reply_to_chat_id,
             quote_text: reply_reply.quote_text,
+        comment_to: reply_reply.comment_to,
             topic_id,
             topic_name,
             raw: serde_json::to_string(&reply.raw).unwrap_or_default(),

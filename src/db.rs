@@ -201,49 +201,83 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
     }
 }
 
-/// Who sent a message, for the `reply_to_user_id` of the message answering it.
-/// The unflushed buffer first, then ClickHouse; 0 when the message is older than
-/// the log or was never seen. `chat_id` is the chat the *replied-to* message
-/// lives in, which is not the answering message's chat when it quotes another.
-pub async fn find_sender(chat_id: i64, message_id: i64) -> u64 {
-    if let Some(user_id) = EVENTS_BUF
+/// What the log knows about the message a reply points at.
+#[derive(Default)]
+pub struct ReplyTarget {
+    /// Who sent it, 0 when the message is older than the log, was never seen,
+    /// or was posted by a channel rather than a user.
+    pub user_id: u64,
+    /// Whether it is the copy of a channel post that Telegram auto-forwards
+    /// into the linked discussion group — the root every comment on that post
+    /// hangs off. Such a copy is sent by the channel (no user) and carries the
+    /// post's own id in `fwd_from_msg_id`.
+    pub post_copy: bool,
+}
+
+/// The message a reply answers, as the log has it: the unflushed buffer first,
+/// then ClickHouse. `chat_id` is the chat the *replied-to* message lives in,
+/// which is not the answering message's chat when it quotes another.
+pub async fn find_target(chat_id: i64, message_id: i64) -> ReplyTarget {
+    if let Some(target) = EVENTS_BUF
         .find_last(|e| {
-            (e.event == SEND && e.chat_id == chat_id && e.message_id == message_id)
-                .then_some(e.user_id)
+            (e.event == SEND && e.chat_id == chat_id && e.message_id == message_id).then(|| {
+                ReplyTarget {
+                    user_id: e.user_id,
+                    post_copy: e.user_id == 0 && e.fwd_from_chat_id != 0 && e.fwd_from_msg_id != 0,
+                }
+            })
         })
         .await
     {
-        return user_id;
+        return target;
     }
 
     clickhouse()
         .query(
-            "SELECT user_id FROM events_log \
+            "SELECT user_id, user_id = 0 AND fwd_from_chat_id != 0 AND fwd_from_msg_id != 0 \
+             FROM events_log \
              WHERE chat_id = ? AND message_id = ? AND event = ? \
              ORDER BY date_time DESC LIMIT 1",
         )
         .bind(chat_id)
         .bind(message_id)
         .bind(SEND)
-        .fetch_one::<u64>()
+        .fetch_one::<(u64, bool)>()
         .await
+        .map(|(user_id, post_copy)| ReplyTarget { user_id, post_copy })
         .unwrap_or_default()
 }
 
-/// Who sent the message a reply answers, looked up in the chat that message
-/// actually lives in: the quoted chat when the reply quotes another one, this
-/// chat otherwise.
-pub async fn find_reply_sender(chat_id: i64, reply: &crate::utils::reply_target::ReplyInfo) -> u64 {
-    match reply.reply_to {
-        0 => 0,
-        id => {
-            let target_chat = match reply.reply_to_chat_id {
-                0 => chat_id,
-                quoted => quoted,
-            };
-            find_sender(target_chat, id as i64).await
-        }
+/// Settle what a message replies to, and who sent that: the target is looked up
+/// in the chat it actually lives in — the quoted chat when the reply quotes
+/// another one, this chat otherwise.
+///
+/// A comment on a channel post is **not** a reply. Telegram builds the comment
+/// section out of replies to the copy of the post in the discussion group, so
+/// every top-level comment names that copy the way a reply names its target;
+/// counting them as replies makes each post look like a conversation with
+/// itself. When the target turns out to be that copy, the reply is cleared and
+/// the comment is logged as the plain message it is. A comment answering
+/// *another comment* points at that comment, not at the post, and stays a reply.
+pub async fn resolve_reply(chat_id: i64, reply: &mut crate::utils::reply_target::ReplyInfo) -> u64 {
+    let id = match reply.reply_to {
+        0 => return 0,
+        id => id as i64,
+    };
+    let quoted_chat = reply.reply_to_chat_id != 0;
+    let target_chat = if quoted_chat { reply.reply_to_chat_id } else { chat_id };
+
+    let target = find_target(target_chat, id).await;
+
+    // Only in the chat the message was posted in: a quote of another chat names
+    // a post over there deliberately, and is a reply whatever it points at.
+    if target.post_copy && !quoted_chat {
+        reply.comment_to = reply.reply_to;
+        reply.reply_to = 0;
+        return 0;
     }
+
+    target.user_id
 }
 
 /// One `events_log` row. Built through `Event::send()` / `edit()` / `delete()`,
@@ -283,6 +317,11 @@ pub struct Event {
     /// they quoted nothing. For a quote out of a chat the account does not see,
     /// this is the only trace of what was quoted.
     pub quote_text: String,
+    /// The channel post this message comments on, 0 when it comments on none.
+    /// A comment is not a reply: Telegram threads a post's comment section off
+    /// the copy of the post in the discussion group, and this names that copy
+    /// rather than leaving it to look like the message being answered.
+    pub comment_to: u64,
     /// The forum topic the message was posted in, 0 outside a forum.
     pub topic_id: i32,
     pub topic_name: String,

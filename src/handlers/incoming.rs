@@ -83,8 +83,8 @@ pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, 
         msg_content.push_str(b);
     }
 
-    let reply = crate::utils::reply_target::reply_info(message);
-    let reply_to_user_id = crate::db::find_reply_sender(chat_id, &reply).await;
+    let mut reply = crate::utils::reply_target::reply_info(message);
+    let reply_to_user_id = crate::db::resolve_reply(chat_id, &mut reply).await;
     let (topic_id, topic_name) = crate::utils::topic::topic_of(client, message).await;
 
     let meta = crate::utils::media_description::media_meta(message).unwrap_or_default();
@@ -107,6 +107,7 @@ pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, 
         reply_to_user_id,
         reply_to_chat_id: reply.reply_to_chat_id,
         quote_text: reply.quote_text,
+        comment_to: reply.comment_to,
         topic_id,
         topic_name,
         raw: serde_json::to_string(&message.raw).unwrap_or_default(),
