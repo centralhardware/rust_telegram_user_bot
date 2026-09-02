@@ -490,35 +490,6 @@ mod tests {
         ("all of it goes", "replaced entirely"),
     ];
 
-    /// What ClickHouse does with the stored patch, written out in Rust: walk the
-    /// hunks, take the words that did not change out of `message`, put the ones
-    /// that did around them. `edit_diff_html` in migration 025 is this, in SQL,
-    /// and the test below is what keeps the two the same.
-    fn render_patch_html(message: &str, patch: &str) -> String {
-        let words = tokens(message);
-        let hunks = parse_patch(patch).expect("a patch this crate wrote");
-        let mut pieces: Vec<String> = Vec::new();
-        let mut cursor = 0;
-
-        for hunk in &hunks {
-            pieces.extend(
-                words[cursor..hunk.new_index]
-                    .iter()
-                    .map(|w| escape(w, &HTML)),
-            );
-            if hunk.removed_len > 0 {
-                pieces.push(format!("<del>{}</del>", escape(&hunk.removed, &HTML)));
-            }
-            if hunk.added_len > 0 {
-                pieces.push(format!("<ins>{}</ins>", escape(&hunk.added, &HTML)));
-            }
-            cursor = hunk.new_index + hunk.added_len;
-        }
-        pieces.extend(words[cursor..].iter().map(|w| escape(w, &HTML)));
-
-        format!("{}{}{}", HTML.open, pieces.join(" "), HTML.close)
-    }
-
     /// The header is `diff -u`'s, counted in words.
     #[test]
     fn a_patch_names_only_the_words_that_changed() {
@@ -576,17 +547,42 @@ mod tests {
         }
     }
 
-    /// And forward: rendering the patch against the stored message has to give
-    /// back exactly the markup a diff of the two texts would have produced --
-    /// which is the contract `edit_diff_html` has to hold up in SQL.
+    /// `udf/fixtures.json` is what the Python renderer is tested against: for
+    /// each pair of texts, the patch this module produces and the markup it
+    /// used to store. Which is only worth anything while it says what this
+    /// module actually does -- change `word_patch` and this fails until the
+    /// file is written again:
+    ///
+    ///     cargo test write_the_fixtures -- --ignored
     #[test]
-    fn rendering_a_patch_matches_a_diff_of_both_texts() {
-        for (original, modified) in ROUND_TRIP {
-            assert_eq!(
-                render_patch_html(modified, &word_patch(original, modified)),
-                html_diff(original, modified),
-                "{original:?} -> {modified:?}"
-            );
-        }
+    fn the_fixtures_the_renderer_is_tested_against_are_current() {
+        assert_eq!(
+            std::fs::read_to_string(FIXTURES).expect("udf/fixtures.json"),
+            fixtures(),
+            "udf/fixtures.json is stale, see the note above"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn write_the_fixtures() {
+        std::fs::write(FIXTURES, fixtures()).unwrap();
+    }
+
+    const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/udf/fixtures.json");
+
+    fn fixtures() -> String {
+        let cases: Vec<serde_json::Value> = ROUND_TRIP
+            .iter()
+            .map(|(original, modified)| {
+                serde_json::json!({
+                    "original": original,
+                    "message": modified,
+                    "patch": word_patch(original, modified),
+                    "html": html_diff(original, modified),
+                })
+            })
+            .collect();
+        serde_json::to_string_pretty(&cases).unwrap() + "\n"
     }
 }

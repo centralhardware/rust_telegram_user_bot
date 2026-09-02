@@ -26,80 +26,26 @@
 -- newline as `\n`.
 --
 -- Which leaves the marked-up text to be put together on read, out of the words
--- the patch names and the ones it skips over in `message`. That is what the two
--- functions below do. They are SQL rather than an executable UDF on purpose:
--- `CREATE FUNCTION` is persisted by the server under /var/lib/clickhouse, on
--- the same volume as the data, so it cannot go missing the way a script and an
--- XML bind-mounted into the container could.
+-- the patch names and the ones it skips over in `message`. Two functions do
+-- that, and neither is created here: they are executable functions, declared in
+-- `udf/edit_diff_function.xml` and run out of `udf/edit_diff.py`.
+--
+--     edit_diff_html(message, diff)  the message once, with only the changed
+--                                    words marked -- what went in <del>, what
+--                                    replaced it in <ins>
+--     edit_prev_text(message, diff)  the text the edit replaced
+--
+-- Both have to exist before this view is created. The script goes in
+-- `user_scripts_path` -- /var/lib/clickhouse/user_scripts/, on the data volume,
+-- so it survives a container recreation the way the data does -- and the XML in
+-- the config directory, after which `SYSTEM RELOAD FUNCTIONS` picks them up.
+-- `SELECT name FROM system.functions WHERE origin != 'System'` says whether it
+-- worked.
 --
 -- Nothing is backfilled. The rows written before this hold a rendered diff, not
 -- a patch, and are left alone: the view below prints those as they are, and
 -- `edit_prev_text` gives back the message unchanged for them, since a text with
 -- no hunks in it removed nothing.
-
--- A payload as it was written down: the backslash is parked on \x01 first, so
--- an escaped backslash cannot be misread as the start of an escaped newline.
-CREATE OR REPLACE FUNCTION edit_unescape AS (s) ->
-    replaceAll(replaceAll(replaceAll(s, '\\\\', '\x01'), '\\n', '\n'), '\x01', '\\');
-
--- A message prints into a table cell, so it is the message that gets escaped,
--- never the <del>/<ins> put around it.
-CREATE OR REPLACE FUNCTION edit_escape_html AS (s) ->
-    replaceAll(replaceAll(replaceAll(s, '&', '&amp;'), '<', '&lt;'), '>', '&gt;');
-
--- The edit as the boards print it: the message once, with only the words that
--- changed marked -- what went in <del>, what replaced it in <ins>.
---
--- The hunks come out of the patch in one pass with `extractAllGroupsVertical`,
--- which hands back (old start, old len, new start, new len, removed, added) per
--- hunk. From the new side's start and length every hunk knows where it sits in
--- the message, so the words between two hunks are an `arraySlice` of it and
--- nothing has to be counted up from the beginning.
---
--- The `arrayMap(x -> ..., [value])[1]` nesting is how a function with no WITH
--- clause names an intermediate result: each layer binds one and hands it down.
--- Read them outside in -- hunks, then their lengths, then their offsets, then
--- where each one ends, then the message's own words.
-CREATE OR REPLACE FUNCTION edit_diff_html AS (message, patch) ->
-arrayMap(hs ->
- arrayMap(nls ->
-  arrayMap(nis ->
-   arrayMap(prev ->
-    arrayMap(ws ->
-      '<div style="white-space:pre-wrap">' || arrayStringConcat(arrayConcat(
-        arrayFlatten(arrayMap(i -> arrayConcat(
-          arraySlice(ws, prev[i] + 1, nis[i] - prev[i]),
-          if(hs[i][2] = '0', [], ['<del>' || edit_escape_html(edit_unescape(hs[i][5])) || '</del>']),
-          if(nls[i] = 0, [], ['<ins>' || edit_escape_html(edit_unescape(hs[i][6])) || '</ins>'])
-        ), arrayEnumerate(hs))),
-        arraySlice(ws, if(empty(hs), 0, nis[-1] + nls[-1]) + 1)
-      ), ' ') || '</div>',
-    [arrayMap(w -> edit_escape_html(w), splitByChar(' ', message))])[1],
-   [arrayPushFront(arrayPopBack(arrayMap((a, b) -> a + b, nis, nls)), 0)])[1],
-  [arrayMap((h, nl) -> if(nl = 0, toUInt32(h[3]), toUInt32(h[3]) - 1), hs, nls)])[1],
- [arrayMap(h -> if(h[4] = '', 1, toUInt32(h[4])), hs)])[1],
-[extractAllGroupsVertical(patch, '@@ -(\\d+)(?:,(\\d+))? \\+(\\d+)(?:,(\\d+))? @@\n(?:-([^\n]*)\n)?(?:\\+([^\n]*)\n)?')])[1];
-
--- The text the edit replaced, which is why it never has to be stored: put the
--- removed words back where they came from and take the added ones out again.
-CREATE OR REPLACE FUNCTION edit_prev_text AS (message, patch) ->
-arrayMap(hs ->
- arrayMap(nls ->
-  arrayMap(nis ->
-   arrayMap(prev ->
-    arrayMap(ws ->
-      arrayStringConcat(arrayConcat(
-        arrayFlatten(arrayMap(i -> arrayConcat(
-          arraySlice(ws, prev[i] + 1, nis[i] - prev[i]),
-          if(hs[i][2] = '0', [], [edit_unescape(hs[i][5])])
-        ), arrayEnumerate(hs))),
-        arraySlice(ws, if(empty(hs), 0, nis[-1] + nls[-1]) + 1)
-      ), ' '),
-    [splitByChar(' ', message)])[1],
-   [arrayPushFront(arrayPopBack(arrayMap((a, b) -> a + b, nis, nls)), 0)])[1],
-  [arrayMap((h, nl) -> if(nl = 0, toUInt32(h[3]), toUInt32(h[3]) - 1), hs, nls)])[1],
- [arrayMap(h -> if(h[4] = '', 1, toUInt32(h[4])), hs)])[1],
-[extractAllGroupsVertical(patch, '@@ -(\\d+)(?:,(\\d+))? \\+(\\d+)(?:,(\\d+))? @@\n(?:-([^\n]*)\n)?(?:\\+([^\n]*)\n)?')])[1];
 
 -- The reading view, as migration 021 left it but without its window function.
 -- That window was there to look one row back for the text an edit replaced;
