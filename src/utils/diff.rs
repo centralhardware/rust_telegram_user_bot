@@ -46,24 +46,36 @@ pub static ANSI: LazyLock<Style> = LazyLock::new(|| Style {
     escape: false,
 });
 
-/// The stored rendering: the two elements HTML already has for this, and
-/// nothing else.
+/// What a board shows: red on a red tint for what the edit removed, green on a
+/// green tint for what replaced it -- the same two colours the console line
+/// above uses, so the log and the board read alike.
 ///
-/// A mark is repeated on every changed word, so anything declared on it is paid
-/// for again on every word of every stored row. There is nothing worth
-/// declaring: a browser strikes `<del>` through and underlines `<ins>` on its
-/// own, which is the distinction the diff is making. The colours the console
-/// line uses cannot come back from Grafana's side either -- a markdown cell has
-/// no stylesheet of ours, and the `<style>` block a text panel could hold is
-/// stripped unless `disable_sanitize_html` is turned on for the whole instance.
+/// The colours are inline because a Grafana cell has no stylesheet of ours: a
+/// `<style>` block is stripped from a panel unless `disable_sanitize_html` is
+/// on for the whole instance, while an inline style survives, which is how the
+/// wrapper below keeps its line breaks. They were dropped once for cost -- the
+/// markup was stored, so a colour was paid for again on every changed word of
+/// every row, ~85% of the markup in a row -- and that reason is gone: the row
+/// stores the patch now and this markup is made on read.
 ///
-/// The wrapper stays: `white-space: pre-wrap` is what keeps the message's own
-/// line breaks in a table cell, the table has no option for it, and it is one
-/// per row rather than one per word.
+/// The elements stay `<del>` and `<ins>` rather than two spans: should a
+/// sanitiser ever strip the style, a browser still strikes one through and
+/// underlines the other, which is the distinction being drawn. Both of those
+/// defaults are turned off here, since the colour says it better.
+///
+/// This is only what the tests measure the renderer against --
+/// `udf/edit_diff.py` is what actually prints it, and `udf/fixtures.json`
+/// holds the two together.
 #[cfg(test)]
 pub static HTML: LazyLock<Style> = LazyLock::new(|| Style {
-    del: Mark::Tag("<del>", "</del>"),
-    ins: Mark::Tag("<ins>", "</ins>"),
+    del: Mark::Tag(
+        "<del style=\"color:#e03131;background:rgba(224,49,49,.18);text-decoration:none\">",
+        "</del>",
+    ),
+    ins: Mark::Tag(
+        "<ins style=\"color:#2f9e44;background:rgba(47,158,68,.18);text-decoration:none\">",
+        "</ins>",
+    ),
     open: "<div style=\"white-space:pre-wrap\">",
     close: "</div>",
     escape: true,
@@ -450,20 +462,15 @@ mod tests {
         );
     }
 
-    /// A mark is paid for again on every changed word of every stored row, so
-    /// it stays the bare element. The colour and the tint it used to carry said
-    /// what the strike-through and the underline already say, and cost ~85% of
-    /// the markup in a row -- 825 bytes down to 319 on a real three-run edit.
+    /// The marks carry their colour inline, since a Grafana cell has no
+    /// stylesheet of ours, and turn off the strike-through and the underline
+    /// the two elements come with -- the colour is the distinction now.
     #[test]
-    fn html_marks_are_bare_elements() {
-        for (mark, name) in [(&HTML.del, "del"), (&HTML.ins, "ins")] {
-            let Mark::Tag(open, close) = mark else {
-                continue;
-            };
-            assert_eq!(
-                (*open, *close),
-                (&*format!("<{name}>"), &*format!("</{name}>"))
-            );
+    fn html_marks_are_coloured_and_not_struck_through() {
+        for (mark, colour) in [(&HTML.del, "#e03131"), (&HTML.ins, "#2f9e44")] {
+            let Mark::Tag(open, _) = mark else { continue };
+            assert!(open.contains(&format!("color:{colour}")), "{open}");
+            assert!(open.contains("text-decoration:none"), "{open}");
         }
     }
 

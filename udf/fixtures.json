@@ -1,72 +1,72 @@
 [
   {
-    "html": "<div style=\"white-space:pre-wrap\">meet at <del>wensdey</del> <ins>Wensdey</ins></div>",
+    "html": "<div style=\"white-space:pre-wrap\">meet at <del style=\"color:#e03131;background:rgba(224,49,49,.18);text-decoration:none\">wensdey</del> <ins style=\"color:#2f9e44;background:rgba(47,158,68,.18);text-decoration:none\">Wensdey</ins></div>",
     "message": "meet at Wensdey",
     "original": "meet at wensdey",
     "patch": "@@ -3 +3 @@\n-wensdey\n+Wensdey\n"
   },
   {
-    "html": "<div style=\"white-space:pre-wrap\"><del>one</del> <ins>1</ins> two three <del>four</del> <ins>4</ins></div>",
+    "html": "<div style=\"white-space:pre-wrap\"><del style=\"color:#e03131;background:rgba(224,49,49,.18);text-decoration:none\">one</del> <ins style=\"color:#2f9e44;background:rgba(47,158,68,.18);text-decoration:none\">1</ins> two three <del style=\"color:#e03131;background:rgba(224,49,49,.18);text-decoration:none\">four</del> <ins style=\"color:#2f9e44;background:rgba(47,158,68,.18);text-decoration:none\">4</ins></div>",
     "message": "1 two three 4",
     "original": "one two three four",
     "patch": "@@ -1 +1 @@\n-one\n+1\n@@ -4 +4 @@\n-four\n+4\n"
   },
   {
-    "html": "<div style=\"white-space:pre-wrap\">a <ins>b</ins> c</div>",
+    "html": "<div style=\"white-space:pre-wrap\">a <ins style=\"color:#2f9e44;background:rgba(47,158,68,.18);text-decoration:none\">b</ins> c</div>",
     "message": "a b c",
     "original": "a c",
     "patch": "@@ -1,0 +2 @@\n+b\n"
   },
   {
-    "html": "<div style=\"white-space:pre-wrap\">a <del>b</del> c</div>",
+    "html": "<div style=\"white-space:pre-wrap\">a <del style=\"color:#e03131;background:rgba(224,49,49,.18);text-decoration:none\">b</del> c</div>",
     "message": "a c",
     "original": "a b c",
     "patch": "@@ -2 +1,0 @@\n-b\n"
   },
   {
-    "html": "<div style=\"white-space:pre-wrap\">&lt;b&gt;a&lt;/b&gt; &amp; <del>c</del> <ins>d</ins></div>",
+    "html": "<div style=\"white-space:pre-wrap\">&lt;b&gt;a&lt;/b&gt; &amp; <del style=\"color:#e03131;background:rgba(224,49,49,.18);text-decoration:none\">c</del> <ins style=\"color:#2f9e44;background:rgba(47,158,68,.18);text-decoration:none\">d</ins></div>",
     "message": "<b>a</b> & d",
     "original": "<b>a</b> & c",
     "patch": "@@ -3 +3 @@\n-c\n+d\n"
   },
   {
-    "html": "<div style=\"white-space:pre-wrap\">hello <del>world\nsecond</del> <ins>there\nsecond</ins> line here</div>",
+    "html": "<div style=\"white-space:pre-wrap\">hello <del style=\"color:#e03131;background:rgba(224,49,49,.18);text-decoration:none\">world\nsecond</del> <ins style=\"color:#2f9e44;background:rgba(47,158,68,.18);text-decoration:none\">there\nsecond</ins> line here</div>",
     "message": "hello there\nsecond line here",
     "original": "hello world\nsecond line here",
     "patch": "@@ -2 +2 @@\n-world\\nsecond\n+there\\nsecond\n"
   },
   {
-    "html": "<div style=\"white-space:pre-wrap\">first line\nsecond <ins>line\nthird</ins> line</div>",
+    "html": "<div style=\"white-space:pre-wrap\">first line\nsecond <ins style=\"color:#2f9e44;background:rgba(47,158,68,.18);text-decoration:none\">line\nthird</ins> line</div>",
     "message": "first line\nsecond line\nthird line",
     "original": "first line\nsecond line",
     "patch": "@@ -2,0 +3 @@\n+line\\nthird\n"
   },
   {
-    "html": "<div style=\"white-space:pre-wrap\">double  spaced <del>text</del> <ins>words</ins></div>",
+    "html": "<div style=\"white-space:pre-wrap\">double  spaced <del style=\"color:#e03131;background:rgba(224,49,49,.18);text-decoration:none\">text</del> <ins style=\"color:#2f9e44;background:rgba(47,158,68,.18);text-decoration:none\">words</ins></div>",
     "message": "double  spaced words",
     "original": "double  spaced text",
     "patch": "@@ -4 +4 @@\n-text\n+words\n"
   },
   {
-    "html": "<div style=\"white-space:pre-wrap\">trailing space  <ins></ins></div>",
+    "html": "<div style=\"white-space:pre-wrap\">trailing space  <ins style=\"color:#2f9e44;background:rgba(47,158,68,.18);text-decoration:none\"></ins></div>",
     "message": "trailing space  ",
     "original": "trailing space ",
     "patch": "@@ -3,0 +4 @@\n+\n"
   },
   {
-    "html": "<div style=\"white-space:pre-wrap\">a\\b <del>backslash</del> <ins>backslashes</ins></div>",
+    "html": "<div style=\"white-space:pre-wrap\">a\\b <del style=\"color:#e03131;background:rgba(224,49,49,.18);text-decoration:none\">backslash</del> <ins style=\"color:#2f9e44;background:rgba(47,158,68,.18);text-decoration:none\">backslashes</ins></div>",
     "message": "a\\b backslashes",
     "original": "a\\b backslash",
     "patch": "@@ -2 +2 @@\n-backslash\n+backslashes\n"
   },
   {
-    "html": "<div style=\"white-space:pre-wrap\"><del></del> <ins>now it has text</ins></div>",
+    "html": "<div style=\"white-space:pre-wrap\"><del style=\"color:#e03131;background:rgba(224,49,49,.18);text-decoration:none\"></del> <ins style=\"color:#2f9e44;background:rgba(47,158,68,.18);text-decoration:none\">now it has text</ins></div>",
     "message": "now it has text",
     "original": "",
     "patch": "@@ -1 +1,4 @@\n-\n+now it has text\n"
   },
   {
-    "html": "<div style=\"white-space:pre-wrap\"><del>all of it goes</del> <ins>replaced entirely</ins></div>",
+    "html": "<div style=\"white-space:pre-wrap\"><del style=\"color:#e03131;background:rgba(224,49,49,.18);text-decoration:none\">all of it goes</del> <ins style=\"color:#2f9e44;background:rgba(47,158,68,.18);text-decoration:none\">replaced entirely</ins></div>",
     "message": "replaced entirely",
     "original": "all of it goes",
     "patch": "@@ -1,4 +1,2 @@\n-all of it goes\n+replaced entirely\n"

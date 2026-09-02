@@ -29,6 +29,40 @@ import sys
 
 WRAPPER = ('<div style="white-space:pre-wrap">', "</div>")
 
+# Red on a red tint for what the edit removed, green on a green tint for what
+# replaced it -- the same two colours the console line has always used, so the
+# log and the board read alike.
+#
+# The colours are inline because a Grafana cell has no stylesheet of ours: a
+# <style> block is stripped from a panel unless disable_sanitize_html is on for
+# the whole instance, while an inline style survives, which is how the wrapper
+# above keeps its line breaks. They used to be left off for cost -- the markup
+# was stored, so every colour was paid for again on every changed word of every
+# row -- and that reason is gone: the row stores the patch now and this markup
+# is made on read.
+#
+# The tags stay <del> and <ins> rather than two spans: if a sanitiser ever
+# strips the style, the browser still strikes one through and underlines the
+# other, which is the distinction being drawn. Both defaults are turned off
+# here, since the colour says it better.
+MARK = {
+    "del": (
+        '<del style="color:#e03131;background:rgba(224,49,49,.18);'
+        'text-decoration:none">',
+        "</del>",
+    ),
+    "ins": (
+        '<ins style="color:#2f9e44;background:rgba(47,158,68,.18);'
+        'text-decoration:none">',
+        "</ins>",
+    ),
+}
+
+
+def mark(kind, text):
+    open_tag, close_tag = MARK[kind]
+    return f"{open_tag}{escape_html(text)}{close_tag}"
+
 
 def unescape(payload):
     """A payload as it was written down.
@@ -93,9 +127,9 @@ def render(message, patch, mode):
         pieces.extend(words[cursor : hunk["at"]])
         if mode == "html":
             if hunk["removes"]:
-                pieces.append(f"<del>{escape_html(hunk['removed'])}</del>")
+                pieces.append(mark("del", hunk["removed"]))
             if hunk["added_len"]:
-                pieces.append(f"<ins>{escape_html(hunk['added'])}</ins>")
+                pieces.append(mark("ins", hunk["added"]))
         elif hunk["removes"]:
             # The other direction: the removed words go back in, the added
             # ones are left out.
