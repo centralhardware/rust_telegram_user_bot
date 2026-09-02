@@ -9,10 +9,9 @@
 
      `command` is looked up inside `user_scripts_path` -- which is what
      `execute_direct` does, left at its default of 1 -- and the word after it is
-     the mode. That path is
-     /var/lib/clickhouse/user_scripts/ -- on the data volume, so the script
-     survives a container recreation the way the data does. This file is the
-     only piece that has to go into the config directory. -->
+     the mode. That path is /var/lib/clickhouse/user_scripts/, next to the
+     data; this file is the only piece that goes into the config directory,
+     /etc/clickhouse-server/, where the `*_function.xml` glob looks for it. -->
 <functions>
     <function>
         <type>executable_pool</type>

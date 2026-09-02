@@ -36,9 +36,10 @@
 --     edit_prev_text(message, diff)  the text the edit replaced
 --
 -- Both have to exist before this view is created. The script goes in
--- `user_scripts_path` -- /var/lib/clickhouse/user_scripts/, on the data volume,
--- so it survives a container recreation the way the data does -- and the XML in
--- the config directory, after which `SYSTEM RELOAD FUNCTIONS` picks them up.
+-- `user_scripts_path` (/var/lib/clickhouse/user_scripts/) and the XML in the
+-- config directory (/etc/clickhouse-server/, where the `*_function.xml` glob
+-- looks), both readable by the `clickhouse` user, after which
+-- `SYSTEM RELOAD FUNCTIONS` picks them up.
 -- `SELECT name FROM system.functions WHERE origin != 'System'` says whether it
 -- worked.
 --
