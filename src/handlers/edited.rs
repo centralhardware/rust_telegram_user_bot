@@ -29,7 +29,7 @@ pub async fn save_edited(
         return Ok(());
     }
 
-    let diff = crate::utils::diff::html_diff(&original, &message_content);
+    let diff = crate::utils::diff::word_patch(&original, &message_content);
 
     let sender = crate::utils::peer_info::sender_info(client, message).await;
 
@@ -66,10 +66,11 @@ pub async fn save_edited(
     };
 
     // An edit row carries only what an edit can change: the message as it now
-    // stands, the diff against what stood before -- the same inline rendering the
-    // console line above shows, in HTML, so a board only has to print it -- and
-    // the media the text describes. Everything else is fixed when the message is
-    // sent and already on its send row.
+    // stands, the patch against what stood before -- the words that went and the
+    // words that came, and nothing that stayed, which `edit_diff_html` turns back
+    // into the marked-up message a board prints -- and the media the text
+    // describes. Everything else is fixed when the message is sent and already on
+    // its send row.
     let meta = crate::utils::media_description::media_meta(message).unwrap_or_default();
 
     crate::db::EVENTS_BUF.push(Event {
