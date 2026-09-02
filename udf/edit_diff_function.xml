@@ -7,7 +7,9 @@
      `executable_pool` keeps a process alive between calls rather than starting
      python once per block, which is why the script flushes every row.
 
-     `command` is relative to `user_scripts_path`, which is
+     `command` is looked up inside `user_scripts_path` -- which is what
+     `execute_direct` does, left at its default of 1 -- and the word after it is
+     the mode. That path is
      /var/lib/clickhouse/user_scripts/ -- on the data volume, so the script
      survives a container recreation the way the data does. This file is the
      only piece that has to go into the config directory. -->
@@ -27,7 +29,6 @@
         </argument>
         <format>JSONEachRow</format>
         <command>edit_diff.py html</command>
-        <execute_direct>0</execute_direct>
         <pool_size>4</pool_size>
         <command_read_timeout>10000</command_read_timeout>
         <command_write_timeout>10000</command_write_timeout>
@@ -47,7 +48,6 @@
         </argument>
         <format>JSONEachRow</format>
         <command>edit_diff.py prev</command>
-        <execute_direct>0</execute_direct>
         <pool_size>4</pool_size>
         <command_read_timeout>10000</command_read_timeout>
         <command_write_timeout>10000</command_write_timeout>
