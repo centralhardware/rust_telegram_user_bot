@@ -16,6 +16,7 @@ import pathlib
 import subprocess
 import sys
 import unittest
+import xml.etree.ElementTree as ET
 
 HERE = pathlib.Path(__file__).parent
 sys.path.insert(0, str(HERE))
@@ -68,6 +69,39 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(len(out), len(FIXTURES))
         for line, case in zip(out, FIXTURES):
             self.assertEqual(json.loads(line)["result"], case["html"])
+
+
+class DeclarationTest(unittest.TestCase):
+    """The XML the server reads, checked for the things that make it refuse the
+    file or call the wrong thing.
+
+    ClickHouse reports a malformed declaration as a SAXParseException with a
+    line and a column and nothing else, five seconds apart, forever -- which
+    reads like the functions are broken rather than the file. The first version
+    of this XML had a double hyphen in a prose comment, which XML forbids, and
+    it cost a deploy to find.
+    """
+
+    ROOT = ET.parse(HERE / "edit_diff_function.xml").getroot()
+
+    def test_it_declares_the_two_functions_the_view_calls(self):
+        names = [f.findtext("name") for f in self.ROOT]
+        self.assertEqual(names, ["edit_diff_html", "edit_prev_text"])
+
+    def test_every_command_runs_this_script_in_a_mode_it_has(self):
+        for function in self.ROOT:
+            script, mode = function.findtext("command").split()
+            self.assertEqual(script, "edit_diff.py")
+            self.assertIn(mode, ("html", "prev"))
+
+    def test_the_arguments_are_named_as_the_script_reads_them(self):
+        for function in self.ROOT:
+            self.assertEqual(
+                [a.findtext("name") for a in function.findall("argument")],
+                ["message", "patch"],
+            )
+            self.assertEqual(function.findtext("format"), "JSONEachRow")
+            self.assertEqual(function.findtext("return_name"), "result")
 
 
 if __name__ == "__main__":

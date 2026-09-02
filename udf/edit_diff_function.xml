@@ -1,17 +1,24 @@
 <!-- The two functions `v_edit_log` reads an edit row through.
 
-     Both are the same script in two modes: `html` renders the patch into the
-     marked-up message a board prints, `prev` walks it back to the text the edit
+     Both are the same script in two modes. `html` renders the patch into the
+     marked up message a board prints; `prev` walks it back to the text the edit
      replaced. See udf/edit_diff.py.
 
      `executable_pool` keeps a process alive between calls rather than starting
      python once per block, which is why the script flushes every row.
 
-     `command` is looked up inside `user_scripts_path` -- which is what
-     `execute_direct` does, left at its default of 1 -- and the word after it is
-     the mode. That path is /var/lib/clickhouse/user_scripts/, next to the
-     data; this file is the only piece that goes into the config directory,
-     /etc/clickhouse-server/, where the `*_function.xml` glob looks for it. -->
+     `command` is looked up inside `user_scripts_path`, which is what
+     `execute_direct` does, left at its default of 1, and the word after it is
+     the mode. That path is /var/lib/clickhouse/user_scripts/, next to the data;
+     this file is the only piece that goes into the config directory,
+     /etc/clickhouse-server/, where the `*_function.xml` glob looks for it.
+
+     Note for anyone editing the prose above: XML forbids a double hyphen inside
+     a comment, and the server refuses the whole file over it (SAXParseException,
+     "Invalid token"), which reads like a problem with the functions rather than
+     with a dash. `python3 udf/test_edit_diff.py` parses this file for that
+     reason. -->
+
 <functions>
     <function>
         <type>executable_pool</type>
