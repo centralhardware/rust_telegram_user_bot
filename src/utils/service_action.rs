@@ -3,33 +3,18 @@ use grammers_tl_types::enums::MessageAction;
 
 use super::media_description::{format_duration_secs, format_human_duration};
 
-/// `format`, plus the parts of an action that only a lookup can fill in.
+/// The message an action was performed *on*, for the actions that are nothing
+/// but a mark on another message.
 ///
-/// A pin names the message it pinned by id alone, so `[message pinned]` on its
-/// own says nothing about what was pinned. The text is fetched the same way the
-/// reply preview fetches a reply target — the unflushed buffer first, then
-/// `events_log` — and appended. `backfill_reply` has already run by then, so a
-/// pin of a message the log had never seen still finds it.
-pub async fn describe(
-    message: &Message,
-    action: &MessageAction,
-    sender_id: Option<i64>,
-    sender_name: Option<&str>,
-) -> String {
-    let base = format(action, sender_id, sender_name);
-
-    if !matches!(action, MessageAction::PinMessage) {
-        return base;
-    }
-
-    let Some(pinned_id) = crate::utils::reply_target::reply_target(message) else {
-        return base;
-    };
-    let chat_id = message.peer_id().bare_id_unchecked();
-
-    match crate::utils::reply_preview::lookup_message_text(chat_id, pinned_id).await {
-        (Some(text), _) if !text.is_empty() => format!("{base} {text}"),
-        _ => base,
+/// A pin says only "this message is pinned now": all of its meaning is the id it
+/// names, which Telegram puts in the reply header. Such an action is logged as an
+/// event of that message rather than as a message of its own, so the id is what
+/// the handler needs. Every other action carries its own payload -- a title, a
+/// user list, a call duration -- and stays an ordinary message row.
+pub fn target(message: &Message, action: &MessageAction) -> Option<i32> {
+    match action {
+        MessageAction::PinMessage => crate::utils::reply_target::reply_target(message),
+        _ => None,
     }
 }
 

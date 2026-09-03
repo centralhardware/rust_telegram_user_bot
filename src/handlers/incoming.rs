@@ -25,11 +25,10 @@ pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, 
 
     let text = crate::utils::format_entities::formatted_text(message);
     let sender_bare_id = sender.user_id as i64;
-    // Described once: the pinned-message lookup behind it should not run twice
-    // for the same message, once for the log line and once for the row.
+    // Described once, for the log line and the row alike.
     let action_desc = match message.action() {
         Some(a) if text.is_empty() => Some(
-            crate::utils::service_action::describe(message, a, Some(sender_bare_id), Some(&sender_display)).await,
+            crate::utils::service_action::format(a, Some(sender_bare_id), Some(&sender_display)),
         ),
         _ => None,
     };

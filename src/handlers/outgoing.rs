@@ -54,7 +54,7 @@ pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Resul
     });
     let action_desc = match message.action() {
         Some(a) if text.is_empty() => Some(
-            crate::utils::service_action::describe(message, a, sender_id, sender_name.as_deref()).await,
+            crate::utils::service_action::format(a, sender_id, sender_name.as_deref()),
         ),
         _ => None,
     };

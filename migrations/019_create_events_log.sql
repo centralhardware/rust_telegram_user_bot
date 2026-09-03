@@ -6,7 +6,9 @@
 -- reassembled by joining all five.
 --
 -- `events_log` is append-only, one row per event, `event` naming which: 'send',
--- 'edit', 'delete' or 'reaction'. Media is not an event of its own — a photo is an
+-- 'edit', 'delete', 'reaction' or 'service'. A 'service' row is an action performed
+-- on a message rather than a message of its own -- a pin -- so it carries the id of
+-- the message it names, the `action`, and nothing else. Media is not an event of its own — a photo is an
 -- ordinary message that carries a file instead of text, so it is the send row that
 -- carries `media_type` / `file_name` / `mime_type` / `size`, and `raw` keeps the
 -- message object behind the text representation in `message`.

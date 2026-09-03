@@ -58,19 +58,24 @@ async fn main() -> Result<()> {
                 match update {
                     Update::NewMessage(message) => {
                         handlers::backfill_reply(&client, &message).await;
-                        let saved = if utils::self_id::is_outgoing(&message) {
-                            handlers::save_outgoing(&message, &client, client_id).await
-                        } else {
-                            handlers::save_incoming(&message, &client).await
-                        };
-                        match saved {
-                            // The archiver writes the same row again once the file
-                            // is in S3, so it needs the row as it was logged.
-                            Ok(event) => handlers::save_media(&message, &event).await,
-                            Err(e) => error!("Failed to save message: {:?}", e),
-                        }
-                        if let Err(e) = handlers::handle_auto_cat(&message).await {
-                            error!("Failed to handle auto cat: {:?}", e);
+                        // A pin is not a message of its own: it is logged against
+                        // the message it pins, which the backfill above has just
+                        // made sure is in the log.
+                        if !handlers::save_service(&client, &message).await {
+                            let saved = if utils::self_id::is_outgoing(&message) {
+                                handlers::save_outgoing(&message, &client, client_id).await
+                            } else {
+                                handlers::save_incoming(&message, &client).await
+                            };
+                            match saved {
+                                // The archiver writes the same row again once the file
+                                // is in S3, so it needs the row as it was logged.
+                                Ok(event) => handlers::save_media(&message, &event).await,
+                                Err(e) => error!("Failed to save message: {:?}", e),
+                            }
+                            if let Err(e) = handlers::handle_auto_cat(&message).await {
+                                error!("Failed to handle auto cat: {:?}", e);
+                            }
                         }
                     }
                     Update::MessageEdited(message) => {
