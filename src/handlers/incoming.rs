@@ -23,14 +23,18 @@ pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, 
         format!("{} {}", sender.first_name, sender.second_name)
     };
 
+    let text = crate::utils::format_entities::formatted_text(message);
+    let sender_bare_id = sender.user_id as i64;
+    // Described once: the pinned-message lookup behind it should not run twice
+    // for the same message, once for the log line and once for the row.
+    let action_desc = match message.action() {
+        Some(a) if text.is_empty() => Some(
+            crate::utils::service_action::describe(message, a, Some(sender_bare_id), Some(&sender_display)).await,
+        ),
+        _ => None,
+    };
+
     if !is_log_ignored(chat_id) {
-        let text = crate::utils::format_entities::formatted_text(message);
-        let sender_bare_id = sender.user_id as i64;
-        let action_desc = if text.is_empty() {
-            message.action().map(|a| crate::utils::service_action::format(a, Some(sender_bare_id), Some(&sender_display)))
-        } else {
-            None
-        };
         let mut preview = if !text.is_empty() {
             match &media_desc {
                 Some(desc) => format!("{} {}", desc, text),
@@ -65,14 +69,8 @@ pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, 
         );
     }
 
-    let text = crate::utils::format_entities::formatted_text(message);
-    let sender_bare_id = sender.user_id as i64;
     let mut msg_content = if text.is_empty() {
-        if let Some(action) = message.action() {
-            crate::utils::service_action::format(action, Some(sender_bare_id), Some(&sender_display))
-        } else {
-            media_desc.clone().unwrap_or_default()
-        }
+        action_desc.clone().unwrap_or_else(|| media_desc.clone().unwrap_or_default())
     } else {
         text.to_string()
     };

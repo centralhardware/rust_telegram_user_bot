@@ -62,7 +62,7 @@ fn highlight_quote(text: &str, quote: &str) -> String {
     }
 }
 
-async fn lookup_message_text(chat_id: i64, message_id: i32) -> (Option<String>, Option<String>) {
+pub async fn lookup_message_text(chat_id: i64, message_id: i32) -> (Option<String>, Option<String>) {
     // Check the unflushed buffer first
     let from_buf = crate::db::EVENTS_BUF.find_last(|m| {
         if m.event == crate::db::SEND && m.chat_id == chat_id && m.message_id == message_id as i64 {

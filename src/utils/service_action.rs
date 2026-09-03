@@ -1,6 +1,37 @@
+use grammers_client::message::Message;
 use grammers_tl_types::enums::MessageAction;
 
 use super::media_description::{format_duration_secs, format_human_duration};
+
+/// `format`, plus the parts of an action that only a lookup can fill in.
+///
+/// A pin names the message it pinned by id alone, so `[message pinned]` on its
+/// own says nothing about what was pinned. The text is fetched the same way the
+/// reply preview fetches a reply target — the unflushed buffer first, then
+/// `events_log` — and appended. `backfill_reply` has already run by then, so a
+/// pin of a message the log had never seen still finds it.
+pub async fn describe(
+    message: &Message,
+    action: &MessageAction,
+    sender_id: Option<i64>,
+    sender_name: Option<&str>,
+) -> String {
+    let base = format(action, sender_id, sender_name);
+
+    if !matches!(action, MessageAction::PinMessage) {
+        return base;
+    }
+
+    let Some(pinned_id) = crate::utils::reply_target::reply_target(message) else {
+        return base;
+    };
+    let chat_id = message.peer_id().bare_id_unchecked();
+
+    match crate::utils::reply_preview::lookup_message_text(chat_id, pinned_id).await {
+        (Some(text), _) if !text.is_empty() => format!("{base} {text}"),
+        _ => base,
+    }
+}
 
 pub fn format(action: &MessageAction, sender_id: Option<i64>, sender_name: Option<&str>) -> String {
     let name = sender_name.unwrap_or("?");

@@ -52,10 +52,11 @@ pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Resul
         Peer::User(u) => u.full_name(),
         _ => p.name().unwrap_or_default().to_string(),
     });
-    let action_desc = if text.is_empty() {
-        message.action().map(|a| crate::utils::service_action::format(a, sender_id, sender_name.as_deref()))
-    } else {
-        None
+    let action_desc = match message.action() {
+        Some(a) if text.is_empty() => Some(
+            crate::utils::service_action::describe(message, a, sender_id, sender_name.as_deref()).await,
+        ),
+        _ => None,
     };
 
     let mut preview = if !text.is_empty() {
