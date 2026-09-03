@@ -215,9 +215,17 @@ fn action_type_name(action: &tl::enums::ChannelAdminLogEventAction) -> &'static 
     }
 }
 
+/// A message's text with its formatting rendered in, the way the live handlers store it.
+///
+/// Entities have to be part of the text here: an edit that only strikes a word through or
+/// only adds a link leaves `message` byte-identical, so reading the bare field made those
+/// edits show up as no change at all -- an empty diff on the console and equal prev/new
+/// columns in ClickHouse.
 fn message_text(msg: &tl::enums::Message) -> String {
     match msg {
-        tl::enums::Message::Message(m) => m.message.clone(),
+        tl::enums::Message::Message(m) => {
+            crate::utils::format_entities::render(&m.message, m.entities.as_deref())
+        }
         _ => String::new(),
     }
 }
