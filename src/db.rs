@@ -338,6 +338,10 @@ pub struct Event {
     /// The service action the message announces, named rather than only spelled
     /// out in `message`. Empty for an ordinary message.
     pub action: String,
+    /// The id of the service message that announced the action, for a 'service'
+    /// row — whose `message_id` is the message the action was performed on. 0
+    /// everywhere else.
+    pub service_message_id: i64,
     /// The album the message belongs to: one caption, one id, one row per file.
     pub grouped_id: u64,
     /// A 'reaction' row: the counts as they stand after the change.

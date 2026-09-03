@@ -15,7 +15,8 @@ use crate::utils::log_ignore::is_log_ignored;
 /// trace of the pin at all. So the target is backfilled if the log has never seen
 /// it (`backfill_reply` has already run by then, off the same reply header) and
 /// the action is written onto the target's id: `chat_id`, `message_id`, `action`
-/// and nothing else, the way a delete keeps nothing but the id it names. A
+/// and the announcement's own id in `service_message_id` — nothing else, close to
+/// the way a delete keeps nothing but the id it names. A
 /// message's history then reads as its own rows — send, edit, pin, delete.
 ///
 /// Returns whether it took the message. A service message that carries its own
@@ -36,6 +37,9 @@ pub async fn save_service(client: &Client, message: &Message) -> bool {
             date_time: message.date().as_second() as u32,
             chat_id,
             message_id: target as i64,
+            // The announcement's own id: the row is keyed on the message the
+            // action was performed on, so this is the only place it fits.
+            service_message_id: message.id() as i64,
             action: kind.clone(),
             ..Event::service()
         })
