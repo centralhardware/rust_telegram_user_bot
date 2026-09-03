@@ -98,6 +98,9 @@ pub const SEND: &str = "send";
 pub const EDIT: &str = "edit";
 pub const DELETE: &str = "delete";
 pub const REACTION: &str = "reaction";
+/// A service action performed on another message — a pin. The row belongs to the
+/// message the action names, and carries the action rather than a text.
+pub const SERVICE: &str = "service";
 
 pub struct MessageInfo {
     pub message: String,
@@ -412,6 +415,10 @@ impl Event {
 
     pub fn reaction() -> Self {
         Self::of(REACTION)
+    }
+
+    pub fn service() -> Self {
+        Self::of(SERVICE)
     }
 
     /// An ephemeral message's own event name: Telegram calls a new one "new", the

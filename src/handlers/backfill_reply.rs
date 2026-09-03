@@ -68,7 +68,7 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
         } else {
             format!("{} {}", sender.first_name, sender.second_name)
         };
-        crate::utils::service_action::describe(&reply, action, Some(sender_bare_id), Some(&sender_display)).await
+        crate::utils::service_action::format(action, Some(sender_bare_id), Some(&sender_display))
     } else {
         serde_json::to_string(&reply.raw).unwrap_or_default()
     };
