@@ -1,4 +1,6 @@
 use grammers_client::message::Message;
+use grammers_client::Client;
+use grammers_tl_types as tl;
 use grammers_tl_types::enums::MessageAction;
 
 use super::media_description::{format_duration_secs, format_human_duration};
@@ -18,7 +20,15 @@ pub fn target(message: &Message, action: &MessageAction) -> Option<i32> {
     }
 }
 
-pub fn format(action: &MessageAction, sender_id: Option<i64>, sender_name: Option<&str>) -> String {
+/// The game-score service message carries only the game's id. The title lives on
+/// the game message it replies to, so `game_title` fetches it and is passed in
+/// here; without it the id is still printed.
+pub fn format(
+    action: &MessageAction,
+    sender_id: Option<i64>,
+    sender_name: Option<&str>,
+    game_title: Option<&str>,
+) -> String {
     let name = sender_name.unwrap_or("?");
     match action {
         MessageAction::Empty => "[service message]".into(),
@@ -54,9 +64,10 @@ pub fn format(action: &MessageAction, sender_id: Option<i64>, sender_name: Optio
         }
         MessageAction::PinMessage => "[message pinned]".into(),
         MessageAction::HistoryClear => "[history cleared]".into(),
-        MessageAction::GameScore(a) => {
-            format!("[game score: {} in game {}]", a.score, a.game_id)
-        }
+        MessageAction::GameScore(a) => match game_title {
+            Some(t) => format!("[game score: {} in \"{}\"]", a.score, t),
+            None => format!("[game score: {} in game {}]", a.score, a.game_id),
+        },
         MessageAction::PaymentSentMe(a) => {
             format!("[payment received: {} {}]", a.total_amount, a.currency)
         }
@@ -314,4 +325,24 @@ pub fn kind(action: &MessageAction) -> String {
         }
     }
     out
+}
+
+/// Title of the game a `GameScore` service message scored in, taken from the
+/// game message it replies to. `None` for any other action, or when that
+/// message can't be fetched.
+pub async fn game_title(client: &Client, message: &Message) -> Option<String> {
+    if !matches!(message.action(), Some(MessageAction::GameScore(_))) {
+        return None;
+    }
+    let replied = client.get_reply_to_message(message).await.ok()??;
+    let tl::enums::Message::Message(raw) = &replied.raw else {
+        return None;
+    };
+    match raw.media.as_ref()? {
+        tl::enums::MessageMedia::Game(g) => {
+            let tl::enums::Game::Game(game) = &g.game;
+            Some(game.title.clone())
+        }
+        _ => None,
+    }
 }
