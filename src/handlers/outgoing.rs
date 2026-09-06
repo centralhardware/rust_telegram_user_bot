@@ -52,10 +52,15 @@ pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Resul
         Peer::User(u) => u.full_name(),
         _ => p.name().unwrap_or_default().to_string(),
     });
+    let game_title =
+        crate::utils::service_action::game_title(client, std::ops::Deref::deref(message)).await;
     let action_desc = match message.action() {
-        Some(a) if text.is_empty() => Some(
-            crate::utils::service_action::format(a, sender_id, sender_name.as_deref()),
-        ),
+        Some(a) if text.is_empty() => Some(crate::utils::service_action::format(
+            a,
+            sender_id,
+            sender_name.as_deref(),
+            game_title.as_deref(),
+        )),
         _ => None,
     };
 

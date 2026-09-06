@@ -16,6 +16,7 @@ pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, 
     let buttons = crate::utils::inline_buttons::format_buttons(message);
 
     let chat_id = message.peer_id().bare_id_unchecked();
+    let game_title = crate::utils::service_action::game_title(client, std::ops::Deref::deref(message)).await;
 
     let sender_display = if sender.second_name.is_empty() {
         sender.first_name.clone()
@@ -28,7 +29,12 @@ pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, 
     // Described once, for the log line and the row alike.
     let action_desc = match message.action() {
         Some(a) if text.is_empty() => Some(
-            crate::utils::service_action::format(a, Some(sender_bare_id), Some(&sender_display)),
+            crate::utils::service_action::format(
+                a,
+                Some(sender_bare_id),
+                Some(&sender_display),
+                game_title.as_deref(),
+            ),
         ),
         _ => None,
     };
