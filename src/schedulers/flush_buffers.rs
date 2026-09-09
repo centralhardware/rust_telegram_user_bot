@@ -7,6 +7,10 @@ pub async fn flush_all() {
     if events > 0 {
         log::info!("flushed events: {events}");
     }
+    let names = crate::utils::peer_names::PEER_NAMES_BUF.flush().await;
+    if names > 0 {
+        log::info!("flushed peer names: {names}");
+    }
 }
 
 pub fn start() {
