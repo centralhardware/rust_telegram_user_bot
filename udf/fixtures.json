@@ -30,7 +30,7 @@
     "patch": "@@ -3 +3 @@\n-c\n+d\n"
   },
   {
-    "html": "<div style=\"white-space:pre-wrap\">hello <del>world\nsecond</del> <ins>there\nsecond</ins> line here</div>",
+    "html": "<div style=\"white-space:pre-wrap\">hello <del>world</del> <ins>there</ins>\nsecond line here</div>",
     "message": "hello there\nsecond line here",
     "original": "hello world\nsecond line here",
     "patch": "@@ -2 +2 @@\n-world\\nsecond\n+there\\nsecond\n"
@@ -70,5 +70,17 @@
     "message": "replaced entirely",
     "original": "all of it goes",
     "patch": "@@ -1,4 +1,2 @@\n-all of it goes\n+replaced entirely\n"
+  },
+  {
+    "html": "<div style=\"white-space:pre-wrap\">not their reduction<ins>\nPS: but the roles did</ins></div>",
+    "message": "not their reduction\nPS: but the roles did",
+    "original": "not their reduction",
+    "patch": "@@ -3 +3,5 @@\n-reduction\n+reduction\\nPS: but the roles did\n"
+  },
+  {
+    "html": "<div style=\"white-space:pre-wrap\">one\n<ins>zero\n</ins>two</div>",
+    "message": "one\nzero\ntwo",
+    "original": "one\ntwo",
+    "patch": "@@ -1 +1 @@\n-one\\ntwo\n+one\\nzero\\ntwo\n"
   }
 ]

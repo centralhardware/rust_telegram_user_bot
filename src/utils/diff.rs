@@ -40,7 +40,12 @@ pub static ANSI: LazyLock<Style> = LazyLock::new(|| Style {
             .strikethrough()
             .force_styling(true),
     ),
-    ins: Mark::Ansi(Ansi::new().color256(114).on_color256(22).force_styling(true)),
+    ins: Mark::Ansi(
+        Ansi::new()
+            .color256(114)
+            .on_color256(22)
+            .force_styling(true),
+    ),
     open: "",
     close: "",
     escape: false,
@@ -79,7 +84,7 @@ pub static HTML: LazyLock<Style> = LazyLock::new(|| Style {
 /// function can never drift apart -- the boards used to word-diff in SQL.
 pub fn render_diff(original: &str, modified: &str, style: &Style) -> String {
     let (old, new) = (tokens(original), tokens(modified));
-    let mut pieces: Vec<String> = Vec::new();
+    let mut line = Line::new(style.open);
     let (mut removed, mut added): (Vec<&str>, Vec<&str>) = (Vec::new(), Vec::new());
 
     let diff = TextDiff::from_slices(&old, &new);
@@ -91,17 +96,44 @@ pub fn render_diff(original: &str, modified: &str, style: &Style) -> String {
             ChangeTag::Delete => removed.push(change.value()),
             ChangeTag::Insert => added.push(change.value()),
             ChangeTag::Equal => {
-                flush(&mut pieces, &mut removed, &mut added, style);
-                pieces.push(escape(change.value(), style));
+                flush(&mut line, &mut removed, &mut added, style);
+                line.push(true, escape(change.value(), style));
             }
         }
     }
-    flush(&mut pieces, &mut removed, &mut added, style);
+    flush(&mut line, &mut removed, &mut added, style);
+    line.finish(style.close)
+}
 
-    let mut out = String::from(style.open);
-    out.push_str(&pieces.join(" "));
-    out.push_str(style.close);
-    out
+/// The diff as it is put back together. A piece is normally separated from the
+/// one before it by the single space that stood between two tokens -- but a
+/// changed run can be cut open *inside* a token, at a newline, and there the
+/// whitespace is already part of the piece and no space is added.
+struct Line {
+    out: String,
+    empty: bool,
+}
+
+impl Line {
+    fn new(open: &str) -> Self {
+        Line {
+            out: open.to_string(),
+            empty: true,
+        }
+    }
+
+    fn push(&mut self, sep: bool, text: String) {
+        if sep && !self.empty {
+            self.out.push(' ');
+        }
+        self.out.push_str(&text);
+        self.empty = false;
+    }
+
+    fn finish(mut self, close: &str) -> String {
+        self.out.push_str(close);
+        self.out
+    }
 }
 
 /// A message as the words between its single spaces. Anything else a word
@@ -127,29 +159,173 @@ pub fn html_diff(original: &str, modified: &str) -> String {
     render_diff(original, modified, &HTML)
 }
 
-fn flush(pieces: &mut Vec<String>, removed: &mut Vec<&str>, added: &mut Vec<&str>, style: &Style) {
-    push_run(pieces, removed, &style.del, style);
-    push_run(pieces, added, &style.ins, style);
-}
-
-/// Append one changed run as a single marked piece -- one `<del>` for
-/// everything the edit removed at that point, one `<ins>` for what replaced it,
-/// rather than a pair per word.
-fn push_run(pieces: &mut Vec<String>, run: &mut Vec<&str>, mark: &Mark, style: &Style) {
-    if run.is_empty() {
+/// One changed run, marked: one `<del>` for everything the edit removed at
+/// that point, one `<ins>` for what replaced it, rather than a pair per word --
+/// and whatever the two sides turn out to share left plain between them.
+fn flush(line: &mut Line, removed: &mut Vec<&str>, added: &mut Vec<&str>, style: &Style) {
+    if removed.is_empty() && added.is_empty() {
         return;
     }
-    pieces.push(mark_text(&run.join(" "), mark, style));
-    run.clear();
+    // A side that has no words at all is not the same as one whose only word
+    // is empty: `trailing space ` gaining a second trailing space inserts the
+    // empty token between them, and dropping it would drop the space with it.
+    let del = (!removed.is_empty()).then(|| removed.join(" "));
+    let ins = (!added.is_empty()).then(|| added.join(" "));
+    removed.clear();
+    added.clear();
+    let run = refine(del, ins);
+
+    let mut sep = true;
+    if !run.prefix.is_empty() {
+        line.push(sep, escape(&run.prefix, style));
+        sep = run.sep_after_prefix;
+    }
+    if let Some(text) = &run.del {
+        line.push(sep, mark_text(text, &style.del, style));
+        sep = true;
+    }
+    if let Some(text) = &run.ins {
+        line.push(sep, mark_text(text, &style.ins, style));
+    }
+    if !run.suffix.is_empty() {
+        line.push(run.sep_before_suffix, escape(&run.suffix, style));
+    }
+}
+
+/// A changed run pared back to what actually changed.
+///
+/// A word is whatever sits between two spaces, so a newline lives *inside* a
+/// token: appending a line to `... their reduction` makes one new token
+/// `reduction\nPS:`, which no longer equals the old `reduction` and drags the
+/// untouched word into the marking. The two sides of a replacement are
+/// therefore compared once more, character by character, and the head and tail
+/// they share are handed back plain -- but only when the cut falls on a
+/// whitespace boundary in both, so `cou` -> `cpu` stays one changed word
+/// rather than a marked `p` between a plain `c` and `u`.
+struct Refined {
+    prefix: String,
+    /// Whether the space that separated two tokens was consumed at the cut. It
+    /// was not when the run was opened inside a token, at a newline -- that
+    /// newline stays with the piece that follows.
+    sep_after_prefix: bool,
+    /// `None` for a side the edit did not touch, or one the head and the tail
+    /// turned out to account for entirely.
+    del: Option<String>,
+    ins: Option<String>,
+    sep_before_suffix: bool,
+    suffix: String,
+}
+
+fn refine(del: Option<String>, ins: Option<String>) -> Refined {
+    let plain = |del, ins| Refined {
+        prefix: String::new(),
+        sep_after_prefix: true,
+        del,
+        ins,
+        sep_before_suffix: true,
+        suffix: String::new(),
+    };
+    // Only a replacement has two sides to share anything between.
+    let (Some(del), Some(ins)) = (&del, &ins) else {
+        return plain(del, ins);
+    };
+    if del.is_empty() || ins.is_empty() {
+        return plain(Some(del.clone()), Some(ins.clone()));
+    }
+
+    let head = shared_head(del, ins);
+    let (mut d, mut i) = (&del[head..], &ins[head..]);
+    let mut sep_after_prefix = true;
+    if head > 0 {
+        match (d.strip_prefix(' '), i.strip_prefix(' ')) {
+            (Some(rest_d), Some(rest_i)) => (d, i) = (rest_d, rest_i),
+            (Some(rest_d), None) if i.is_empty() => d = rest_d,
+            (None, Some(rest_i)) if d.is_empty() => i = rest_i,
+            _ => sep_after_prefix = false,
+        }
+    }
+
+    let tail = shared_tail(d, i);
+    let suffix = &d[d.len() - tail..];
+    let (mut d, mut i) = (&d[..d.len() - tail], &i[..i.len() - tail]);
+    let mut sep_before_suffix = true;
+    if tail > 0 {
+        match (d.strip_suffix(' '), i.strip_suffix(' ')) {
+            (Some(rest_d), Some(rest_i)) => (d, i) = (rest_d, rest_i),
+            (Some(rest_d), None) if i.is_empty() => d = rest_d,
+            (None, Some(rest_i)) if d.is_empty() => i = rest_i,
+            _ => sep_before_suffix = false,
+        }
+    }
+
+    Refined {
+        prefix: del[..head].to_string(),
+        sep_after_prefix,
+        del: (!d.is_empty()).then(|| d.to_string()),
+        ins: (!i.is_empty()).then(|| i.to_string()),
+        sep_before_suffix,
+        suffix: suffix.to_string(),
+    }
+}
+
+/// How much of a head the two sides share, cut back to a whitespace boundary
+/// both of them have -- the end of a string counts as one.
+fn shared_head(a: &str, b: &str) -> usize {
+    let mut head = 0;
+    for (x, y) in a.char_indices().zip(b.char_indices()) {
+        if x.1 != y.1 {
+            break;
+        }
+        head = x.0 + x.1.len_utf8();
+    }
+    while head > 0 && !(is_cut(a, head) && is_cut(b, head)) {
+        head = a[..head].char_indices().next_back().map_or(0, |(at, _)| at);
+    }
+    head
+}
+
+/// The same for the tail, in bytes from the end of both.
+fn shared_tail(a: &str, b: &str) -> usize {
+    let mut tail = 0;
+    for (x, y) in a.chars().rev().zip(b.chars().rev()) {
+        if x != y {
+            break;
+        }
+        tail += x.len_utf8();
+    }
+    while tail > 0 && !(is_cut(a, a.len() - tail) && is_cut(b, b.len() - tail)) {
+        tail -= a[a.len() - tail..]
+            .chars()
+            .next()
+            .map_or(tail, char::len_utf8);
+    }
+    tail
+}
+
+/// Whether a run may be opened at this point of a side: at either end of it,
+/// or where a space or a newline stands.
+fn is_cut(s: &str, at: usize) -> bool {
+    at == 0
+        || at == s.len()
+        || s[at..].starts_with(char::is_whitespace)
+        || s[..at].ends_with(char::is_whitespace)
 }
 
 /// The marking itself. The terminal one is applied per line: a strike-through
-/// that spans a newline paints the rest of the terminal line with it.
+/// that spans a newline paints the rest of the terminal line with it. An empty
+/// line is left alone -- a run that begins with a newline would otherwise open
+/// and close the colour at the end of the line above, where nothing changed.
 fn mark_text(text: &str, mark: &Mark, style: &Style) -> String {
     match mark {
         Mark::Ansi(ansi) => text
             .split('\n')
-            .map(|line| ansi.apply_to(line).to_string())
+            .map(|line| {
+                if line.is_empty() {
+                    String::new()
+                } else {
+                    ansi.apply_to(line).to_string()
+                }
+            })
             .collect::<Vec<_>>()
             .join("\n"),
         Mark::Tag(open, close) => format!("{open}{}{close}", escape(text, style)),
@@ -488,6 +664,11 @@ mod tests {
         ("a\\b backslash", "a\\b backslashes"),
         ("", "now it has text"),
         ("all of it goes", "replaced entirely"),
+        (
+            "not their reduction",
+            "not their reduction\nPS: but the roles did",
+        ),
+        ("one\ntwo", "one\nzero\ntwo"),
     ];
 
     /// The header is `diff -u`'s, counted in words.
@@ -544,6 +725,73 @@ mod tests {
                 Some(*original),
                 "{original:?} -> {modified:?}"
             );
+        }
+    }
+
+    /// A line appended to a message: the word it is appended to did not
+    /// change, and neither the old nor the new copy of it may be marked. It is
+    /// one token with the newline inside -- `reduction\nPS:` -- which is what
+    /// used to paint the whole word green and print it twice.
+    #[test]
+    fn a_new_line_marks_only_the_line() {
+        assert_eq!(
+            plain(&inline_diff(
+                "not their reduction",
+                "not their reduction\nPS: but the roles did"
+            )),
+            "not their reduction\n{+PS: but the roles did|"
+        );
+        assert_eq!(
+            bare(&html_diff(
+                "not their reduction",
+                "not their reduction\nPS: but the roles did"
+            )),
+            "not their reduction<ins>\nPS: but the roles did</ins>"
+        );
+    }
+
+    /// The same in the middle of a message, where the shared text is on both
+    /// sides of the change.
+    #[test]
+    fn a_line_inserted_between_two_lines_marks_only_that_line() {
+        assert_eq!(
+            bare(&html_diff("one\ntwo", "one\nzero\ntwo")),
+            "one\n<ins>zero\n</ins>two"
+        );
+    }
+
+    /// The paring only ever cuts on whitespace, so a one-letter typo stays one
+    /// changed word instead of a marked letter between two plain ones.
+    #[test]
+    fn a_typo_inside_a_word_is_not_pared_down_to_the_letter() {
+        assert_eq!(
+            bare(&html_diff("a graph of cou", "a graph of cpu")),
+            "a graph of <del>cou</del> <ins>cpu</ins>"
+        );
+    }
+
+    /// Whatever the marking, the text under it is the message: take the
+    /// removals out and the insertions' tags off and the message is back, which
+    /// is what a diff that is printed *instead of* the message has to promise.
+    #[test]
+    fn the_markup_reads_back_as_the_message() {
+        for (original, modified) in ROUND_TRIP {
+            let mut out = bare(&html_diff(original, modified));
+            while let Some(at) = out.find("<del>") {
+                let mut end = out[at..].find("</del>").unwrap() + at + "</del>".len();
+                // The removal took a space with it -- the one that stood
+                // between it and the piece that follows.
+                if out[end..].starts_with(' ') {
+                    end += 1;
+                }
+                out.replace_range(at..end, "");
+            }
+            let out = out.replace("<ins>", "").replace("</ins>", "");
+            let unescaped = out
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&");
+            assert_eq!(&unescaped, modified, "{original:?} -> {modified:?}");
         }
     }
 
