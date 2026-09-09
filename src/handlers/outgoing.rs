@@ -42,7 +42,7 @@ pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Resul
     };
 
     let text = crate::utils::format_entities::formatted_text(message);
-    let raw = serde_json::to_string(&message.raw).unwrap_or_default();
+    let raw = crate::utils::compact_json::to_string(&message.raw);
     let mut reply = crate::utils::reply_target::reply_info(message);
 
     let media_desc = crate::utils::media_description::describe(message);

@@ -1,4 +1,5 @@
 pub mod admin_chats;
+pub mod compact_json;
 pub mod diff;
 pub mod format_entities;
 pub mod inline_buttons;

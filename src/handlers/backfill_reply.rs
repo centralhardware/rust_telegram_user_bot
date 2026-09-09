@@ -107,7 +107,7 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
         comment_to: reply_reply.comment_to,
             topic_id,
             topic_name,
-            raw: serde_json::to_string(&reply.raw).unwrap_or_default(),
+            raw: crate::utils::compact_json::to_string(&reply.raw),
             media_type: meta.media_type,
             file_name: meta.file_name,
             mime_type: meta.mime_type,
