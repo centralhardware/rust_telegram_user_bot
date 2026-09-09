@@ -79,32 +79,149 @@ def hunks(patch):
     return out
 
 
+class Line:
+    """The diff as it is put back together. A piece is normally separated from
+    the one before it by the single space that stood between two tokens -- but
+    a changed run can be cut open *inside* a token, at a newline, and there the
+    whitespace is already part of the piece and no space is added."""
+
+    def __init__(self, open_):
+        self.out = open_
+        self.empty = True
+
+    def push(self, sep, text):
+        if sep and not self.empty:
+            self.out += " "
+        self.out += text
+        self.empty = False
+
+    def finish(self, close):
+        return self.out + close
+
+
+def is_cut(s, at):
+    """Whether a run may be opened at this point of a side: at either end of
+    it, or where a space or a newline stands."""
+    return at == 0 or at == len(s) or s[at].isspace() or s[at - 1].isspace()
+
+
+def shared_head(a, b):
+    """How much of a head the two sides share, cut back to a whitespace
+    boundary both of them have -- the end of a string counts as one."""
+    head = 0
+    for x, y in zip(a, b):
+        if x != y:
+            break
+        head += 1
+    while head > 0 and not (is_cut(a, head) and is_cut(b, head)):
+        head -= 1
+    return head
+
+
+def shared_tail(a, b):
+    """The same for the tail, counted from the end of both."""
+    tail = 0
+    for x, y in zip(reversed(a), reversed(b)):
+        if x != y:
+            break
+        tail += 1
+    while tail > 0 and not (is_cut(a, len(a) - tail) and is_cut(b, len(b) - tail)):
+        tail -= 1
+    return tail
+
+
+def refine(removed, added):
+    """A changed run pared back to what actually changed.
+
+    A word is whatever sits between two spaces, so a newline lives *inside* a
+    token: appending a line to `... their reduction` makes one new token
+    `reduction\nPS:`, which no longer equals the old `reduction` and drags the
+    untouched word into the marking. The two sides of a replacement are
+    therefore compared once more, character by character, and the head and tail
+    they share are handed back plain -- but only when the cut falls on a
+    whitespace boundary in both, so `cou` -> `cpu` stays one changed word
+    rather than a marked `p` between a plain `c` and `u`.
+
+    `None` is a side the edit did not touch, or one the head and the tail
+    turned out to account for entirely -- which is not the same as a side whose
+    only word is empty.
+    """
+    plain = ("", True, removed, added, True, "")
+    # Only a replacement has two sides to share anything between.
+    if not removed or not added:
+        return plain
+
+    head = shared_head(removed, added)
+    d, i = removed[head:], added[head:]
+    sep_after_prefix = True
+    if head > 0:
+        if d.startswith(" ") and i.startswith(" "):
+            d, i = d[1:], i[1:]
+        elif d.startswith(" ") and not i:
+            d = d[1:]
+        elif i.startswith(" ") and not d:
+            i = i[1:]
+        else:
+            sep_after_prefix = False
+
+    tail = shared_tail(d, i)
+    suffix = d[len(d) - tail :] if tail else ""
+    d, i = d[: len(d) - tail], i[: len(i) - tail]
+    sep_before_suffix = True
+    if tail > 0:
+        if d.endswith(" ") and i.endswith(" "):
+            d, i = d[:-1], i[:-1]
+        elif d.endswith(" ") and not i:
+            d = d[:-1]
+        elif i.endswith(" ") and not d:
+            i = i[:-1]
+        else:
+            sep_before_suffix = False
+
+    return (removed[:head], sep_after_prefix, d or None, i or None, sep_before_suffix, suffix)
+
+
 def render(message, patch, mode):
     """Walk the hunks, taking the untouched words out of the message as they
     come. A word is whatever sits between two single spaces, so a newline is
     *inside* a token and splitting on the space and joining on it again gives
     the message back byte for byte."""
     words = message.split(" ")
-    if mode == "html":
-        words = [escape_html(w) for w in words]
-
-    pieces, cursor = [], 0
-    for hunk in hunks(patch):
-        pieces.extend(words[cursor : hunk["at"]])
-        if mode == "html":
+    if mode != "html":
+        pieces, cursor = [], 0
+        for hunk in hunks(patch):
+            pieces.extend(words[cursor : hunk["at"]])
             if hunk["removes"]:
-                pieces.append(f"<del>{escape_html(hunk['removed'])}</del>")
-            if hunk["added_len"]:
-                pieces.append(f"<ins>{escape_html(hunk['added'])}</ins>")
-        elif hunk["removes"]:
-            # The other direction: the removed words go back in, the added
-            # ones are left out.
-            pieces.append(hunk["removed"])
-        cursor = hunk["at"] + hunk["added_len"]
-    pieces.extend(words[cursor:])
+                # The other direction: the removed words go back in, the added
+                # ones are left out.
+                pieces.append(hunk["removed"])
+            cursor = hunk["at"] + hunk["added_len"]
+        pieces.extend(words[cursor:])
+        return " ".join(pieces)
 
-    body = " ".join(pieces)
-    return f"{WRAPPER[0]}{body}{WRAPPER[1]}" if mode == "html" else body
+    line, cursor = Line(WRAPPER[0]), 0
+    for hunk in hunks(patch):
+        for word in words[cursor : hunk["at"]]:
+            line.push(True, escape_html(word))
+        prefix, sep_after, removed, added, sep_before, suffix = refine(
+            hunk["removed"] if hunk["removes"] else None,
+            hunk["added"] if hunk["added_len"] else None,
+        )
+        sep = True
+        if prefix:
+            line.push(sep, escape_html(prefix))
+            sep = sep_after
+        if removed is not None:
+            line.push(sep, f"<del>{escape_html(removed)}</del>")
+            sep = True
+        if added is not None:
+            line.push(sep, f"<ins>{escape_html(added)}</ins>")
+        if suffix:
+            line.push(sep_before, escape_html(suffix))
+        cursor = hunk["at"] + hunk["added_len"]
+    for word in words[cursor:]:
+        line.push(True, escape_html(word))
+    return line.finish(WRAPPER[1])
 
 
 def main():
