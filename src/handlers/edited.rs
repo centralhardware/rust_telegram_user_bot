@@ -69,8 +69,10 @@ pub async fn save_edited(
     // stands, the patch against what stood before -- the words that went and the
     // words that came, and nothing that stayed, which `edit_diff_html` turns back
     // into the marked-up message a board prints -- and the media the text
-    // describes. Everything else is fixed when the message is sent and already on
-    // its send row.
+    // describes, plus the message object as it now stands -- an edit rewrites
+    // that too, so the send row's copy is stale for an edited message.
+    // Everything else is fixed when the message is sent and already on its send
+    // row.
     let meta = crate::utils::media_description::media_meta(message).unwrap_or_default();
 
     crate::db::EVENTS_BUF.push(Event {
@@ -79,6 +81,7 @@ pub async fn save_edited(
         message_id: msg_id,
         message: message_content,
         diff,
+        raw: serde_json::to_string(&std::ops::Deref::deref(message).raw).unwrap_or_default(),
         media_type: meta.media_type,
         file_name: meta.file_name,
         mime_type: meta.mime_type,
