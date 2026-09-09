@@ -24,9 +24,10 @@ impl Target {
 /// Format reply line for log messages.
 /// Returns a line to print *above* the message, or empty string if no reply.
 ///
-/// A comment on a channel post gets two lines: the post it comments on, then
-/// the comment it answers — the post is what gives the rest its meaning, and
-/// with only the ids the thread reads as a pair of bare numbers.
+/// One line, the message replied to: a comment that answers another comment is
+/// an ordinary reply, and printing the post above it as well reads as if it
+/// commented on the post instead. Only a top-level comment names the post, and
+/// then the post *is* the target.
 pub async fn format_reply_line(message: &Message) -> String {
     let reply_id = match crate::utils::reply_target::reply_target(message) {
         Some(id) => id,
@@ -47,19 +48,7 @@ pub async fn format_reply_line(message: &Message) -> String {
 
     let target = lookup(target_chat_id, reply_id).await;
 
-    let mut lines = Vec::new();
-
-    // The post above the comment, when the comment answers another comment and
-    // the post itself is a message further up the thread.
-    if let Some(top) = header.reply_to_top_id.filter(|top| *top != reply_id) {
-        let post = lookup(target_chat_id, top).await;
-        if post.is_post() {
-            lines.push(render(top, &post, None).await);
-        }
-    }
-
-    lines.push(render(reply_id, &target, header.quote_text.as_deref()).await);
-    lines.join("\n")
+    render(reply_id, &target, header.quote_text.as_deref()).await
 }
 
 /// One preview line: the id in the message-id column, the chat it is in, who
