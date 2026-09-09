@@ -11,6 +11,7 @@ use grammers_client::peer::Peer;
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
 
+use crate::db::WriteBuffer;
 use crate::handlers::extract::{ChatInfo, SenderInfo};
 
 /// The community a chat belongs to. Only a channel or a supergroup can be in
@@ -115,11 +116,22 @@ impl PeerNames {
 
 /// The stored names for a peer, or `None` when it has never been seen.
 ///
+/// The buffer is checked first: a peer seen this minute is not in ClickHouse
+/// yet, and missing it would send the caller back to Telegram to resolve a name
+/// already in hand.
+///
 /// Deliberately unmemoised: ClickHouse is the only place names live, so a
 /// rename anywhere is picked up on the next lookup and nothing has to be
 /// invalidated. Only the path where the update arrived without a name reaches
 /// this — a named update never queries at all.
 pub async fn load(peer_id: i64) -> Option<PeerNames> {
+    if let Some(names) = PEER_NAMES_BUF
+        .find_last(|n| (n.peer_id == peer_id).then(|| n.clone()))
+        .await
+    {
+        return Some(names);
+    }
+
     match crate::db::clickhouse()
         .query(
             "SELECT peer_id, title, first_name, last_name, usernames, community_id \
@@ -141,23 +153,25 @@ pub async fn load(peer_id: i64) -> Option<PeerNames> {
     }
 }
 
+/// Names waiting to be written, flushed on the same minute tick as the events.
+///
+/// `remember` is called for every named peer that passes through — about twice
+/// per message, chat and sender — and a request each would be a request per
+/// message spent on names that almost never change. Buffering makes it one
+/// batched insert a minute instead, and `ReplacingMergeTree` collapses whatever
+/// repeats still get through.
+pub static PEER_NAMES_BUF: WriteBuffer<PeerNames> = WriteBuffer::new("peer_names");
+
 /// Store a peer's names.
 ///
-/// Called for every named peer that passes through, so this runs about once per
-/// message: the insert is async and unwaited, and `ReplacingMergeTree` collapses
-/// the repeats on merge, which is what keeps that affordable.
+/// A row identical to one already waiting is dropped rather than queued again,
+/// so the repeated peers of a busy chat cost nothing beyond the first.
 pub async fn remember(names: &PeerNames) {
-    match crate::db::clickhouse_async_insert()
-        .insert::<PeerNames>("peer_names")
-        .await
-    {
-        Ok(mut insert) => {
-            if let Err(e) = insert.write(names).await {
-                error!("failed to write names for peer {}: {e}", names.peer_id);
-            } else if let Err(e) = insert.end().await {
-                error!("failed to flush names for peer {}: {e}", names.peer_id);
-            }
-        }
-        Err(e) => error!("failed to insert names for peer {}: {e}", names.peer_id),
+    let queued = PEER_NAMES_BUF
+        .find_last(|n| (n.peer_id == names.peer_id).then(|| n == names))
+        .await;
+    if queued == Some(true) {
+        return;
     }
+    PEER_NAMES_BUF.push(names.clone()).await;
 }
