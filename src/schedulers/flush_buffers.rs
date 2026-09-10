@@ -4,16 +4,10 @@ use crate::db;
 
 pub async fn flush_all() {
     let events = db::EVENTS_BUF.flush().await;
-    if events > 0 {
-        log::info!("flushed events: {events}");
-    }
     let names = crate::utils::peer_names::PEER_NAMES_BUF.flush().await;
-    if names > 0 {
-        log::info!("flushed peer names: {names}");
-    }
     let peers = crate::clickhouse_session::PEER_CACHE_BUF.flush().await;
-    if peers > 0 {
-        log::info!("flushed peers: {peers}");
+    if events > 0 || names > 0 || peers > 0 {
+        log::info!("flushed: events={events} peer_names={names} peers={peers}");
     }
 }
 
