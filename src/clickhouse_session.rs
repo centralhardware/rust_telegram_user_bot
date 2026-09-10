@@ -12,12 +12,12 @@ use grammers_session::{Session, SessionData};
 use log::{debug, error, warn};
 use serde::{Deserialize, Serialize};
 
-use crate::db::{clickhouse, clickhouse_async_insert};
+use crate::db::{clickhouse, WriteBuffer};
 
 // ── ClickHouse row types ────────────────────────────────────────────
 
-#[derive(Row, Serialize, Deserialize)]
-struct PeerRow {
+#[derive(Row, Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+pub struct PeerRow {
     peer_id: i64,
     hash: Option<i64>,
     subtype: Option<u8>,
@@ -237,6 +237,29 @@ fn dc_option_from_row(row: &DcOptionRow) -> Option<DcOption> {
     })
 }
 
+// ── Write buffer ────────────────────────────────────────────────────
+
+/// Peers waiting to be written, flushed on the same minute tick as the events.
+///
+/// `cache_peer` is called for every peer grammers sees — every sender and chat
+/// of every update, and a whole dialog list at once after a sync — and a
+/// request each would be several requests per message spent on rows that
+/// almost never change. Buffering makes it one batched insert a minute, and
+/// `ReplacingMergeTree` collapses whatever repeats still get through.
+pub static PEER_CACHE_BUF: WriteBuffer<PeerRow> = WriteBuffer::new("peer_cache");
+
+/// Queue a peer row, dropping one identical to a row already waiting so the
+/// repeated peers of a busy chat cost nothing beyond the first.
+async fn remember_peer(row: PeerRow) {
+    let queued = PEER_CACHE_BUF
+        .find_last(|r| (r.peer_id == row.peer_id).then(|| *r == row))
+        .await;
+    if queued == Some(true) {
+        return;
+    }
+    PEER_CACHE_BUF.push(row).await;
+}
+
 // ── Session trait ───────────────────────────────────────────────────
 
 impl Session for ClickhouseSession {
@@ -293,6 +316,27 @@ impl Session for ClickhouseSession {
         Box::pin(async move {
             const MAX_ATTEMPTS: u32 = 5;
             let is_self_query = peer.bot_api_dialog_id().is_none();
+
+            // A peer cached this minute is not in ClickHouse yet, and missing
+            // it would send grammers back to Telegram to resolve an id already
+            // in hand.
+            let buffered = if is_self_query {
+                PEER_CACHE_BUF
+                    .find_last(|r| {
+                        (r.subtype.is_some_and(|s| s & PeerSubtype::UserSelf as u8 != 0))
+                            .then(|| (PeerId::user_unchecked(r.peer_id), r.clone()))
+                    })
+                    .await
+            } else {
+                let dialog_id = peer.bot_api_dialog_id().unwrap();
+                PEER_CACHE_BUF
+                    .find_last(|r| (r.peer_id == dialog_id).then(|| (peer, r.clone())))
+                    .await
+            };
+            if let Some((resolved, row)) = buffered {
+                debug!("peer {:?} found in the write buffer", peer);
+                return Ok(Some(decode_peer(resolved, &row)));
+            }
 
             let mut attempt = 0;
             loop {
@@ -359,48 +403,18 @@ impl Session for ClickhouseSession {
 
     fn cache_peer(&self, peer: PeerInfo) -> BoxFuture<'_, Result<(), Self::Error>> {
         Box::pin(async move {
-            let row = peer_to_row(&peer);
-
-            match clickhouse_async_insert().insert::<PeerRow>("peer_cache").await {
-                Ok(mut insert) => {
-                    if let Err(e) = insert.write(&row).await {
-                        error!("failed to write peer {} to clickhouse: {}", row.peer_id, e);
-                    } else if let Err(e) = insert.end().await {
-                        error!("failed to flush peer {} to clickhouse: {}", row.peer_id, e);
-                    }
-                }
-                Err(e) => {
-                    error!("failed to insert peer {} to clickhouse: {}", row.peer_id, e);
-                }
-            }
+            remember_peer(peer_to_row(&peer)).await;
             Ok(())
         })
     }
 
     /// Bulk variant of [`cache_peer`]: grammers hands us a whole batch after a
-    /// dialogs sync or a large update, so write all of them through a single
-    /// insert instead of opening one per peer.
+    /// dialogs sync or a large update, so they all land in the same buffer and
+    /// leave as one insert on the next tick.
     fn cache_peers(&self, peers: Vec<PeerInfo>) -> BoxFuture<'_, Result<(), Self::Error>> {
         Box::pin(async move {
-            if peers.is_empty() {
-                return Ok(());
-            }
-
-            match clickhouse_async_insert().insert::<PeerRow>("peer_cache").await {
-                Ok(mut insert) => {
-                    for peer in &peers {
-                        let row = peer_to_row(peer);
-                        if let Err(e) = insert.write(&row).await {
-                            error!("failed to write peer {} to clickhouse: {}", row.peer_id, e);
-                        }
-                    }
-                    if let Err(e) = insert.end().await {
-                        error!("failed to flush {} peers to clickhouse: {}", peers.len(), e);
-                    }
-                }
-                Err(e) => {
-                    error!("failed to insert {} peers to clickhouse: {}", peers.len(), e);
-                }
+            for peer in &peers {
+                remember_peer(peer_to_row(peer)).await;
             }
             Ok(())
         })

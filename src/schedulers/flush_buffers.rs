@@ -11,6 +11,10 @@ pub async fn flush_all() {
     if names > 0 {
         log::info!("flushed peer names: {names}");
     }
+    let peers = crate::clickhouse_session::PEER_CACHE_BUF.flush().await;
+    if peers > 0 {
+        log::info!("flushed peers: {peers}");
+    }
 }
 
 pub fn start() {
