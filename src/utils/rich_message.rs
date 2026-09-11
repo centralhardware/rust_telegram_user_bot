@@ -225,11 +225,9 @@ fn render_block(block: &tl::enums::PageBlock) -> String {
 }
 
 /// Telegram's own client draws a real table; a log line or a ClickHouse row
-/// can't, and a wall of `| a | b |` is what used to land there. A narrow table
-/// is laid out as aligned monospace columns, a wide one (the usual case once a
-/// cell holds a URL) as one labelled record per row, with empty cells dropped.
-const TABLE_ALIGNED_WIDTH: usize = 60;
-
+/// can't, and a wall of `| a | b |` is what used to land there. The cells are
+/// padded to a fixed column width instead, so every `|` sits directly under
+/// the one above it, with a rule under the header row.
 fn render_table(table: &tl::types::PageBlockTable) -> String {
     let mut grid: Vec<Vec<String>> = table
         .rows
@@ -263,7 +261,6 @@ fn render_table(table: &tl::types::PageBlockTable) -> String {
     let widths: Vec<usize> = (0..width)
         .map(|i| grid.iter().map(|r| r[i].chars().count()).max().unwrap_or(0))
         .collect();
-    let total: usize = widths.iter().sum::<usize>() + 2 * (width - 1);
 
     let mut out = Vec::new();
     let title = render_text(&table.title);
@@ -271,56 +268,31 @@ fn render_table(table: &tl::types::PageBlockTable) -> String {
         out.push(title);
     }
 
-    if total <= TABLE_ALIGNED_WIDTH || grid.len() == 1 {
-        let line = |cells: &[String]| {
-            cells
-                .iter()
-                .zip(&widths)
-                .map(|(cell, w)| format!("{:pad$}", cell, pad = w))
-                .collect::<Vec<_>>()
-                .join("  ")
-                .trim_end()
-                .to_string()
-        };
-        out.push(line(&grid[0]));
-        out.push(
-            widths
-                .iter()
-                .map(|w| "\u{2500}".repeat(*w))
-                .collect::<Vec<_>>()
-                .join("  "),
-        );
-        for row in &grid[1..] {
-            out.push(line(row));
-        }
-        return out.join("\n");
-    }
+    let line = |cells: &[String]| {
+        let body = cells
+            .iter()
+            .zip(&widths)
+            .map(|(cell, w)| {
+                let pad = w - cell.chars().count();
+                format!("{}{}", cell, " ".repeat(pad))
+            })
+            .collect::<Vec<_>>()
+            .join(" | ");
+        format!("| {} |", body)
+    };
 
-    let header = &grid[0];
-    let records = grid[1..]
-        .iter()
-        .map(|row| {
-            let label = if row[0].is_empty() {
-                "\u{2014}"
-            } else {
-                row[0].as_str()
-            };
-            let mut lines = vec![format!("**{}**", label)];
-            for (i, cell) in row.iter().enumerate().skip(1) {
-                if cell.is_empty() {
-                    continue;
-                }
-                lines.push(if header[i].is_empty() {
-                    cell.clone()
-                } else {
-                    format!("{}: {}", header[i], cell)
-                });
-            }
-            lines.join("\n")
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    out.push(records);
+    out.push(line(&grid[0]));
+    out.push(format!(
+        "|{}|",
+        widths
+            .iter()
+            .map(|w| "-".repeat(w + 2))
+            .collect::<Vec<_>>()
+            .join("|")
+    ));
+    for row in &grid[1..] {
+        out.push(line(row));
+    }
     out.join("\n")
 }
 
@@ -513,37 +485,36 @@ mod tests {
     }
 
     #[test]
-    fn narrow_table_is_aligned_into_columns() {
+    fn columns_are_aligned_under_one_another() {
         let out = render_table(&table(&[&["a", "b"], &["1", "2"], &["30", "4"]]));
-        assert_eq!(out, "a   b\n\u{2500}\u{2500}  \u{2500}\n1   2\n30  4");
+        assert_eq!(out, "| a  | b |\n|----|---|\n| 1  | 2 |\n| 30 | 4 |");
     }
 
     #[test]
-    fn wide_table_becomes_one_record_per_row() {
+    fn wide_cells_keep_the_column_layout() {
         let out = render_table(&table(&[
-            &["service", "issue", "comment"],
+            &["service", "issue"],
             &[
                 "sh-cars",
                 "https://git.example.com/shamrock/cars/-/issues/89",
-                "supported",
             ],
-            &["sh-router", "", ""],
+            &["sh-router", ""],
         ]));
         assert_eq!(
             out,
-            "**sh-cars**\nissue: https://git.example.com/shamrock/cars/-/issues/89\ncomment: supported\n\n**sh-router**"
+            "| service   | issue                                             |\n|-----------|---------------------------------------------------|\n| sh-cars   | https://git.example.com/shamrock/cars/-/issues/89 |\n| sh-router |                                                   |"
         );
     }
 
     #[test]
     fn ragged_rows_are_padded_not_dropped() {
         let out = render_table(&table(&[&["a", "b"], &["1"]]));
-        assert_eq!(out, "a  b\n\u{2500}  \u{2500}\n1");
+        assert_eq!(out, "| a | b |\n|---|---|\n| 1 |   |");
     }
 
     #[test]
     fn header_only_table_still_renders() {
         let out = render_table(&table(&[&["a", "b"]]));
-        assert_eq!(out, "a  b\n\u{2500}  \u{2500}");
+        assert_eq!(out, "| a | b |\n|---|---|");
     }
 }
