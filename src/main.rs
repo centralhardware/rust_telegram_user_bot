@@ -104,8 +104,8 @@ async fn main() -> Result<()> {
                             handlers::save_reactions(u).await;
                         }
                         // Nor for what else can happen to a message after it is
-                        // sent: pinned or unpinned, voted in, transcribed, or
-                        // seen and forwarded often enough for Telegram to say so.
+                        // sent: pinned or unpinned, voted in, or seen and
+                        // forwarded often enough for Telegram to say so.
                         tl::enums::Update::PinnedMessages(u) => {
                             let peer = grammers_client::session::types::PeerId::from(&u.peer);
                             handlers::save_pinned(
@@ -127,9 +127,6 @@ async fn main() -> Result<()> {
                         }
                         tl::enums::Update::MessagePoll(u) => {
                             handlers::save_poll(u).await;
-                        }
-                        tl::enums::Update::TranscribedAudio(u) => {
-                            handlers::save_transcription(u).await;
                         }
                         tl::enums::Update::ChannelMessageViews(u) => {
                             handlers::save_views(u.channel_id, u.id, u.views.max(0) as u32, 0).await;

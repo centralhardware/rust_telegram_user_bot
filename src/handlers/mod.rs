@@ -11,7 +11,6 @@ mod pins;
 mod polls;
 mod reactions;
 mod service;
-mod transcription;
 mod views;
 
 pub use auto_cat::handle_auto_cat;
@@ -26,5 +25,4 @@ pub use pins::save_pinned;
 pub use polls::save_poll;
 pub use reactions::save_reactions;
 pub use service::save_service;
-pub use transcription::save_transcription;
 pub use views::save_views;
