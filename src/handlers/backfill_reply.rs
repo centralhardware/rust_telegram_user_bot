@@ -133,7 +133,9 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
             silent: meta_msg.silent,
             noforwards: meta_msg.noforwards,
             ttl_period: meta_msg.ttl_period,
-            ..Event::send()
+            // A service message is an event of the chat, logged under its own
+            // event name, exactly as `save_incoming` does for a live one.
+            ..if reply.action().is_some() { Event::service() } else { Event::send() }
         })
         .await;
 
@@ -150,8 +152,10 @@ async fn message_exists(chat_id: i64, message_id: i32) -> bool {
     let in_buf = crate::db::EVENTS_BUF
         .find_last(|e| {
             // An ephemeral id names a different message entirely, so one must
-            // never answer for an ordinary id.
-            if e.event == crate::db::SEND
+            // never answer for an ordinary id. A service message is logged under
+            // its own event, and it is still the message this id names — missing
+            // it would backfill a duplicate of a row already written.
+            if (e.event == crate::db::SEND || e.event == crate::db::SERVICE)
                 && !e.ephemeral
                 && e.chat_id == chat_id
                 && e.message_id == message_id as i64
@@ -170,11 +174,12 @@ async fn message_exists(chat_id: i64, message_id: i32) -> bool {
     if let Ok(count) = crate::db::clickhouse()
         .query(
             "SELECT count() FROM events_log \
-             WHERE chat_id = ? AND message_id = ? AND event = ? AND NOT ephemeral",
+             WHERE chat_id = ? AND message_id = ? AND event IN (?, ?) AND NOT ephemeral",
         )
         .bind(chat_id)
         .bind(message_id as i64)
         .bind(crate::db::SEND)
+        .bind(crate::db::SERVICE)
         .fetch_one::<u64>()
         .await
     {

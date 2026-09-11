@@ -18,6 +18,12 @@ pub fn clickhouse() -> &'static Client {
 pub struct WriteBuffer<T: Send + 'static> {
     table: &'static str,
     buffer: Mutex<Vec<T>>,
+    /// Rows a flush has taken out of `buffer` and is still writing to
+    /// ClickHouse. They are in neither place otherwise, and a lookup landing in
+    /// that window — `backfill_reply`'s "do we already have this message?" — saw
+    /// nothing and wrote the row a second time. Kept here until the insert ends,
+    /// so `find_last` can still answer for them.
+    inflight: Mutex<Vec<T>>,
 }
 
 impl<T> WriteBuffer<T>
@@ -29,6 +35,7 @@ where
         Self {
             table,
             buffer: Mutex::const_new(Vec::new()),
+            inflight: Mutex::const_new(Vec::new()),
         }
     }
 
@@ -40,22 +47,41 @@ where
     where
         F: Fn(&T) -> Option<R>,
     {
-        self.buffer.lock().await.iter().rev().find_map(f)
+        // Newest first: the buffer, then the rows a flush is still writing,
+        // which are older than anything left in the buffer.
+        if let Some(found) = self.buffer.lock().await.iter().rev().find_map(&f) {
+            return Some(found);
+        }
+        self.inflight.lock().await.iter().rev().find_map(&f)
     }
 
     pub async fn flush(&self) -> usize {
-        let rows: Vec<T> = {
+        // Moved, not dropped: until the insert has ended the rows still have to
+        // answer `find_last`, or a lookup in that window writes them again.
+        let count = {
             let mut buf = self.buffer.lock().await;
             if buf.is_empty() {
                 return 0;
             }
-            std::mem::take(&mut *buf)
+            let mut inflight = self.inflight.lock().await;
+            inflight.append(&mut buf);
+            inflight.len()
         };
-        let count = rows.len();
+
+        let written = self.write_inflight(count).await;
+
+        self.inflight.lock().await.clear();
+        written
+    }
+
+    /// Write what `inflight` holds. Split out so `flush` clears `inflight` on
+    /// every path out of it, error ones included.
+    async fn write_inflight(&self, count: usize) -> usize {
+        let rows = self.inflight.lock().await;
         match clickhouse().insert::<T>(self.table).await {
             Ok(mut insert) => {
-                for row in rows {
-                    if let Err(e) = insert.write(&row).await {
+                for row in rows.iter() {
+                    if let Err(e) = insert.write(row).await {
                         log::error!("buffer write to {}: {e}", self.table);
                         return 0;
                     }
