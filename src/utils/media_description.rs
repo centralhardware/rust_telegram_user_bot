@@ -258,6 +258,9 @@ pub struct MediaMeta {
     pub lon: f64,
     pub poll_question: String,
     pub poll_options: Vec<String>,
+    /// Telegram's id for the poll, which is what a later results update names it
+    /// by when it names no message.
+    pub poll_id: i64,
 }
 
 pub fn media_meta(message: &Message) -> Option<MediaMeta> {
@@ -311,6 +314,7 @@ fn meta_of(media: &tl::enums::MessageMedia) -> MediaMeta {
         tl::enums::MessageMedia::Poll(p) => {
             let tl::enums::Poll::Poll(poll) = &p.poll;
             let tl::enums::TextWithEntities::Entities(q) = &poll.question;
+            meta.poll_id = poll.id;
             meta.poll_question = q.text.clone();
             meta.poll_options = poll
                 .answers

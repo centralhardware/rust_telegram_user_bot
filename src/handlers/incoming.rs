@@ -144,6 +144,7 @@ pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, 
         lon: meta.lon,
         poll_question: meta.poll_question,
         poll_options: meta.poll_options,
+        poll_id: meta.poll_id,
         ..base
     };
 
