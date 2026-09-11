@@ -23,8 +23,9 @@ const DOWNLOAD_GAP: std::time::Duration = std::time::Duration::from_millis(500);
 
 struct Job {
     media: Media,
-    /// The `events_log` row this file belongs to, written again with the S3
-    /// columns filled once the upload is done.
+    /// The `events_log` send row this file belongs to. It is never written
+    /// again: once the upload is done the archiver logs a `file_uploaded` row
+    /// pointing back at it.
     event: Event,
 }
 
@@ -161,7 +162,7 @@ async fn archive(
     };
 
     crate::db::EVENTS_BUF
-        .push(job.event.archived(sha256, storage.bucket.clone(), key, size))
+        .push(job.event.file_uploaded(sha256, storage.bucket.clone(), key, size))
         .await;
 
     Ok(())
