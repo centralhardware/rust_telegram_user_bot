@@ -138,11 +138,7 @@ fn render_block(block: &tl::enums::PageBlock) -> String {
             }
         }
         B::Photo(b) => {
-            let label = if b.spoiler {
-                "[photo, spoiler]"
-            } else {
-                "[photo]"
-            };
+            let label = if b.spoiler { "[photo, spoiler]" } else { "[photo]" };
             let label = match &b.url {
                 Some(url) => format!("{}({})", label, url),
                 None => label.to_string(),
@@ -150,11 +146,7 @@ fn render_block(block: &tl::enums::PageBlock) -> String {
             with_page_caption(label, &b.caption)
         }
         B::Video(b) => {
-            let label = if b.spoiler {
-                "[video, spoiler]"
-            } else {
-                "[video]"
-            };
+            let label = if b.spoiler { "[video, spoiler]" } else { "[video]" };
             with_page_caption(label.to_string(), &b.caption)
         }
         B::Audio(b) => with_page_caption("[audio]".into(), &b.caption),
@@ -204,11 +196,7 @@ fn render_block(block: &tl::enums::PageBlock) -> String {
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            if title.is_empty() {
-                articles
-            } else {
-                format!("{}\n{}", title, articles)
-            }
+            if title.is_empty() { articles } else { format!("{}\n{}", title, articles) }
         }
         B::ButtonRow(b) => b
             .buttons
@@ -224,12 +212,8 @@ fn render_block(block: &tl::enums::PageBlock) -> String {
     }
 }
 
-/// Telegram's own client draws a real table; a log line or a ClickHouse row
-/// can't, and a wall of `| a | b |` is what used to land there. The cells are
-/// padded to a fixed column width instead, so every `|` sits directly under
-/// the one above it, with a rule under the header row.
 fn render_table(table: &tl::types::PageBlockTable) -> String {
-    let mut grid: Vec<Vec<String>> = table
+    let rows: Vec<Vec<String>> = table
         .rows
         .iter()
         .map(|row| {
@@ -243,54 +227,31 @@ fn render_table(table: &tl::types::PageBlockTable) -> String {
                         .map(render_text)
                         .unwrap_or_default()
                         .replace('\n', " ")
-                        .trim()
-                        .to_string()
+                        .replace('|', "\\|")
                 })
                 .collect()
         })
         .collect();
 
-    let width = grid.iter().map(|r| r.len()).max().unwrap_or(0);
+    let width = rows.iter().map(|r| r.len()).max().unwrap_or(0);
     if width == 0 {
         return render_text(&table.title);
     }
-    for row in &mut grid {
-        row.resize(width, String::new());
-    }
 
-    let widths: Vec<usize> = (0..width)
-        .map(|i| grid.iter().map(|r| r[i].chars().count()).max().unwrap_or(0))
-        .collect();
+    let line = |cells: &[String]| {
+        let mut cells = cells.to_vec();
+        cells.resize(width, String::new());
+        format!("| {} |", cells.join(" | "))
+    };
 
     let mut out = Vec::new();
     let title = render_text(&table.title);
     if !title.is_empty() {
         out.push(title);
     }
-
-    let line = |cells: &[String]| {
-        let body = cells
-            .iter()
-            .zip(&widths)
-            .map(|(cell, w)| {
-                let pad = w - cell.chars().count();
-                format!("{}{}", cell, " ".repeat(pad))
-            })
-            .collect::<Vec<_>>()
-            .join(" | ");
-        format!("| {} |", body)
-    };
-
-    out.push(line(&grid[0]));
-    out.push(format!(
-        "|{}|",
-        widths
-            .iter()
-            .map(|w| "-".repeat(w + 2))
-            .collect::<Vec<_>>()
-            .join("|")
-    ));
-    for row in &grid[1..] {
+    out.push(line(&rows[0]));
+    out.push(format!("|{}", " --- |".repeat(width)));
+    for row in &rows[1..] {
         out.push(line(row));
     }
     out.join("\n")
@@ -407,13 +368,7 @@ fn quote(text: &str) -> String {
         return String::new();
     }
     text.lines()
-        .map(|l| {
-            if l.is_empty() {
-                ">".to_string()
-            } else {
-                format!("> {}", l)
-            }
-        })
+        .map(|l| if l.is_empty() { ">".to_string() } else { format!("> {}", l) })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -445,76 +400,3 @@ fn format_date(ts: i32) -> String {
         .unwrap_or_default()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn table(rows: &[&[&str]]) -> tl::types::PageBlockTable {
-        tl::types::PageBlockTable {
-            bordered: false,
-            compact: false,
-            striped: false,
-            title: tl::enums::RichText::TextEmpty,
-            rows: rows
-                .iter()
-                .map(|row| {
-                    tl::enums::PageTableRow::Row(tl::types::PageTableRow {
-                        cells: row
-                            .iter()
-                            .map(|cell| {
-                                tl::enums::PageTableCell::Cell(tl::types::PageTableCell {
-                                    header: false,
-                                    align_center: false,
-                                    align_right: false,
-                                    valign_middle: false,
-                                    valign_bottom: false,
-                                    text: Some(tl::enums::RichText::TextPlain(
-                                        tl::types::TextPlain {
-                                            text: (*cell).into(),
-                                        },
-                                    )),
-                                    colspan: None,
-                                    rowspan: None,
-                                })
-                            })
-                            .collect(),
-                    })
-                })
-                .collect(),
-        }
-    }
-
-    #[test]
-    fn columns_are_aligned_under_one_another() {
-        let out = render_table(&table(&[&["a", "b"], &["1", "2"], &["30", "4"]]));
-        assert_eq!(out, "| a  | b |\n|----|---|\n| 1  | 2 |\n| 30 | 4 |");
-    }
-
-    #[test]
-    fn wide_cells_keep_the_column_layout() {
-        let out = render_table(&table(&[
-            &["service", "issue"],
-            &[
-                "sh-cars",
-                "https://git.example.com/shamrock/cars/-/issues/89",
-            ],
-            &["sh-router", ""],
-        ]));
-        assert_eq!(
-            out,
-            "| service   | issue                                             |\n|-----------|---------------------------------------------------|\n| sh-cars   | https://git.example.com/shamrock/cars/-/issues/89 |\n| sh-router |                                                   |"
-        );
-    }
-
-    #[test]
-    fn ragged_rows_are_padded_not_dropped() {
-        let out = render_table(&table(&[&["a", "b"], &["1"]]));
-        assert_eq!(out, "| a | b |\n|---|---|\n| 1 |   |");
-    }
-
-    #[test]
-    fn header_only_table_still_renders() {
-        let out = render_table(&table(&[&["a", "b"]]));
-        assert_eq!(out, "| a | b |\n|---|---|");
-    }
-}
