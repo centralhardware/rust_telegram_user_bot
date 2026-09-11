@@ -1,5 +1,4 @@
 use grammers_client::Client;
-use grammers_client::peer::Peer;
 use grammers_session::types::PeerRef;
 use grammers_tl_types as tl;
 use log::{error, info};
@@ -61,71 +60,155 @@ pub fn start(client: Client, _client_id: u64) {
 /// Every chat in the dialog list where the logged-in account holds admin rights.
 ///
 /// Only channels and megagroups keep an admin log; basic groups are skipped.
+///
+/// The dialog list is read through the raw `messages.getDialogs` rather than
+/// `Client::iter_dialogs`, which panics -- "dialogs use an unknown peer" -- as
+/// soon as the account belongs to a community: `dialogCommunity` carries a
+/// `community_id` and no peer at all, so the peer it is looked up by is in no
+/// response, and the panic takes the whole process down from a background task.
+/// Nothing here needs a `Dialog` anyway. Everything this wants -- the title, the
+/// usernames, the admin rights -- is on the `Chat` objects the same response
+/// carries, and a chat is a chat whatever kind of dialog pointed at it.
 async fn discover_admin_chats(
     client: &Client,
 ) -> Result<Vec<AdminChat>, Box<dyn std::error::Error>> {
     let mut chats = Vec::new();
-    let mut dialogs = client.iter_dialogs();
+    let mut seen: HashSet<i64> = HashSet::new();
+    let mut request = tl::functions::messages::GetDialogs {
+        exclude_pinned: false,
+        folder_id: None,
+        offset_date: 0,
+        offset_id: 0,
+        offset_peer: tl::enums::InputPeer::Empty,
+        limit: DIALOG_PAGE,
+        hash: 0,
+    };
 
-    while let Some(dialog) = dialogs.next().await? {
-        let peer = dialog.peer();
-        // Monoforums (a channel's direct-messages chat) report admin rights but reject both
-        // getAdminLog and getParticipants with CHANNEL_MONOFORUM_UNSUPPORTED.
-        let is_admin = match peer {
-            Peer::Channel(channel) => !channel.raw.monoforum && channel.admin_rights().is_some(),
-            Peer::Group(group) => match &group.raw {
-                tl::enums::Chat::Channel(c) => {
-                    !c.monoforum && (c.creator || c.admin_rights.is_some())
+    loop {
+        use tl::enums::messages::Dialogs;
+        let (dialogs, messages, page_chats, last_page) = match client.invoke(&request).await? {
+            Dialogs::Dialogs(d) => (d.dialogs, d.messages, d.chats, true),
+            Dialogs::Slice(d) => {
+                let last = d.dialogs.len() < request.limit as usize;
+                (d.dialogs, d.messages, d.chats, last)
+            }
+            // Only returned for a non-zero `hash`, which this never sends.
+            Dialogs::NotModified(_) => break,
+        };
+
+        for chat in &page_chats {
+            // Monoforums (a channel's direct-messages chat) report admin rights but reject
+            // both getAdminLog and getParticipants with CHANNEL_MONOFORUM_UNSUPPORTED.
+            let tl::enums::Chat::Channel(channel) = chat else {
+                continue;
+            };
+            if channel.monoforum || !(channel.creator || channel.admin_rights.is_some()) {
+                continue;
+            }
+            // `left` is a chat the account used to administer, `min` one the
+            // response only mentions in passing -- a forward's source, say --
+            // and describes without an access hash to address it by. Neither
+            // can have its admin log read.
+            if channel.left || channel.min {
+                continue;
+            }
+            // A chat can be in the response of more than one page -- the pinned
+            // ones are on the first page and again in place on a later one.
+            if !seen.insert(channel.id) {
+                continue;
+            }
+
+            let peer_ref = PeerRef::from(chat);
+            let mut usernames: Vec<String> = Vec::new();
+            if let Some(u) = &channel.username {
+                usernames.push(u.clone());
+            }
+            for u in channel.usernames.iter().flatten() {
+                let tl::enums::Username::Username(u) = u;
+                usernames.push(u.username.clone());
+            }
+
+            let admin_ids = match fetch_admin_ids(client, peer_ref).await {
+                Ok(ids) => ids,
+                Err(e) => {
+                    error!("Cannot list admins of chat {}: {:?}", channel.id, e);
+                    HashSet::new()
                 }
-                _ => false,
-            },
-            _ => false,
-        };
-        if !is_admin {
-            continue;
+            };
+
+            chats.push(AdminChat {
+                peer: peer_ref,
+                chat_id: channel.id as u64,
+                title: channel.title.clone(),
+                usernames,
+                admin_ids,
+            });
         }
 
-        let Some(chat_id) = peer.id().bare_id() else {
-            continue;
-        };
-        let peer_ref = match peer.to_ref().await {
-            Ok(Some(r)) => r,
-            Ok(None) => {
-                error!("Cannot get peer ref for chat {}", chat_id);
-                continue;
-            }
-            Err(e) => {
-                error!("Cannot get peer ref for chat {}: {:?}", chat_id, e);
-                continue;
-            }
-        };
-
-        let mut usernames: Vec<String> = Vec::new();
-        if let Some(u) = peer.username() {
-            usernames.push(u.to_string());
-        }
-        for u in peer.usernames() {
-            usernames.push(u.to_string());
+        if last_page {
+            break;
         }
 
-        let admin_ids = match fetch_admin_ids(client, peer_ref).await {
-            Ok(ids) => ids,
-            Err(e) => {
-                error!("Cannot list admins of chat {}: {:?}", chat_id, e);
-                HashSet::new()
-            }
+        // Where the next page starts: the last dialog of this one. A community
+        // cannot be one -- it names no peer and holds no message -- so the last
+        // dialog that does is the offset, and if the page had none at all there
+        // is nothing to page from.
+        let Some(offset) = dialogs.iter().rev().find_map(dialog_offset) else {
+            break;
         };
-
-        chats.push(AdminChat {
-            peer: peer_ref,
-            chat_id: chat_id as u64,
-            title: peer.name().unwrap_or("unknown").to_string(),
-            usernames,
-            admin_ids,
-        });
+        let (peer, top_message) = offset;
+        request.offset_id = top_message;
+        request.offset_date = messages
+            .iter()
+            .find(|m| m.id() == top_message)
+            .and_then(message_date)
+            .unwrap_or(request.offset_date);
+        request.offset_peer = input_peer(&peer, &page_chats);
+        // The pinned dialogs came with the first page and would come again with
+        // every other one.
+        request.exclude_pinned = true;
     }
 
     Ok(chats)
+}
+
+/// How many dialogs a page asks for. Telegram's own limit for `getDialogs`.
+const DIALOG_PAGE: i32 = 100;
+
+/// The peer and top message a dialog can be paged from, for the kinds that have
+/// one. `dialogCommunity` has neither.
+fn dialog_offset(dialog: &tl::enums::Dialog) -> Option<(tl::enums::Peer, i32)> {
+    match dialog {
+        tl::enums::Dialog::Dialog(d) => Some((d.peer.clone(), d.top_message)),
+        tl::enums::Dialog::Folder(d) => Some((d.peer.clone(), d.top_message)),
+        tl::enums::Dialog::Community(_) => None,
+    }
+}
+
+/// The `InputPeer` for a dialog's peer, taken from the chats of the same
+/// response. A user or a chat the response did not describe cannot be addressed,
+/// and `InputPeerEmpty` restarts the paging from the top rather than skipping
+/// ahead -- so those end the scan instead, in the caller.
+fn input_peer(peer: &tl::enums::Peer, chats: &[tl::enums::Chat]) -> tl::enums::InputPeer {
+    let id = match peer {
+        tl::enums::Peer::Chat(p) => p.chat_id,
+        tl::enums::Peer::Channel(p) => p.channel_id,
+        tl::enums::Peer::User(p) => p.user_id,
+    };
+    chats
+        .iter()
+        .find(|c| c.id() == id)
+        .map(|c| PeerRef::from(c).into())
+        .unwrap_or(tl::enums::InputPeer::Empty)
+}
+
+/// When a message was sent, for the kinds that were sent at a time at all.
+fn message_date(message: &tl::enums::Message) -> Option<i32> {
+    match message {
+        tl::enums::Message::Message(m) => Some(m.date),
+        tl::enums::Message::Service(m) => Some(m.date),
+        tl::enums::Message::Empty(_) => None,
+    }
 }
 
 /// The user ids currently holding admin rights in a chat, used to flag the actor of each event.
