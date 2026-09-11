@@ -119,6 +119,7 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
             lon: meta.lon,
             poll_question: meta.poll_question,
             poll_options: meta.poll_options,
+            poll_id: meta.poll_id,
             fwd_from_user_id: meta_msg.fwd_from_user_id,
             fwd_from_chat_id: meta_msg.fwd_from_chat_id,
             fwd_from_msg_id: meta_msg.fwd_from_msg_id,

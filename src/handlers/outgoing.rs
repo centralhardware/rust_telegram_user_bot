@@ -167,6 +167,7 @@ pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Resul
         lon: meta.lon,
         poll_question: meta.poll_question,
         poll_options: meta.poll_options,
+        poll_id: meta.poll_id,
         ..base
     };
 

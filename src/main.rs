@@ -103,6 +103,38 @@ async fn main() -> Result<()> {
                         tl::enums::Update::MessageReactions(u) => {
                             handlers::save_reactions(u).await;
                         }
+                        // Nor for what else can happen to a message after it is
+                        // sent: pinned or unpinned, voted in, or seen and
+                        // forwarded often enough for Telegram to say so.
+                        tl::enums::Update::PinnedMessages(u) => {
+                            let peer = grammers_client::session::types::PeerId::from(&u.peer);
+                            handlers::save_pinned(
+                                peer.bare_id_unchecked(),
+                                peer.bot_api_dialog_id_unchecked(),
+                                &u.messages,
+                                u.pinned,
+                            )
+                            .await;
+                        }
+                        tl::enums::Update::PinnedChannelMessages(u) => {
+                            handlers::save_pinned(
+                                u.channel_id,
+                                -1_000_000_000_000 - u.channel_id,
+                                &u.messages,
+                                u.pinned,
+                            )
+                            .await;
+                        }
+                        tl::enums::Update::MessagePoll(u) => {
+                            handlers::save_poll(u).await;
+                        }
+                        tl::enums::Update::ChannelMessageViews(u) => {
+                            handlers::save_views(u.channel_id, u.id, u.views.max(0) as u32, 0).await;
+                        }
+                        tl::enums::Update::ChannelMessageForwards(u) => {
+                            handlers::save_views(u.channel_id, u.id, 0, u.forwards.max(0) as u32)
+                                .await;
+                        }
                         _ => {}
                     },
                     _ => {}

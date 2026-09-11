@@ -124,6 +124,14 @@ impl PeerNames {
 /// rename anywhere is picked up on the next lookup and nothing has to be
 /// invalidated. Only the path where the update arrived without a name reaches
 /// this — a named update never queries at all.
+/// The peer's display name, empty when it has never been seen named.
+pub async fn title_of(peer_id: i64) -> String {
+    load(peer_id)
+        .await
+        .map(|names| names.title)
+        .unwrap_or_default()
+}
+
 pub async fn load(peer_id: i64) -> Option<PeerNames> {
     if let Some(names) = PEER_NAMES_BUF
         .find_last(|n| (n.peer_id == peer_id).then(|| n.clone()))
