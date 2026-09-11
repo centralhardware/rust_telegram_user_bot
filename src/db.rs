@@ -87,6 +87,10 @@ pub const REACTION: &str = "reaction";
 /// A service action performed on another message — a pin. The row belongs to the
 /// message the action names, and carries the action rather than a text.
 pub const SERVICE: &str = "service";
+/// The archiver stored a message's file in S3. Its own row, naming the message it
+/// belongs to — never the send row written a second time, which would be a
+/// duplicate the counters cannot tell from a real message.
+pub const FILE_UPLOADED: &str = "file_uploaded";
 
 pub struct MessageInfo {
     pub message: String,
@@ -274,9 +278,9 @@ pub async fn resolve_reply(chat_id: i64, reply: &mut crate::utils::reply_target:
 ///
 /// A message is one row whatever it carries: the text representation in
 /// `message`, the message object itself in `raw`, and — when it carries media —
-/// what that media is in the `media_*` columns. A file archived to S3 is the
-/// same row written again with `sha256` / `s3_*` filled and a newer `version`,
-/// which the ReplacingMergeTree collapses onto the original.
+/// what that media is in the `media_*` columns. A file archived to S3 is a row
+/// of its own — `file_uploaded`, carrying `sha256` / `s3_*` and the identity of
+/// the message it belongs to — so no row of this table is ever written twice.
 #[derive(Row, Serialize, Default, Clone)]
 pub struct Event {
     pub date_time: u32,
@@ -375,9 +379,9 @@ pub struct Event {
     pub sha256: String,
     pub s3_bucket: String,
     pub s3_key: String,
-    /// The ReplacingMergeTree version. 0 for a message as it was logged, and the
-    /// archiver's ingest time on the row it enriches — so the enrichment always
-    /// wins, and a message Telegram delivers a second time cannot blank it.
+    /// The ReplacingMergeTree version. Always 0: nothing rewrites a row any
+    /// more, so the only thing the engine still collapses is a redelivery of the
+    /// same event, which is the same row at the same version.
     pub version: u32,
 }
 
@@ -417,16 +421,34 @@ impl Event {
         Self::of(if event == "new" { SEND } else { event })
     }
 
-    /// The same message row again, carrying what the archiver learned about its
-    /// file. Newer `version`, same key: it replaces the row it enriches.
-    pub fn archived(&self, sha256: String, bucket: String, key: String, size: u64) -> Self {
+    /// What the archiver learned about a message's file, as an event of its own.
+    ///
+    /// It carries the identity of the message — chat, id, topic, whether it is
+    /// ephemeral — and the file, and nothing else: the text, the sender and the
+    /// raw update are on the send row this one points at, and repeating them
+    /// would be storing the same message twice. `date_time` is the upload, not
+    /// the message: this row says when the file reached S3.
+    pub fn file_uploaded(&self, sha256: String, bucket: String, key: String, size: u64) -> Self {
         Self {
+            date_time: now(),
+            event: FILE_UPLOADED.to_string(),
+            chat_id: self.chat_id,
+            chat_title: self.chat_title.clone(),
+            message_id: self.message_id,
+            topic_id: self.topic_id,
+            topic_name: self.topic_name.clone(),
+            ephemeral: self.ephemeral,
+            receiver_id: self.receiver_id,
+            media_type: self.media_type.clone(),
+            file_name: self.file_name.clone(),
+            mime_type: self.mime_type.clone(),
+            // The bytes actually stored, which is what Telegram reported only
+            // when it reported anything at all.
+            size,
             sha256,
             s3_bucket: bucket,
             s3_key: key,
-            size,
-            version: now(),
-            ..self.clone()
+            ..Self::default()
         }
     }
 }
@@ -475,4 +497,49 @@ pub struct TelegramSession {
     pub date_active: u32,
     pub updated_at: u32,
     pub client_id: u64,
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn send_with_media() -> Event {
+        Event {
+            chat_id: -100,
+            chat_title: "chat".to_string(),
+            message_id: 7,
+            message: "look at this".to_string(),
+            raw: "{}".to_string(),
+            user_id: 42,
+            topic_id: 3,
+            topic_name: "topic".to_string(),
+            media_type: "photo".to_string(),
+            size: 1024,
+            ..Event::send()
+        }
+    }
+
+    #[test]
+    fn the_archiver_writes_its_own_event_not_the_send_row_again() {
+        let uploaded = send_with_media().file_uploaded(
+            "abc".to_string(),
+            "bucket".to_string(),
+            "ab/c/abc.jpg".to_string(),
+            2048,
+        );
+
+        assert_eq!(uploaded.event, FILE_UPLOADED);
+        // The message it belongs to, so the row can be joined back onto its send.
+        assert_eq!(uploaded.chat_id, -100);
+        assert_eq!(uploaded.message_id, 7);
+        assert_eq!(uploaded.topic_id, 3);
+        // The file, at the size actually stored.
+        assert_eq!(uploaded.s3_key, "ab/c/abc.jpg");
+        assert_eq!(uploaded.size, 2048);
+        // Nothing the send row already carries.
+        assert!(uploaded.message.is_empty());
+        assert!(uploaded.raw.is_empty());
+        assert_eq!(uploaded.user_id, 0);
+        // Nothing to collapse: this row replaces no other.
+        assert_eq!(uploaded.version, 0);
+    }
 }
