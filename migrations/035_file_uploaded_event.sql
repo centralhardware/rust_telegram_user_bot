@@ -44,11 +44,20 @@
 -- is what makes a redelivery a no-op rather than a second row, and dropping it
 -- would give the table back the duplicates this migration is removing.
 --
--- Run it with the bot stopped. Steps 2 and 6 read the table as it stands, and a
--- row inserted between them is a row the aggregates never see.
+-- What was already written is left exactly as it is. The send rows the archiver
+-- enriched keep their `sha256` / `s3_*`, and there are no `file_uploaded` rows
+-- before this migration. Nothing is lost by that and nothing is double counted:
+-- after a merge each of those messages is one row, and the aggregates count it
+-- once, as the send it is. The only seam is that `files` and the `file_uploaded`
+-- day rows start at this migration rather than at the beginning of the archive.
+--
+-- Run it with the bot stopped: step 4 reads the table as it stands, and a row
+-- inserted while the aggregates are being refilled is one they never see.
 
 -- ---------------------------------------------------------------------------
--- 1. Unhook the aggregates, so the backfill below does not run through them.
+-- 1. Unhook the aggregates. They are recreated in step 3, because a
+--    materialized view outlives the table it writes to and the four target
+--    tables are about to be dropped.
 -- ---------------------------------------------------------------------------
 
 DROP VIEW IF EXISTS telegram_user_bot.mv_events_chat_stat;
@@ -57,57 +66,11 @@ DROP VIEW IF EXISTS telegram_user_bot.mv_events_daily_stat;
 DROP VIEW IF EXISTS telegram_user_bot.mv_events_edit_chain_stat;
 
 -- ---------------------------------------------------------------------------
--- 2. The history, converted: every send row the archiver enriched becomes the
---    `file_uploaded` row it would be written as today. `FINAL` because the
---    enriched row and the original may not have merged yet, and only the
---    enriched one carries a key.
---
---    `date_time` is the send's, not the upload's: the upload time was never
---    stored -- `version` holds it for the rows written since 019, but it is the
---    archiver's ingest second and 0 for anything older -- and the send is the
---    honest answer to "when", off by the seconds the download took.
--- ---------------------------------------------------------------------------
-
-INSERT INTO telegram_user_bot.events_log
-    (date_time, event, chat_id, chat_title, message_id, topic_id, topic_name,
-     ephemeral, receiver_id, media_type, file_name, mime_type, size,
-     sha256, s3_bucket, s3_key, version)
-SELECT
-    date_time,
-    'file_uploaded' AS event,
-    chat_id,
-    chat_title,
-    message_id,
-    topic_id,
-    topic_name,
-    ephemeral,
-    receiver_id,
-    media_type,
-    file_name,
-    mime_type,
-    size,
-    sha256,
-    s3_bucket,
-    s3_key,
-    0 AS version
-FROM telegram_user_bot.events_log FINAL
-WHERE (event = 'send') AND (s3_key != '');
-
--- ---------------------------------------------------------------------------
--- 3. And cleared off the send rows, which are messages again and nothing else.
---    The file is not lost: it is on the `file_uploaded` row inserted above.
--- ---------------------------------------------------------------------------
-
-ALTER TABLE telegram_user_bot.events_log
-    UPDATE sha256 = '', s3_bucket = '', s3_key = ''
-    WHERE (event = 'send') AND (s3_key != '');
-
--- ---------------------------------------------------------------------------
--- 4. The state tables, rebuilt for counts.
+-- 2. The state tables, rebuilt for counts.
 --
 --    An `AggregateFunction` column cannot be altered into a different one, and
 --    every row of these tables is derivable from `events_log`, so they are
---    dropped and refilled in step 6 rather than migrated.
+--    dropped and refilled in step 4 rather than migrated.
 -- ---------------------------------------------------------------------------
 
 DROP TABLE IF EXISTS telegram_user_bot.events_chat_stat;
@@ -178,13 +141,14 @@ ENGINE = AggregatingMergeTree
 ORDER BY (chat_id, message_id);
 
 -- ---------------------------------------------------------------------------
--- 5. The aggregates themselves.
+-- 3. The aggregates themselves.
 --
 --    `WHERE event != 'file_uploaded'` replaces `WHERE s3_key = ''`: it says the
 --    same thing -- do not count the archiver's row as traffic -- but by naming
 --    the event rather than by noticing that a column happens to be filled.
 --    The chat aggregate keeps that row as `files`, which is the one counter it
---    can now have and could not before.
+--    can now have and could not before -- counting from here on, since the rows
+--    it counts start here.
 -- ---------------------------------------------------------------------------
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS telegram_user_bot.mv_events_chat_stat
@@ -256,7 +220,7 @@ WHERE NOT ephemeral AND (event != 'file_uploaded')
 GROUP BY chat_id, message_id;
 
 -- ---------------------------------------------------------------------------
--- 6. The history, counted once.
+-- 4. The history, counted once.
 --
 --    `FINAL` is what makes this safe to run on a table whose duplicates have
 --    not all been merged away yet: a redelivered row that is still its own part
@@ -326,7 +290,7 @@ WHERE NOT ephemeral AND (event != 'file_uploaded')
 GROUP BY chat_id, message_id;
 
 -- ---------------------------------------------------------------------------
--- 7. The reading views, following their states.
+-- 5. The reading views, following their states.
 -- ---------------------------------------------------------------------------
 
 CREATE OR REPLACE VIEW telegram_user_bot.v_chat_stat AS
