@@ -450,16 +450,15 @@ impl Event {
     /// What the archiver learned about a message's file, as an event of its own.
     ///
     /// It carries the identity of the message — chat, id, topic, whether it is
-    /// ephemeral — and the file, and nothing else: the text, the sender and the
-    /// raw update are on the send row this one points at, and repeating them
-    /// would be storing the same message twice. `date_time` is the upload, not
+    /// ephemeral — and the file, and nothing else: the text, the sender, the
+    /// chat's title and the raw update are on the send row this one points at,
+    /// and repeating them would be storing the same message twice. `date_time` is the upload, not
     /// the message: this row says when the file reached S3.
     pub fn file_uploaded(&self, sha256: String, bucket: String, key: String, size: u64) -> Self {
         Self {
             date_time: now(),
             event: FILE_UPLOADED.to_string(),
             chat_id: self.chat_id,
-            chat_title: self.chat_title.clone(),
             message_id: self.message_id,
             topic_id: self.topic_id,
             topic_name: self.topic_name.clone(),
@@ -563,6 +562,7 @@ mod tests {
         assert_eq!(uploaded.size, 2048);
         // Nothing the send row already carries.
         assert!(uploaded.message.is_empty());
+        assert!(uploaded.chat_title.is_empty());
         assert!(uploaded.raw.is_empty());
         assert_eq!(uploaded.user_id, 0);
         // Nothing to collapse: this row replaces no other.
