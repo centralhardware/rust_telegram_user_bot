@@ -1,6 +1,6 @@
+use grammers_client::Client;
 use grammers_client::peer::Peer;
 use grammers_client::update::Message;
-use grammers_client::Client;
 use log::info;
 
 use crate::db::Event;

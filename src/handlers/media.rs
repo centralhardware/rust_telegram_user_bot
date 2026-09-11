@@ -81,7 +81,10 @@ pub async fn save_media(message: &Message, event: &Event) {
         return;
     }
 
-    let _ = queue.send(Job { media, event: event.clone() });
+    let _ = queue.send(Job {
+        media,
+        event: event.clone(),
+    });
 }
 
 /// Stickers and custom emoji are the same handful of files over and over, and the
@@ -162,7 +165,10 @@ async fn archive(
     };
 
     crate::db::EVENTS_BUF
-        .push(job.event.file_uploaded(sha256, storage.bucket.clone(), key, size))
+        .push(
+            job.event
+                .file_uploaded(sha256, storage.bucket.clone(), key, size),
+        )
         .await;
 
     Ok(())

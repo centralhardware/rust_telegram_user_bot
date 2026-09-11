@@ -58,9 +58,15 @@ pub fn render(text: &str, entities: Option<&[tl::enums::MessageEntity]>) -> Stri
 /// Lower priority = outer wrapper (opens first, closes last).
 fn entity_markers(entity: &tl::enums::MessageEntity) -> Option<(i32, i32, String, String, i32)> {
     match entity {
-        tl::enums::MessageEntity::Blockquote(e) => Some((e.offset, e.length, "> ".into(), String::new(), 0)),
-        tl::enums::MessageEntity::Spoiler(e) => Some((e.offset, e.length, "||".into(), "||".into(), 5)),
-        tl::enums::MessageEntity::TextUrl(e) => Some((e.offset, e.length, "[".into(), format!("]({})", e.url), 60)),
+        tl::enums::MessageEntity::Blockquote(e) => {
+            Some((e.offset, e.length, "> ".into(), String::new(), 0))
+        }
+        tl::enums::MessageEntity::Spoiler(e) => {
+            Some((e.offset, e.length, "||".into(), "||".into(), 5))
+        }
+        tl::enums::MessageEntity::TextUrl(e) => {
+            Some((e.offset, e.length, "[".into(), format!("]({})", e.url), 60))
+        }
         tl::enums::MessageEntity::Code(e) => Some((e.offset, e.length, "`".into(), "`".into(), 70)),
         tl::enums::MessageEntity::Pre(e) => {
             Some((e.offset, e.length, "```\n".into(), "\n```".into(), 80))
@@ -133,9 +139,8 @@ fn apply_entities(text: &str, entities: &[tl::enums::MessageEntity]) -> String {
             && pos + 1 < utf16.len()
             && (0xDC00..=0xDFFF).contains(&utf16[pos + 1])
         {
-            let cp = 0x10000
-                + ((utf16[pos] as u32 - 0xD800) << 10)
-                + (utf16[pos + 1] as u32 - 0xDC00);
+            let cp =
+                0x10000 + ((utf16[pos] as u32 - 0xD800) << 10) + (utf16[pos + 1] as u32 - 0xDC00);
             result.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
             result.push_str(&marks_at(&overlays, pos));
             pos += 2;
@@ -176,7 +181,10 @@ mod tests {
 
     #[test]
     fn strikes_each_character_in_the_span() {
-        assert_eq!(render("ab cd", Some(&[strike_entity(0, 2)])), "a\u{336}b\u{336} cd");
+        assert_eq!(
+            render("ab cd", Some(&[strike_entity(0, 2)])),
+            "a\u{336}b\u{336} cd"
+        );
     }
 
     #[test]
@@ -190,18 +198,27 @@ mod tests {
     #[test]
     fn counts_offsets_in_utf16_across_a_surrogate_pair() {
         // "🙂" is two UTF-16 units, so the struck span starts at offset 2, not 1.
-        assert_eq!(render("🙂ok", Some(&[strike_entity(2, 2)])), "🙂o\u{336}k\u{336}");
+        assert_eq!(
+            render("🙂ok", Some(&[strike_entity(2, 2)])),
+            "🙂o\u{336}k\u{336}"
+        );
     }
 
     #[test]
     fn leaves_line_breaks_unstruck() {
-        assert_eq!(render("a\nb", Some(&[strike_entity(0, 3)])), "a\u{336}\nb\u{336}");
+        assert_eq!(
+            render("a\nb", Some(&[strike_entity(0, 3)])),
+            "a\u{336}\nb\u{336}"
+        );
     }
 
     #[test]
     fn keeps_markers_for_styles_without_a_combining_mark() {
-        let spoiler: tl::enums::MessageEntity =
-            tl::types::MessageEntitySpoiler { offset: 0, length: 2 }.into();
+        let spoiler: tl::enums::MessageEntity = tl::types::MessageEntitySpoiler {
+            offset: 0,
+            length: 2,
+        }
+        .into();
         assert_eq!(render("hi", Some(&[spoiler])), "||hi||");
     }
 }
