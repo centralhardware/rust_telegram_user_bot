@@ -124,8 +124,6 @@ pub const PIN: &str = "pin";
 pub const UNPIN: &str = "unpin";
 /// A poll's results as they stand after a vote — a snapshot, like a reaction.
 pub const POLL: &str = "poll";
-/// The text Telegram made of a voice message.
-pub const TRANSCRIPTION: &str = "transcription";
 /// A channel post's view or forward counter, as it stands after the update.
 pub const VIEWS: &str = "views";
 
@@ -485,10 +483,6 @@ impl Event {
 
     pub fn poll() -> Self {
         Self::of(POLL)
-    }
-
-    pub fn transcription() -> Self {
-        Self::of(TRANSCRIPTION)
     }
 
     pub fn views() -> Self {
