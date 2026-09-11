@@ -112,7 +112,11 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
     let sent = EVENTS_BUF
         .find_last(|e| {
             (e.event == SEND && e.chat_id == chat_id && e.message_id == message_id).then(|| {
-                (e.message.clone(), e.chat_title.clone(), e.first_name.clone())
+                (
+                    e.message.clone(),
+                    e.chat_title.clone(),
+                    e.first_name.clone(),
+                )
             })
         })
         .await;
@@ -258,7 +262,11 @@ pub async fn resolve_reply(chat_id: i64, reply: &mut crate::utils::reply_target:
         id => id as i64,
     };
     let quoted_chat = reply.reply_to_chat_id != 0;
-    let target_chat = if quoted_chat { reply.reply_to_chat_id } else { chat_id };
+    let target_chat = if quoted_chat {
+        reply.reply_to_chat_id
+    } else {
+        chat_id
+    };
 
     let target = find_target(target_chat, id).await;
 
@@ -392,7 +400,10 @@ impl Event {
         // late copy of a message beat the archiver's enriched row and blank the
         // S3 columns off it. As it stands a redelivery is a no-op — same key,
         // same version — and only the archiver ever raises it.
-        Self { event: event.to_string(), ..Self::default() }
+        Self {
+            event: event.to_string(),
+            ..Self::default()
+        }
     }
 
     pub fn send() -> Self {

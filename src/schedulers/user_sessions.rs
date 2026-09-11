@@ -22,7 +22,9 @@ async fn log_sessions(client: &Client, client_id: u64) -> Result<(), Box<dyn std
         .invoke(&tl::functions::account::GetAuthorizations {})
         .await?;
 
-    let mut insert = crate::db::clickhouse().insert::<TelegramSession>("user_sessions").await?;
+    let mut insert = crate::db::clickhouse()
+        .insert::<TelegramSession>("user_sessions")
+        .await?;
     for auth in &result.authorizations {
         let tl::enums::Authorization::Authorization(session) = auth;
 
@@ -30,25 +32,26 @@ async fn log_sessions(client: &Client, client_id: u64) -> Result<(), Box<dyn std
             continue;
         }
 
-        insert.write(&TelegramSession {
-            hash: session.hash,
-            device_model: session.device_model.clone(),
-            platform: session.platform.clone(),
-            system_version: Some(session.system_version.clone()),
-            app_name: session.app_name.clone(),
-            app_version: Some(session.app_version.clone()),
-            ip: Some(session.ip.clone()),
-            country: session.country.clone(),
-            region: session.region.clone(),
-            date_created: session.date_created as u32,
-            date_active: session.date_active as u32,
-            updated_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as u32,
-            client_id,
-        }).await?;
-
+        insert
+            .write(&TelegramSession {
+                hash: session.hash,
+                device_model: session.device_model.clone(),
+                platform: session.platform.clone(),
+                system_version: Some(session.system_version.clone()),
+                app_name: session.app_name.clone(),
+                app_version: Some(session.app_version.clone()),
+                ip: Some(session.ip.clone()),
+                country: session.country.clone(),
+                region: session.region.clone(),
+                date_created: session.date_created as u32,
+                date_active: session.date_active as u32,
+                updated_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as u32,
+                client_id,
+            })
+            .await?;
     }
     insert.end().await?;
 

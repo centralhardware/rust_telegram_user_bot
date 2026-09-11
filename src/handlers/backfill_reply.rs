@@ -1,11 +1,11 @@
-use grammers_client::update::Message;
 use grammers_client::Client;
+use grammers_client::update::Message;
 use grammers_tl_types as tl;
 use log::{debug, info, warn};
 
+use super::extract::extract_community_tag;
 use crate::db::Event;
 use crate::utils::log_ignore::is_log_ignored;
-use super::extract::extract_community_tag;
 use crate::utils::peer_info::{chat_info, sender_info};
 
 /// If the message is a reply and the replied-to message is not yet in ClickHouse,
@@ -51,7 +51,10 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
     };
 
     if matches!(reply.raw, tl::enums::Message::Empty(_)) {
-        info!("reply_to {} is an empty message, skipping backfill", reply_id);
+        info!(
+            "reply_to {} is an empty message, skipping backfill",
+            reply_id
+        );
         return;
     }
 
@@ -69,7 +72,12 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
             format!("{} {}", sender.first_name, sender.second_name)
         };
         let game_title = crate::utils::service_action::game_title(client, &reply).await;
-        crate::utils::service_action::format(action, Some(sender_bare_id), Some(&sender_display), game_title.as_deref())
+        crate::utils::service_action::format(
+            action,
+            Some(sender_bare_id),
+            Some(&sender_display),
+            game_title.as_deref(),
+        )
     } else {
         serde_json::to_string(&reply.raw).unwrap_or_default()
     };
@@ -104,7 +112,7 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
             reply_to_user_id,
             reply_to_chat_id: reply_reply.reply_to_chat_id,
             quote_text: reply_reply.quote_text,
-        comment_to: reply_reply.comment_to,
+            comment_to: reply_reply.comment_to,
             topic_id,
             topic_name,
             raw: serde_json::to_string(&reply.raw).unwrap_or_default(),

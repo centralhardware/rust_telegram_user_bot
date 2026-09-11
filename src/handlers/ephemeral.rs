@@ -109,7 +109,10 @@ pub async fn save_ephemeral_deleted(peer: &tl::enums::Peer, ids: &[i32]) {
 /// text with its entities, with the media description and the buttons around it
 /// exactly as an ordinary message gets them.
 fn body(msg: &tl::types::EphemeralMessage) -> String {
-    let rich = msg.rich_message.as_ref().and_then(crate::utils::rich_message::render);
+    let rich = msg
+        .rich_message
+        .as_ref()
+        .and_then(crate::utils::rich_message::render);
     let text = match rich {
         Some(rich) => rich,
         None => crate::utils::format_entities::render(&msg.message, msg.entities.as_deref()),

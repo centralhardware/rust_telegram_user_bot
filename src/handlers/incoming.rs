@@ -1,13 +1,16 @@
-use grammers_client::update::Message;
 use grammers_client::Client;
+use grammers_client::update::Message;
 use log::info;
 
+use super::extract::extract_community_tag_from_update;
 use crate::db::Event;
 use crate::utils::log_ignore::is_log_ignored;
-use super::extract::extract_community_tag_from_update;
 use crate::utils::peer_info::{chat_info, sender_info};
 
-pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, Box<dyn std::error::Error>> {
+pub async fn save_incoming(
+    message: &Message,
+    client: &Client,
+) -> Result<Event, Box<dyn std::error::Error>> {
     let media_desc = crate::utils::media_description::describe(message);
 
     let sender = sender_info(client, message).await;
@@ -16,7 +19,8 @@ pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, 
     let buttons = crate::utils::inline_buttons::format_buttons(message);
 
     let chat_id = message.peer_id().bare_id_unchecked();
-    let game_title = crate::utils::service_action::game_title(client, std::ops::Deref::deref(message)).await;
+    let game_title =
+        crate::utils::service_action::game_title(client, std::ops::Deref::deref(message)).await;
 
     let sender_display = if sender.second_name.is_empty() {
         sender.first_name.clone()
@@ -28,14 +32,12 @@ pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, 
     let sender_bare_id = sender.user_id as i64;
     // Described once, for the log line and the row alike.
     let action_desc = match message.action() {
-        Some(a) if text.is_empty() => Some(
-            crate::utils::service_action::format(
-                a,
-                Some(sender_bare_id),
-                Some(&sender_display),
-                game_title.as_deref(),
-            ),
-        ),
+        Some(a) if text.is_empty() => Some(crate::utils::service_action::format(
+            a,
+            Some(sender_bare_id),
+            Some(&sender_display),
+            game_title.as_deref(),
+        )),
         _ => None,
     };
 
@@ -61,7 +63,10 @@ pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, 
         let chat_name_short: String = if topic_name.is_empty() {
             chat.chat_title.chars().take(25).collect()
         } else {
-            format!("{} / {}", chat.chat_title, topic_name).chars().take(25).collect()
+            format!("{} / {}", chat.chat_title, topic_name)
+                .chars()
+                .take(25)
+                .collect()
         };
 
         let reply_line = crate::utils::reply_preview::format_reply_line(message).await;
@@ -70,12 +75,18 @@ pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, 
         }
         info!(
             "\x1b[92m{:<8} {:>8} {:<25} \x1b[90m│\x1b[92m {:<10} \x1b[90m│\x1b[92m {}\x1b[0m",
-            "incoming", message.id(), chat_name_short, sender_short, &preview
+            "incoming",
+            message.id(),
+            chat_name_short,
+            sender_short,
+            &preview
         );
     }
 
     let mut msg_content = if text.is_empty() {
-        action_desc.clone().unwrap_or_else(|| media_desc.clone().unwrap_or_default())
+        action_desc
+            .clone()
+            .unwrap_or_else(|| media_desc.clone().unwrap_or_default())
     } else {
         text.to_string()
     };
@@ -96,7 +107,11 @@ pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, 
     // A service message — a join, a title change, a call — is an event of the
     // chat rather than something someone wrote, so it is logged under its own
     // event name; `action` names which one it was.
-    let base = if message.action().is_some() { Event::service() } else { Event::send() };
+    let base = if message.action().is_some() {
+        Event::service()
+    } else {
+        Event::send()
+    };
 
     let event = Event {
         date_time: message.date().as_second() as u32,

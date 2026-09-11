@@ -112,7 +112,10 @@ async fn lookup(chat_id: i64, message_id: i32) -> Target {
     // Check the unflushed buffer first
     let from_buf = crate::db::EVENTS_BUF
         .find_last(|m| {
-            if m.event == crate::db::SEND && m.chat_id == chat_id && m.message_id == message_id as i64 {
+            if m.event == crate::db::SEND
+                && m.chat_id == chat_id
+                && m.message_id == message_id as i64
+            {
                 let sender = if m.second_name.is_empty() {
                     m.first_name.clone()
                 } else {

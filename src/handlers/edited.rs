@@ -1,5 +1,5 @@
-use grammers_client::update::Message;
 use grammers_client::Client;
+use grammers_client::update::Message;
 use log::info;
 
 use crate::db::Event;
@@ -75,26 +75,28 @@ pub async fn save_edited(
     // row.
     let meta = crate::utils::media_description::media_meta(message).unwrap_or_default();
 
-    crate::db::EVENTS_BUF.push(Event {
-        date_time: now,
-        chat_id,
-        message_id: msg_id,
-        message: message_content,
-        diff,
-        raw: serde_json::to_string(&std::ops::Deref::deref(message).raw).unwrap_or_default(),
-        media_type: meta.media_type,
-        file_name: meta.file_name,
-        mime_type: meta.mime_type,
-        size: meta.size,
-        duration: meta.duration,
-        width: meta.width,
-        height: meta.height,
-        lat: meta.lat,
-        lon: meta.lon,
-        poll_question: meta.poll_question,
-        poll_options: meta.poll_options,
-        ..Event::edit()
-    }).await;
+    crate::db::EVENTS_BUF
+        .push(Event {
+            date_time: now,
+            chat_id,
+            message_id: msg_id,
+            message: message_content,
+            diff,
+            raw: serde_json::to_string(&std::ops::Deref::deref(message).raw).unwrap_or_default(),
+            media_type: meta.media_type,
+            file_name: meta.file_name,
+            mime_type: meta.mime_type,
+            size: meta.size,
+            duration: meta.duration,
+            width: meta.width,
+            height: meta.height,
+            lat: meta.lat,
+            lon: meta.lon,
+            poll_question: meta.poll_question,
+            poll_options: meta.poll_options,
+            ..Event::edit()
+        })
+        .await;
 
     Ok(())
 }
