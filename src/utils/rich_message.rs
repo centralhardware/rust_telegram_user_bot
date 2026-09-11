@@ -138,7 +138,11 @@ fn render_block(block: &tl::enums::PageBlock) -> String {
             }
         }
         B::Photo(b) => {
-            let label = if b.spoiler { "[photo, spoiler]" } else { "[photo]" };
+            let label = if b.spoiler {
+                "[photo, spoiler]"
+            } else {
+                "[photo]"
+            };
             let label = match &b.url {
                 Some(url) => format!("{}({})", label, url),
                 None => label.to_string(),
@@ -146,7 +150,11 @@ fn render_block(block: &tl::enums::PageBlock) -> String {
             with_page_caption(label, &b.caption)
         }
         B::Video(b) => {
-            let label = if b.spoiler { "[video, spoiler]" } else { "[video]" };
+            let label = if b.spoiler {
+                "[video, spoiler]"
+            } else {
+                "[video]"
+            };
             with_page_caption(label.to_string(), &b.caption)
         }
         B::Audio(b) => with_page_caption("[audio]".into(), &b.caption),
@@ -196,7 +204,11 @@ fn render_block(block: &tl::enums::PageBlock) -> String {
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            if title.is_empty() { articles } else { format!("{}\n{}", title, articles) }
+            if title.is_empty() {
+                articles
+            } else {
+                format!("{}\n{}", title, articles)
+            }
         }
         B::ButtonRow(b) => b
             .buttons
@@ -212,8 +224,14 @@ fn render_block(block: &tl::enums::PageBlock) -> String {
     }
 }
 
+/// Telegram's own client draws a real table; a log line or a ClickHouse row
+/// can't, and a wall of `| a | b |` is what used to land there. A narrow table
+/// is laid out as aligned monospace columns, a wide one (the usual case once a
+/// cell holds a URL) as one labelled record per row, with empty cells dropped.
+const TABLE_ALIGNED_WIDTH: usize = 60;
+
 fn render_table(table: &tl::types::PageBlockTable) -> String {
-    let rows: Vec<Vec<String>> = table
+    let mut grid: Vec<Vec<String>> = table
         .rows
         .iter()
         .map(|row| {
@@ -227,33 +245,82 @@ fn render_table(table: &tl::types::PageBlockTable) -> String {
                         .map(render_text)
                         .unwrap_or_default()
                         .replace('\n', " ")
-                        .replace('|', "\\|")
+                        .trim()
+                        .to_string()
                 })
                 .collect()
         })
         .collect();
 
-    let width = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    let width = grid.iter().map(|r| r.len()).max().unwrap_or(0);
     if width == 0 {
         return render_text(&table.title);
     }
+    for row in &mut grid {
+        row.resize(width, String::new());
+    }
 
-    let line = |cells: &[String]| {
-        let mut cells = cells.to_vec();
-        cells.resize(width, String::new());
-        format!("| {} |", cells.join(" | "))
-    };
+    let widths: Vec<usize> = (0..width)
+        .map(|i| grid.iter().map(|r| r[i].chars().count()).max().unwrap_or(0))
+        .collect();
+    let total: usize = widths.iter().sum::<usize>() + 2 * (width - 1);
 
     let mut out = Vec::new();
     let title = render_text(&table.title);
     if !title.is_empty() {
         out.push(title);
     }
-    out.push(line(&rows[0]));
-    out.push(format!("|{}", " --- |".repeat(width)));
-    for row in &rows[1..] {
-        out.push(line(row));
+
+    if total <= TABLE_ALIGNED_WIDTH || grid.len() == 1 {
+        let line = |cells: &[String]| {
+            cells
+                .iter()
+                .zip(&widths)
+                .map(|(cell, w)| format!("{:pad$}", cell, pad = w))
+                .collect::<Vec<_>>()
+                .join("  ")
+                .trim_end()
+                .to_string()
+        };
+        out.push(line(&grid[0]));
+        out.push(
+            widths
+                .iter()
+                .map(|w| "\u{2500}".repeat(*w))
+                .collect::<Vec<_>>()
+                .join("  "),
+        );
+        for row in &grid[1..] {
+            out.push(line(row));
+        }
+        return out.join("\n");
     }
+
+    let header = &grid[0];
+    let records = grid[1..]
+        .iter()
+        .map(|row| {
+            let label = if row[0].is_empty() {
+                "\u{2014}"
+            } else {
+                row[0].as_str()
+            };
+            let mut lines = vec![format!("**{}**", label)];
+            for (i, cell) in row.iter().enumerate().skip(1) {
+                if cell.is_empty() {
+                    continue;
+                }
+                lines.push(if header[i].is_empty() {
+                    cell.clone()
+                } else {
+                    format!("{}: {}", header[i], cell)
+                });
+            }
+            lines.join("\n")
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    out.push(records);
     out.join("\n")
 }
 
@@ -368,7 +435,13 @@ fn quote(text: &str) -> String {
         return String::new();
     }
     text.lines()
-        .map(|l| if l.is_empty() { ">".to_string() } else { format!("> {}", l) })
+        .map(|l| {
+            if l.is_empty() {
+                ">".to_string()
+            } else {
+                format!("> {}", l)
+            }
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -400,3 +473,77 @@ fn format_date(ts: i32) -> String {
         .unwrap_or_default()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn table(rows: &[&[&str]]) -> tl::types::PageBlockTable {
+        tl::types::PageBlockTable {
+            bordered: false,
+            compact: false,
+            striped: false,
+            title: tl::enums::RichText::TextEmpty,
+            rows: rows
+                .iter()
+                .map(|row| {
+                    tl::enums::PageTableRow::Row(tl::types::PageTableRow {
+                        cells: row
+                            .iter()
+                            .map(|cell| {
+                                tl::enums::PageTableCell::Cell(tl::types::PageTableCell {
+                                    header: false,
+                                    align_center: false,
+                                    align_right: false,
+                                    valign_middle: false,
+                                    valign_bottom: false,
+                                    text: Some(tl::enums::RichText::TextPlain(
+                                        tl::types::TextPlain {
+                                            text: (*cell).into(),
+                                        },
+                                    )),
+                                    colspan: None,
+                                    rowspan: None,
+                                })
+                            })
+                            .collect(),
+                    })
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn narrow_table_is_aligned_into_columns() {
+        let out = render_table(&table(&[&["a", "b"], &["1", "2"], &["30", "4"]]));
+        assert_eq!(out, "a   b\n\u{2500}\u{2500}  \u{2500}\n1   2\n30  4");
+    }
+
+    #[test]
+    fn wide_table_becomes_one_record_per_row() {
+        let out = render_table(&table(&[
+            &["service", "issue", "comment"],
+            &[
+                "sh-cars",
+                "https://git.example.com/shamrock/cars/-/issues/89",
+                "supported",
+            ],
+            &["sh-router", "", ""],
+        ]));
+        assert_eq!(
+            out,
+            "**sh-cars**\nissue: https://git.example.com/shamrock/cars/-/issues/89\ncomment: supported\n\n**sh-router**"
+        );
+    }
+
+    #[test]
+    fn ragged_rows_are_padded_not_dropped() {
+        let out = render_table(&table(&[&["a", "b"], &["1"]]));
+        assert_eq!(out, "a  b\n\u{2500}  \u{2500}\n1");
+    }
+
+    #[test]
+    fn header_only_table_still_renders() {
+        let out = render_table(&table(&[&["a", "b"]]));
+        assert_eq!(out, "a  b\n\u{2500}  \u{2500}");
+    }
+}
