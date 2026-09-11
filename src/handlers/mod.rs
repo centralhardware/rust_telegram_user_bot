@@ -7,8 +7,12 @@ pub(crate) mod extract;
 mod incoming;
 mod media;
 mod outgoing;
+mod pins;
+mod polls;
 mod reactions;
 mod service;
+mod transcription;
+mod views;
 
 pub use auto_cat::handle_auto_cat;
 pub use backfill_reply::backfill_reply;
@@ -18,6 +22,9 @@ pub use ephemeral::{save_ephemeral, save_ephemeral_deleted};
 pub use incoming::save_incoming;
 pub use media::{save_media, start as start_media};
 pub use outgoing::save_outgoing;
+pub use pins::save_pinned;
+pub use polls::save_poll;
 pub use reactions::save_reactions;
 pub use service::save_service;
-
+pub use transcription::save_transcription;
+pub use views::save_views;

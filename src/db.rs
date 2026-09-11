@@ -117,6 +117,17 @@ pub const SERVICE: &str = "service";
 /// belongs to — never the send row written a second time, which would be a
 /// duplicate the counters cannot tell from a real message.
 pub const FILE_UPLOADED: &str = "file_uploaded";
+/// A message pinned, and its undoing. A pin in a group is also announced as a
+/// service message; an unpin, and anything outside a group, is announced by
+/// nothing at all, so these rows are the only record of either.
+pub const PIN: &str = "pin";
+pub const UNPIN: &str = "unpin";
+/// A poll's results as they stand after a vote — a snapshot, like a reaction.
+pub const POLL: &str = "poll";
+/// The text Telegram made of a voice message.
+pub const TRANSCRIPTION: &str = "transcription";
+/// A channel post's view or forward counter, as it stands after the update.
+pub const VIEWS: &str = "views";
 
 pub struct MessageInfo {
     pub message: String,
@@ -138,7 +149,11 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
     let sent = EVENTS_BUF
         .find_last(|e| {
             (e.event == SEND && e.chat_id == chat_id && e.message_id == message_id).then(|| {
-                (e.message.clone(), e.chat_title.clone(), e.first_name.clone())
+                (
+                    e.message.clone(),
+                    e.chat_title.clone(),
+                    e.first_name.clone(),
+                )
             })
         })
         .await;
@@ -284,7 +299,11 @@ pub async fn resolve_reply(chat_id: i64, reply: &mut crate::utils::reply_target:
         id => id as i64,
     };
     let quoted_chat = reply.reply_to_chat_id != 0;
-    let target_chat = if quoted_chat { reply.reply_to_chat_id } else { chat_id };
+    let target_chat = if quoted_chat {
+        reply.reply_to_chat_id
+    } else {
+        chat_id
+    };
 
     let target = find_target(target_chat, id).await;
 
@@ -402,6 +421,18 @@ pub struct Event {
     pub lon: f64,
     pub poll_question: String,
     pub poll_options: Vec<String>,
+    /// Telegram's own id for the poll, on both the message carrying it and the
+    /// 'poll' rows that follow: a results update names the message only
+    /// sometimes, and this is the link back when it does not.
+    pub poll_id: i64,
+    /// A 'poll' row: the voters per option after the change, keyed by the option
+    /// identifier — the wording is in `poll_options` on the send row.
+    pub poll_results: Vec<(String, u32)>,
+    pub poll_total_voters: u32,
+    /// A 'views' row: a channel post's counters. Telegram reports each on its
+    /// own, so the one this update did not carry is 0.
+    pub views: u32,
+    pub forwards: u32,
     pub sha256: String,
     pub s3_bucket: String,
     pub s3_key: String,
@@ -418,7 +449,10 @@ impl Event {
         // late copy of a message beat the archiver's enriched row and blank the
         // S3 columns off it. As it stands a redelivery is a no-op — same key,
         // same version — and only the archiver ever raises it.
-        Self { event: event.to_string(), ..Self::default() }
+        Self {
+            event: event.to_string(),
+            ..Self::default()
+        }
     }
 
     pub fn send() -> Self {
@@ -439,6 +473,26 @@ impl Event {
 
     pub fn service() -> Self {
         Self::of(SERVICE)
+    }
+
+    pub fn pin() -> Self {
+        Self::of(PIN)
+    }
+
+    pub fn unpin() -> Self {
+        Self::of(UNPIN)
+    }
+
+    pub fn poll() -> Self {
+        Self::of(POLL)
+    }
+
+    pub fn transcription() -> Self {
+        Self::of(TRANSCRIPTION)
+    }
+
+    pub fn views() -> Self {
+        Self::of(VIEWS)
     }
 
     /// An ephemeral message's own event name: Telegram calls a new one "new", the
