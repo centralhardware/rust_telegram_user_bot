@@ -1,6 +1,12 @@
 -- The formatting and the buttons come out of the text and get columns of their
 -- own.
 --
+-- SUPERSEDED IN PART BY 038: the tuple elements are named here, and the Rust
+-- client cannot parse a named tuple out of the insert header -- every write of
+-- the table fails on it. 038 drops the two columns and adds them back with
+-- positional elements. On a fresh server, run this and then 038; the second
+-- leaves the first with nothing to keep.
+--
 -- `message` has been holding a rendering rather than a message: the bot applied
 -- the entities to the text as it logged it -- `code` in backticks, a link as
 -- [text](url), strike and underline as combining marks drawn over every

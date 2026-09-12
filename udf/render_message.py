@@ -7,10 +7,14 @@ draws over it is the `entities` array beside it, and the buttons under it the
 `keyboard` array. Putting the three back together is a read-time job, and this
 is it.
 
-Both arrive as arrays of named tuples, which JSONEachRow hands over as objects:
+Both arrive as arrays of tuples, which JSONEachRow hands over as arrays:
 
-    entities  {"type": "bold", "offset": 0, "length": 4, "payload": ""}
-    keyboard  {"row": 0, "text": "Open", "type": "url", "payload": "https://..."}
+    entities  ["bold", 0, 4, ""]
+    keyboard  [0, "Open", "url", "https://..."]
+
+A tuple whose elements are named arrives as an object instead, so both shapes
+are read -- the columns are unnamed today only because the Rust client cannot
+parse a named tuple out of the insert header.
 
 `offset` and `length` are UTF-16 code units, as Telegram counts them, and
 `payload` is the one thing an entity carries besides its span -- a link's
@@ -177,20 +181,35 @@ def render_keyboard(buttons):
     return '<div class="tg-keyboard">' + "<br>".join(drawn) + "</div>"
 
 
-def usable(value):
-    """Only what the renderer can work with. A row is a tuple ClickHouse filled,
-    so this is about the empty array and about a hand-written call, not about
-    anything the bot writes."""
+ENTITY_FIELDS = ("type", "offset", "length", "payload")
+BUTTON_FIELDS = ("row", "text", "type", "payload")
+
+
+def usable(value, fields):
+    """The array as a list of dicts, whichever shape it arrived in: a tuple
+    ClickHouse filled is a JSON array, one whose elements are named is a JSON
+    object. Anything else in it -- which only a hand-written call can put
+    there -- is dropped rather than raised over."""
     if not isinstance(value, list):
         return []
-    return [item for item in value if isinstance(item, dict)]
+    rows = []
+    for item in value:
+        if isinstance(item, dict):
+            rows.append(item)
+        elif isinstance(item, list) and len(item) == len(fields):
+            rows.append(dict(zip(fields, item)))
+    return rows
 
 
 def render(row, mode):
     if mode == "keyboard":
-        return render_keyboard(usable(row.get("keyboard")))
+        return render_keyboard(usable(row.get("keyboard"), BUTTON_FIELDS))
     text = row.get("message", "")
-    entities = [e for e in usable(row.get("entities")) if "offset" in e and "length" in e]
+    entities = [
+        e
+        for e in usable(row.get("entities"), ENTITY_FIELDS)
+        if isinstance(e.get("offset"), int) and isinstance(e.get("length"), int)
+    ]
     entities.sort(key=lambda e: (e["offset"], -e["length"]))
     if mode == "text":
         return render_text(text, entities)

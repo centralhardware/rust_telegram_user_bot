@@ -101,6 +101,25 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(render({"keyboard": []}, "keyboard"), "")
 
 
+class TupleShapeTest(unittest.TestCase):
+    """What ClickHouse actually sends: an unnamed tuple arrives as a JSON array."""
+
+    def test_entities_as_arrays(self):
+        self.assertEqual(
+            render({"message": "bold text", "entities": [["bold", 0, 4, ""]]}, "html"),
+            "<b>bold</b> text",
+        )
+
+    def test_keyboard_as_arrays(self):
+        self.assertEqual(
+            render({"keyboard": [[0, "Open", "url", "https://e.com"]]}, "keyboard"),
+            '<div class="tg-keyboard"><a href="https://e.com">Open</a></div>',
+        )
+
+    def test_a_tuple_of_the_wrong_width_is_dropped(self):
+        self.assertEqual(render({"message": "hi", "entities": [["bold", 0]]}, "html"), "hi")
+
+
 class DeclarationTest(unittest.TestCase):
     """The XML the server reads, parsed the way the server parses it -- a double
     hyphen inside a comment is enough for it to refuse the whole file."""
