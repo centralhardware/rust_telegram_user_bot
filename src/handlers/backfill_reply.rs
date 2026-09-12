@@ -134,9 +134,7 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
             silent: meta_msg.silent,
             noforwards: meta_msg.noforwards,
             ttl_period: meta_msg.ttl_period,
-            // A service message is an event of the chat, logged under its own
-            // event name, exactly as `save_incoming` does for a live one.
-            ..if reply.action().is_some() { Event::service() } else { Event::send() }
+            ..Event::send()
         })
         .await;
 

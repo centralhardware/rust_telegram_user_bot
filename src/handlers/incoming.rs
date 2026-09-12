@@ -93,10 +93,11 @@ pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, 
     let meta = crate::utils::media_description::media_meta(message).unwrap_or_default();
     let meta_msg = crate::utils::message_meta::of(&std::ops::Deref::deref(message).raw);
 
-    // A service message — a join, a title change, a call — is an event of the
-    // chat rather than something someone wrote, so it is logged under its own
-    // event name; `action` names which one it was.
-    let base = if message.action().is_some() { Event::service() } else { Event::send() };
+    // A service message — a join, a title change, a call — is a message like any
+    // other: an id, a sender, a date and a place in the history. It is logged as
+    // one, and `action` is what says it announces something rather than carrying
+    // what someone wrote.
+    let base = Event::send();
 
     let event = Event {
         date_time: message.date().as_second() as u32,
