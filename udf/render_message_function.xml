@@ -33,7 +33,7 @@
             <name>message</name>
         </argument>
         <argument>
-            <type>Array(Tuple(type String, offset UInt32, length UInt32, payload String))</type>
+            <type>Array(Tuple(String, UInt32, UInt32, String))</type>
             <name>entities</name>
         </argument>
         <format>JSONEachRow</format>
@@ -52,7 +52,7 @@
             <name>message</name>
         </argument>
         <argument>
-            <type>Array(Tuple(type String, offset UInt32, length UInt32, payload String))</type>
+            <type>Array(Tuple(String, UInt32, UInt32, String))</type>
             <name>entities</name>
         </argument>
         <format>JSONEachRow</format>
@@ -67,7 +67,7 @@
         <return_type>String</return_type>
         <return_name>result</return_name>
         <argument>
-            <type>Array(Tuple(row UInt8, text String, type String, payload String))</type>
+            <type>Array(Tuple(UInt8, String, String, String))</type>
             <name>keyboard</name>
         </argument>
         <format>JSONEachRow</format>
