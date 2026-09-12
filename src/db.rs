@@ -472,19 +472,14 @@ pub struct Event {
     pub sha256: String,
     pub s3_bucket: String,
     pub s3_key: String,
-    /// The ReplacingMergeTree version. Always 0: nothing rewrites a row any
-    /// more, so the only thing the engine still collapses is a redelivery of the
-    /// same event, which is the same row at the same version.
-    pub version: u32,
 }
 
 impl Event {
     fn of(event: &str) -> Self {
-        // Version 0, deliberately, not the ingest time: Telegram redelivers
-        // updates after a reconnect, and an ingest-time version would make the
-        // late copy of a message beat the archiver's enriched row and blank the
-        // S3 columns off it. As it stands a redelivery is a no-op — same key,
-        // same version — and only the archiver ever raises it.
+        // No version column any more (migration 039): nothing rewrites a row, so
+        // the only thing ReplacingMergeTree still collapses is a redelivery of
+        // the same event after a reconnect — the same row on the same key, where
+        // it does not matter which copy survives.
         Self {
             event: event.to_string(),
             ..Self::default()
@@ -651,7 +646,5 @@ mod tests {
         assert!(uploaded.chat_title.is_empty());
         assert!(uploaded.raw.is_empty());
         assert_eq!(uploaded.user_id, 0);
-        // Nothing to collapse: this row replaces no other.
-        assert_eq!(uploaded.version, 0);
     }
 }
