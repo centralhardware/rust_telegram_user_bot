@@ -67,7 +67,7 @@ ALTER TABLE telegram_user_bot.events_log
         CODEC(ZSTD(9)) AFTER entities;
 
 ALTER TABLE telegram_user_bot.events_log COMMENT COLUMN entities
-    'The formatting over `message`: the Bot API's type name, the span in UTF-16 code units, and the one thing the entity carries besides -- a link\'s target, a mention\'s account, a code block\'s language. `render_message_html` draws it back onto the text. Empty on every row written before migration 037, whose `message` holds the rendering instead.';
+    'The formatting over `message`: the type name the Bot API gives it, the span in UTF-16 code units, and the one thing the entity carries besides -- the target of a link, the account of a mention, the language of a code block. `render_message_html` draws it back onto the text. Empty on every row written before migration 037, whose `message` holds the rendering instead.';
 
 ALTER TABLE telegram_user_bot.events_log COMMENT COLUMN keyboard
     'The inline keyboard under the message, its rows flattened: each button names the row it sits in. `render_keyboard_html` draws it. Empty on every row written before migration 037, which glued the buttons onto the end of `message` instead.';
