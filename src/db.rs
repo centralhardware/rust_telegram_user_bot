@@ -129,8 +129,21 @@ pub const VIEWS: &str = "views";
 
 pub struct MessageInfo {
     pub message: String,
+    /// The formatting and the buttons the message carries, as the columns of the
+    /// same name hold them — an edit that changes only one of these changes
+    /// nothing in `message`, and would otherwise pass for no edit at all.
+    pub entities: Vec<crate::utils::entities::Entity>,
+    pub keyboard: Vec<crate::utils::entities::Button>,
     pub chat_title: String,
     pub first_name: String,
+}
+
+/// The body of a message as the log has it, read back for an edit.
+#[derive(Row, Deserialize, Default)]
+struct BodyRow {
+    message: String,
+    entities: Vec<crate::utils::entities::Entity>,
+    keyboard: Vec<crate::utils::entities::Button>,
 }
 
 /// Who the send row of a message says posted it. Read back for a deletion,
@@ -148,7 +161,7 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
         .find_last(|e| {
             (e.event == SEND && e.chat_id == chat_id && e.message_id == message_id).then(|| {
                 (
-                    e.message.clone(),
+                    body_of(e),
                     e.chat_title.clone(),
                     e.first_name.clone(),
                 )
@@ -159,18 +172,22 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
     let edited = EVENTS_BUF
         .find_last(|e| {
             (e.event == EDIT && e.chat_id == chat_id && e.message_id == message_id)
-                .then(|| e.message.clone())
+                .then(|| body_of(e))
         })
         .await;
 
-    let message = if let Some(msg) = edited {
-        msg
-    } else if let Some((msg, _, _)) = sent.as_ref() {
-        msg.clone()
+    let body = if let Some(body) = edited {
+        body
+    } else if let Some((body, _, _)) = sent.as_ref() {
+        BodyRow {
+            message: body.message.clone(),
+            entities: body.entities.clone(),
+            keyboard: body.keyboard.clone(),
+        }
     } else {
         clickhouse()
             .query(
-                "SELECT message FROM events_log \
+                "SELECT message, entities, keyboard FROM events_log \
                  WHERE chat_id = ? AND message_id = ? AND event IN (?, ?) \
                  ORDER BY event = ? DESC, date_time DESC LIMIT 1",
             )
@@ -179,7 +196,7 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
             .bind(SEND)
             .bind(EDIT)
             .bind(EDIT)
-            .fetch_one::<String>()
+            .fetch_one::<BodyRow>()
             .await
             .unwrap_or_default()
     };
@@ -227,9 +244,19 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
     };
 
     MessageInfo {
-        message,
+        message: body.message,
+        entities: body.entities,
+        keyboard: body.keyboard,
         chat_title,
         first_name,
+    }
+}
+
+fn body_of(event: &Event) -> BodyRow {
+    BodyRow {
+        message: event.message.clone(),
+        entities: event.entities.clone(),
+        keyboard: event.keyboard.clone(),
     }
 }
 
@@ -331,7 +358,18 @@ pub struct Event {
     pub chat_id: i64,
     pub chat_title: String,
     pub message_id: i64,
+    /// What the sender wrote, as they wrote it: no formatting markers, no buttons
+    /// glued underneath. When there is no text — media, a service action — it is
+    /// the description of that instead, as it always was.
     pub message: String,
+    /// The formatting Telegram draws over `message` — what it is, the span it
+    /// covers in UTF-16 code units, and the one thing it carries besides. Kept
+    /// beside the text rather than baked into it, so a reader can render it, or
+    /// ignore it and read the text.
+    pub entities: Vec<crate::utils::entities::Entity>,
+    /// The inline keyboard under the message, its rows flattened: each button
+    /// names the row it sits in.
+    pub keyboard: Vec<crate::utils::entities::Button>,
     pub user_id: u64,
     pub username: Vec<String>,
     pub first_name: String,

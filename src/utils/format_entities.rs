@@ -18,6 +18,17 @@ pub fn formatted_text(message: &Message) -> String {
     render(text, message.fmt_entities().map(Vec::as_slice))
 }
 
+/// The same text with nothing applied to it — what the sender typed, which is what
+/// the `message` column stores; the entities that decorate it are stored beside it.
+/// A rich message has no plain form of its own, so it is rendered as it is for the
+/// console.
+pub fn plain_text(message: &Message) -> String {
+    if let Some(rich) = crate::utils::rich_message::rich_text(message) {
+        return rich;
+    }
+    message.text().to_string()
+}
+
 /// Combining marks that draw over the preceding character, so the style survives as
 /// plain text instead of being carried by `~~`/`__` markers. Unicode has no combining
 /// equivalent for bold, italic or spoiler, so those keep their markers.

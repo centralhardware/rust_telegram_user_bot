@@ -98,19 +98,16 @@ pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Resul
         );
     }
 
-    let mut msg_content = if !text.is_empty() {
-        text
+    // The text as it was typed. Its formatting and its buttons are columns of
+    // their own -- the console line above is where they are rendered back onto it.
+    let plain = crate::utils::format_entities::plain_text(message);
+    let msg_content = if !plain.is_empty() {
+        plain
     } else if let Some(ref desc) = action_desc {
         desc.clone()
     } else {
         media_desc.unwrap_or_default()
     };
-    if let Some(b) = &buttons {
-        if !msg_content.is_empty() {
-            msg_content.push_str("\n\n");
-        }
-        msg_content.push_str(b);
-    }
 
     let reply_to_user_id = crate::db::resolve_reply(chat_id, &mut reply).await;
     let (topic_id, topic_name) = crate::utils::topic::topic_of(client, message).await;
@@ -127,6 +124,8 @@ pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Resul
     let event = Event {
         date_time: message.date().as_second() as u32,
         message: msg_content,
+        entities: crate::utils::entities::of_message(message),
+        keyboard: crate::utils::entities::keyboard_of_message(message),
         chat_title: title,
         chat_id,
         chat_usernames: usernames,

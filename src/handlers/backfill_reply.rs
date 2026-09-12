@@ -58,7 +58,7 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
     let sender = sender_info(client, &reply).await;
     let chat = chat_info(client, &reply).await;
 
-    let text = crate::utils::format_entities::formatted_text(&reply);
+    let text = crate::utils::format_entities::plain_text(&reply);
     let sender_bare_id = sender.user_id as i64;
     let msg_content = if !text.is_empty() {
         text
@@ -87,6 +87,8 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
         .push(Event {
             date_time: reply.date().as_second() as u32,
             message: msg_content,
+            entities: crate::utils::entities::of_message(&reply),
+            keyboard: crate::utils::entities::keyboard_of_raw(&reply.raw),
             chat_title: chat.chat_title,
             chat_id,
             username: sender.username,

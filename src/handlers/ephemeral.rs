@@ -37,7 +37,9 @@ pub async fn save_ephemeral(message: &tl::enums::EphemeralMessage, event: &str) 
     let chat_title = title_of(peer.bot_api_dialog_id_unchecked()).await;
     let sender_title = title_of(sender.bot_api_dialog_id_unchecked()).await;
 
+    // Rendered for the console, stored as it came.
     let text = body(msg);
+    let stored = stored_body(msg);
     let (reply_to, reply_to_ephemeral) = reply(msg);
 
     if !is_log_ignored(chat_id) {
@@ -59,7 +61,9 @@ pub async fn save_ephemeral(message: &tl::enums::EphemeralMessage, event: &str) 
             chat_id,
             chat_title,
             message_id: msg.id as i64,
-            message: text,
+            message: stored,
+            entities: crate::utils::entities::entities(msg.entities.as_deref()),
+            keyboard: crate::utils::entities::keyboard(msg.reply_markup.as_ref()),
             user_id: sender.bare_id_unchecked() as u64,
             out: msg.out,
             receiver_id: msg.receiver_id as u64,
@@ -137,6 +141,25 @@ fn body(msg: &tl::types::EphemeralMessage) -> String {
         out.push_str(&buttons);
     }
     out
+}
+
+/// The body as the log stores it: the text as it came, with the media description
+/// standing in for it when there is none. The formatting and the buttons `body`
+/// renders in are columns of their own.
+fn stored_body(msg: &tl::types::EphemeralMessage) -> String {
+    let rich = msg.rich_message.as_ref().and_then(crate::utils::rich_message::render);
+    let text = rich.unwrap_or_else(|| msg.message.clone());
+
+    let media = msg
+        .media
+        .as_ref()
+        .map(crate::utils::media_description::describe_media);
+
+    match (media, text.is_empty()) {
+        (Some(media), false) => format!("{media} {text}"),
+        (Some(media), true) => media,
+        (None, _) => text,
+    }
 }
 
 /// What the message replies to, and whether that id is itself an ephemeral one —

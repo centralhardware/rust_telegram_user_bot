@@ -1,5 +1,6 @@
 pub mod admin_chats;
 pub mod diff;
+pub mod entities;
 pub mod format_entities;
 pub mod inline_buttons;
 pub mod log_ignore;
