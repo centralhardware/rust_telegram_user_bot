@@ -11,24 +11,27 @@ pub async fn save_edited(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let chat_id = message.peer_id().bare_id_unchecked();
     let msg_id = message.id() as i64;
-    let mut message_content = crate::utils::format_entities::formatted_text(message);
-    if let Some(b) = crate::utils::inline_buttons::format_buttons(message) {
-        if !message_content.is_empty() {
-            message_content.push_str("\n\n");
-        }
-        message_content.push_str(&b);
-    }
+    let message_content = crate::utils::format_entities::plain_text(message);
+    let entities = crate::utils::entities::of_message(message);
+    let keyboard = crate::utils::entities::keyboard_of_message(message);
 
-    if message_content.is_empty() {
+    if message_content.is_empty() && entities.is_empty() && keyboard.is_empty() {
         return Ok(());
     }
 
-    let original = crate::db::find_message(chat_id, msg_id).await.message;
+    let original = crate::db::find_message(chat_id, msg_id).await;
 
-    if original.is_empty() || original == message_content {
+    // Nothing about the body changed -- Telegram also reports an edit for things
+    // the log does not keep, a link preview appearing being the usual one.
+    if original.message.is_empty()
+        || (original.message == message_content
+            && original.entities == entities
+            && original.keyboard == keyboard)
+    {
         return Ok(());
     }
 
+    let original = original.message;
     let diff = crate::utils::diff::word_patch(&original, &message_content);
 
     let sender = crate::utils::peer_info::sender_info(client, message).await;
@@ -80,6 +83,8 @@ pub async fn save_edited(
         chat_id,
         message_id: msg_id,
         message: message_content,
+        entities,
+        keyboard,
         diff,
         raw: serde_json::to_string(&std::ops::Deref::deref(message).raw).unwrap_or_default(),
         media_type: meta.media_type,

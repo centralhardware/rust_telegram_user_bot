@@ -23,7 +23,7 @@ pub fn format_markup(markup: &tl::enums::ReplyMarkup) -> Option<String> {
     if lines.is_empty() { None } else { Some(lines.join("\n")) }
 }
 
-fn extract_reply_markup(update: &tl::enums::Update) -> Option<&tl::enums::ReplyMarkup> {
+pub fn extract_reply_markup(update: &tl::enums::Update) -> Option<&tl::enums::ReplyMarkup> {
     let msg = match update {
         tl::enums::Update::NewMessage(u) => &u.message,
         tl::enums::Update::NewChannelMessage(u) => &u.message,

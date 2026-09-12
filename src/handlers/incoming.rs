@@ -74,17 +74,15 @@ pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, 
         );
     }
 
-    let mut msg_content = if text.is_empty() {
+    // The text as the sender wrote it. Its formatting and its buttons are columns
+    // of their own -- the console line above is where they are rendered back onto
+    // it.
+    let plain = crate::utils::format_entities::plain_text(message);
+    let msg_content = if plain.is_empty() {
         action_desc.clone().unwrap_or_else(|| media_desc.clone().unwrap_or_default())
     } else {
-        text.to_string()
+        plain
     };
-    if let Some(b) = &buttons {
-        if !msg_content.is_empty() {
-            msg_content.push_str("\n\n");
-        }
-        msg_content.push_str(b);
-    }
 
     let mut reply = crate::utils::reply_target::reply_info(message);
     let reply_to_user_id = crate::db::resolve_reply(chat_id, &mut reply).await;
@@ -102,6 +100,8 @@ pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, 
     let event = Event {
         date_time: message.date().as_second() as u32,
         message: msg_content,
+        entities: crate::utils::entities::of_message(message),
+        keyboard: crate::utils::entities::keyboard_of_message(message),
         chat_title: chat.chat_title,
         chat_id,
         username: sender.username,
