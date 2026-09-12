@@ -14,12 +14,26 @@ use crate::utils::peer_names::title_of;
 
 pub async fn save_views(channel_id: i64, message_id: i32, views: u32, forwards: u32) {
     if !is_log_ignored(channel_id) {
+        // The post itself: an update names nothing but the counter, so what the
+        // counter is counting is read back from the message's send row.
+        let post = crate::db::find_message(channel_id, message_id as i64).await;
         let dialog_id = -1_000_000_000_000 - channel_id;
-        let chat_short: String = title_of(dialog_id).await.chars().take(25).collect();
-        let rendered = if forwards > 0 {
+        let title = match title_of(dialog_id).await {
+            t if !t.is_empty() => t,
+            _ if !post.chat_title.is_empty() => post.chat_title,
+            _ => channel_id.to_string(),
+        };
+        let chat_short: String = title.chars().take(25).collect();
+        let counter = if forwards > 0 {
             format!("{forwards} forwards")
         } else {
             format!("{views} views")
+        };
+        let text: String = post.message.replace('\n', " ").chars().take(60).collect();
+        let rendered = if text.is_empty() {
+            counter
+        } else {
+            format!("{counter} \x1b[90m—\x1b[96m {text}")
         };
         info!(
             "\x1b[96m{:<8} {:>8} {:<25} \x1b[90m│\x1b[96m {}\x1b[0m",
