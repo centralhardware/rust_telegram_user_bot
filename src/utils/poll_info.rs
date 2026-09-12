@@ -17,7 +17,9 @@ pub struct PollInfo {
     pub chat_id: i64,
     pub chat_title: String,
     pub message_id: i64,
+    #[serde(rename = "poll_question")]
     pub question: String,
+    #[serde(rename = "poll_options")]
     pub options: Vec<String>,
 }
 
