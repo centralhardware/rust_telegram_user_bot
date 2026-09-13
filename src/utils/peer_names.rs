@@ -6,14 +6,12 @@
 //! `Peer`, so they have to be written from a different path, and a partial row
 //! into a ReplacingMergeTree would blank the access hash the session needs.
 
-use std::sync::LazyLock;
-
 use clickhouse::Row;
 use grammers_client::peer::Peer;
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
 
-use crate::db::DedupCache;
+use crate::db::{insert_rows, now};
 use crate::handlers::extract::{ChatInfo, SenderInfo};
 
 /// The community a chat belongs to. Only a channel or a supergroup can be in
@@ -43,6 +41,13 @@ pub struct PeerNames {
     /// of the chat rather than of the message, which is why it is remembered
     /// here with the chat's other identity.
     pub community_id: i64,
+    /// The ReplacingMergeTree version, and what a read orders by.
+    ///
+    /// The column defaults to `now()` server-side, but it is written from here
+    /// anyway: rows go into a Buffer table, and a row still sitting in the
+    /// buffer has to carry a version the read can order by just as much as one
+    /// already merged into the table.
+    pub updated_at: u32,
 }
 
 impl PeerNames {
@@ -84,6 +89,7 @@ impl PeerNames {
         }
 
         Some(Self {
+            updated_at: now(),
             peer_id: peer.id().bot_api_dialog_id_unchecked(),
             title,
             first_name,
@@ -118,9 +124,16 @@ impl PeerNames {
 
 /// The stored names for a peer, or `None` when it has never been seen.
 ///
-/// The dedup cache answers first, which saves a query for a peer this process
-/// has already written; everything else goes to ClickHouse, where `remember`
-/// has already put it.
+/// Read from the Buffer table (migration 041), which answers out of its own
+/// memory and `peer_names` underneath both -- so a peer remembered a moment ago
+/// is found here rather than sending the caller back to Telegram to resolve a
+/// name already in hand.
+///
+/// `ORDER BY updated_at DESC LIMIT 1` rather than `FINAL`: FINAL is passed to
+/// the destination table but is not applied to the rows still in the buffer, so
+/// a peer renamed this minute would come back as both its old row and its new
+/// one, in no particular order. Ordering by the version column picks the newer
+/// of the two wherever each of them is -- which is what FINAL was doing here.
 ///
 /// Deliberately unmemoised: ClickHouse is the only place names live, so a
 /// rename anywhere is picked up on the next lookup and nothing has to be
@@ -135,14 +148,11 @@ pub async fn title_of(peer_id: i64) -> String {
 }
 
 pub async fn load(peer_id: i64) -> Option<PeerNames> {
-    if let Some(names) = PEER_NAMES.get(peer_id).await {
-        return Some(names);
-    }
-
     match crate::db::clickhouse()
         .query(
-            "SELECT peer_id, title, first_name, last_name, usernames, community_id \
-             FROM peer_names FINAL WHERE peer_id = ?",
+            "SELECT peer_id, title, first_name, last_name, usernames, community_id, updated_at \
+             FROM peer_names_buffer WHERE peer_id = ? \
+             ORDER BY updated_at DESC LIMIT 1",
         )
         .bind(peer_id)
         .fetch_one::<PeerNames>()
@@ -160,17 +170,18 @@ pub async fn load(peer_id: i64) -> Option<PeerNames> {
     }
 }
 
-/// The names already written, keyed by peer.
-///
-/// `remember` is called for every named peer that passes through — about twice
-/// per message, chat and sender — and an insert each would be a request per
-/// message spent on names that almost never change. Only a name that has
-/// actually changed reaches ClickHouse, and `ReplacingMergeTree` collapses
-/// whatever repeats still get through.
-pub static PEER_NAMES: LazyLock<DedupCache<PeerNames>> =
-    LazyLock::new(|| DedupCache::new("peer_names"));
+/// The Buffer table in front of `peer_names` (migration 041). Written and read
+/// through, so nothing about a peer is held back in the bot.
+const PEER_NAMES: &str = "peer_names_buffer";
 
-/// Store a peer's names, unless they are the names already stored.
+/// Store a peer's names.
+///
+/// Called for every named peer that passes through -- about twice per message,
+/// chat and sender -- and almost always with the row already stored. Nothing
+/// here filters the repeats: they go into the Buffer, which is memory, and
+/// `ReplacingMergeTree` collapses them on the way down.
 pub async fn remember(names: &PeerNames) {
-    PEER_NAMES.remember(names.peer_id, names.clone()).await;
+    if let Err(e) = insert_rows(PEER_NAMES, std::slice::from_ref(names)).await {
+        error!("insert into {PEER_NAMES}: {e}");
+    }
 }

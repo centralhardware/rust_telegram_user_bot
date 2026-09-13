@@ -1,8 +1,6 @@
 use clickhouse::{Client, Row};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::LazyLock;
-use tokio::sync::Mutex;
 
 static CLICKHOUSE: LazyLock<Client> = LazyLock::new(|| {
     Client::default()
@@ -10,16 +8,6 @@ static CLICKHOUSE: LazyLock<Client> = LazyLock::new(|| {
         .with_user(std::env::var("CLICKHOUSE_USER").expect("CLICKHOUSE_USER not set"))
         .with_password(std::env::var("CLICKHOUSE_PASSWORD").expect("CLICKHOUSE_PASSWORD not set"))
         .with_database(std::env::var("CLICKHOUSE_DATABASE").expect("CLICKHOUSE_DATABASE not set"))
-        // For the peer tables. `events_log` gets its batching from the Buffer
-        // table in front of it (migration 040); `peer_names` and `peer_cache`
-        // are written straight, and async_insert keeps a row that has actually
-        // changed from becoming a part of its own.
-        .with_setting("async_insert", "1")
-        // ...and the insert still returns only once the row is really in the
-        // table, so `peer_names::load` falling through to ClickHouse finds what
-        // `remember` just wrote, and a failed insert stays an error the caller
-        // sees rather than a row lost in a buffer nobody is watching.
-        .with_setting("wait_for_async_insert", "1")
 });
 
 pub fn clickhouse() -> &'static Client {
@@ -28,7 +16,7 @@ pub fn clickhouse() -> &'static Client {
 
 /// Write rows to a table. Nothing is queued here: `async_insert` on the client
 /// means the server holds the rows and decides when they become a part.
-async fn insert_rows<T>(table: &str, rows: &[T]) -> Result<(), clickhouse::error::Error>
+pub async fn insert_rows<T>(table: &str, rows: &[T]) -> Result<(), clickhouse::error::Error>
 where
     T: Serialize + Send + 'static,
     for<'a> T: Row<Value<'a> = T>,
@@ -56,88 +44,6 @@ const EVENTS: &str = "events_log_buffer";
 pub async fn log_event(event: Event) {
     if let Err(e) = insert_rows(EVENTS, std::slice::from_ref(&event)).await {
         log::error!("insert into {EVENTS}: {e}");
-    }
-}
-
-/// The last row this process wrote for each key, so an identical one is never
-/// written again.
-///
-/// `peer_names` and `peer_cache` are written for every peer that passes through
-/// — about twice a message — and almost always with exactly the row that is
-/// already stored. Nothing is delayed here: a row that differs is inserted at
-/// once, the repeats simply never become a request. That is the one thing
-/// `async_insert` cannot do for us, since it batches parts rather than calls.
-///
-/// `events_log` needs none of this: its rows are all distinct, and it inserts
-/// directly through [`log_event`].
-pub struct DedupCache<T> {
-    table: &'static str,
-    written: Mutex<HashMap<i64, T>>,
-}
-
-impl<T> DedupCache<T>
-where
-    T: Serialize + Send + Clone + PartialEq + 'static,
-    for<'a> T: Row<Value<'a> = T>,
-{
-    pub fn new(table: &'static str) -> Self {
-        Self {
-            table,
-            written: Mutex::new(HashMap::new()),
-        }
-    }
-
-    /// The row last written for `key`, when this process wrote one. A hit saves
-    /// the caller a lookup; a miss only means it has to ask ClickHouse.
-    pub async fn get(&self, key: i64) -> Option<T> {
-        self.written.lock().await.get(&key).cloned()
-    }
-
-    /// The first row written this process has that `f` accepts. Keyed lookups
-    /// go through [`get`](Self::get); this is for the caller that knows a
-    /// property of the row rather than its key.
-    pub async fn find<F, R>(&self, f: F) -> Option<R>
-    where
-        F: Fn(&T) -> Option<R>,
-    {
-        self.written.lock().await.values().find_map(f)
-    }
-
-    /// Store a row, unless the one already written for `key` is identical.
-    pub async fn remember(&self, key: i64, row: T) {
-        if self.written.lock().await.get(&key) == Some(&row) {
-            return;
-        }
-        self.write(&[row.clone()], vec![(key, row)]).await;
-    }
-
-    /// Store a batch as one insert. grammers hands over every peer at once
-    /// after a dialogs sync, and a request each would be hundreds of them.
-    pub async fn remember_all(&self, rows: Vec<(i64, T)>) {
-        let fresh: Vec<(i64, T)> = {
-            let written = self.written.lock().await;
-            rows.into_iter()
-                .filter(|(key, row)| written.get(key) != Some(row))
-                .collect()
-        };
-        if fresh.is_empty() {
-            return;
-        }
-        let batch: Vec<T> = fresh.iter().map(|(_, row)| row.clone()).collect();
-        self.write(&batch, fresh).await;
-    }
-
-    /// Insert, and remember only what actually landed: a row dropped after a
-    /// failed insert would be skipped for good the next time it came round.
-    async fn write(&self, batch: &[T], remember: Vec<(i64, T)>) {
-        if let Err(e) = insert_rows(self.table, batch).await {
-            log::error!("insert into {}: {e}", self.table);
-            return;
-        }
-        let mut written = self.written.lock().await;
-        for (key, row) in remember {
-            written.insert(key, row);
-        }
     }
 }
 
@@ -544,7 +450,7 @@ impl Event {
     }
 }
 
-fn now() -> u32 {
+pub fn now() -> u32 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as u32)
