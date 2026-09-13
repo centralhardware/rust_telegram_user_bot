@@ -32,6 +32,10 @@
 //! fast as Telegram will answer earns a FLOOD_WAIT of minutes, which is longer
 //! than all the pauses together.
 //!
+//! A chat this account has left is walked like any other: left rather than
+//! deleted, it is still in the dialog list and Telegram usually still answers
+//! for its history. The ones it refuses are counted, not guessed at in advance.
+//!
 //! `new` reads the dialog list and backfills the chats `events_log` holds no row
 //! for at all — the ones that existed before the bot did and have been silent
 //! since. A chat with even one row in the log is left alone: it is the `<chat_id>`
@@ -305,6 +309,7 @@ async fn run_new(client: &Client, mine_only: bool, status: Option<&Message>) -> 
     let mut done = 0usize;
     let mut written = 0usize;
     let mut skipped = 0usize;
+    let mut refused = 0usize;
     for dialog in missing {
         // A chat the `<chat_id>` form is walking right now is left to it.
         if !RUNNING.lock().await.insert(dialog.chat_id) {
@@ -335,6 +340,7 @@ async fn run_new(client: &Client, mine_only: bool, status: Option<&Message>) -> 
             "backfill", dialog.chat_id, outcome
         );
         written += outcome.written;
+        refused += usize::from(outcome.refused);
         done += 1;
         RUNNING.lock().await.remove(&dialog.chat_id);
         tokio::time::sleep(REQUEST_GAP).await;
@@ -345,7 +351,15 @@ async fn run_new(client: &Client, mine_only: bool, status: Option<&Message>) -> 
     } else {
         String::new()
     };
-    format!("backfill new: done — {done} of {total} chats walked, {written} written{busy}")
+    let turned_away = if refused > 0 {
+        format!(", {refused} Telegram would not answer for")
+    } else {
+        String::new()
+    };
+    format!(
+        "backfill new: done — {done} of {total} chats walked, \
+         {written} written{turned_away}{busy}"
+    )
 }
 
 /// A dialog worth walking: the chat id as the log stores it, the peer to search
@@ -478,15 +492,22 @@ fn describe(
 fn describe_chat(id: i64, chats: &[tl::enums::Chat]) -> Option<Dialog> {
     let chat = chats.iter().find(|c| c.id() == id)?;
     let title = match chat {
+        // A group left rather than deleted is still in the dialog list and its
+        // history is still readable — that is what the official client exports
+        // when it exports a chat this account is no longer in. Left chats are
+        // attempted, and the ones Telegram does refuse are counted and named
+        // rather than guessed at from here.
         tl::enums::Chat::Chat(c) => c.title.clone(),
         tl::enums::Chat::Channel(c) => {
             // `min` describes a chat in passing, without an access hash.
-            if c.min || c.left {
+            if c.min {
                 return None;
             }
             c.title.clone()
         }
-        // Empty, forbidden and community chats carry no history to search.
+        // Empty, forbidden and community chats carry no history to search: a
+        // chat this account was thrown out of answers nothing whatever it is
+        // asked, so asking is a request spent on a certain refusal.
         _ => return None,
     };
     Some(Dialog {
@@ -559,12 +580,21 @@ async fn run(
             Err(e) => {
                 // Whatever is already in hand is still worth keeping.
                 flush(&mut batch, &mut written).await;
-                return Outcome {
-                    written,
-                    line: format!(
+                // Nothing read at all is Telegram turning the chat down rather
+                // than a walk cut short: a left chat it will not answer for, a
+                // chat this account was thrown out of since the list was read.
+                let line = if seen == 0 {
+                    format!("backfill {chat_id}: Telegram would not answer for it — {e}")
+                } else {
+                    format!(
                         "backfill {chat_id}: stopped after {seen} of {total} — {e}. \
                          Run it again to carry on."
-                    ),
+                    )
+                };
+                return Outcome {
+                    written,
+                    refused: true,
+                    line,
                 };
             }
         };
@@ -605,6 +635,7 @@ async fn run(
     };
     Outcome {
         written,
+        refused: false,
         line: format!("backfill {chat_id}: done — {seen} read, {written} written{health}"),
     }
 }
@@ -645,6 +676,9 @@ async fn is_bot_chat(peer: PeerRef) -> bool {
 /// log it added — which a `new` scan adds up over every chat it walks.
 struct Outcome {
     written: usize,
+    /// Whether the walk ended on Telegram saying no — a left chat it will not
+    /// hand the history of, most of the time.
+    refused: bool,
     line: String,
 }
 
