@@ -29,16 +29,17 @@
 //! !backfill new all
 //! !backfill <chat_id> full  — ignore what is recorded as walked, read it all
 //! !backfill <chat_id> mark  — record what the log holds as walked, without walking
-//! !backfill <chat_id> mark partial  — the same, for a walk that never finished
+//! !backfill <chat_id> mark partial  — the same, forced to count as unfinished
 //! ```
 //!
 //! `full` is the way back if a recorded range is ever wrong: it reads the whole
 //! history the way every backfill did before `backfill_state` existed, and
 //! records the range again at the end. `mark` is the other direction — it takes
 //! the range straight from the log for a chat that was walked before there was
-//! anywhere to write that down, so that walk is not owed twice. With `partial`
-//! it records the range as a walk still owed at the bottom, and the next
-//! backfill skips what is stored and carries on under it.
+//! anywhere to write that down, so that walk is not owed twice. It stops the
+//! range where the stored ids stop being dense, so a walk that never finished is
+//! marked only as far as it actually got, and the next backfill resumes under
+//! there instead of reading it all again.
 //!
 //! `<chat_id>` is the id as `events_log` stores it, and the `-100…` form
 //! Telegram apps show is accepted too.
@@ -96,6 +97,13 @@ const REQUEST_GAP: Duration = Duration::from_millis(500);
 /// How many messages `messages.Search` answers with at once. Every this many
 /// read is one round trip made, and one gap owed.
 const SEARCH_PAGE: usize = 100;
+
+/// The widest hole in a chat's stored ids that is still the ordinary kind: a
+/// message deleted, a message the log never had a reason to keep. Chats run to
+/// a couple of hundred missing ids in a row on that account alone. Anything
+/// wider is where an unfinished walk stopped, and `mark` draws the line above
+/// it rather than claiming the history under it.
+const BIGGEST_ORDINARY_HOLE: i64 = 1_000;
 
 /// How many dialogs a page of `messages.getDialogs` asks for. Telegram's limit.
 const DIALOG_PAGE: i32 = 100;
@@ -690,35 +698,56 @@ async fn logged_chat_ids() -> Result<HashSet<i64>, clickhouse::error::Error> {
 /// Telegram to find that out again is hours spent to write nothing.
 ///
 /// It takes the log at its word, which is the one thing the walk itself never
-/// does: the range is the lowest and highest id stored, and anything missing
-/// inside it stays missing. The range is reported back to be looked at, and
-/// `!backfill <chat_id> full` undoes it by reading everything again.
+/// does — so it does not take the whole of it: the range stops where the ids
+/// stop being dense. Every chat's ids have holes, a deleted message here and
+/// there, but a walk that was still working down through the history leaves one
+/// hole orders of magnitude wider than those, with everything it never reached
+/// under it. The mark is drawn above that hole and says it is not finished, and
+/// the next backfill carries on below rather than treating it as the bottom.
 ///
-/// `complete` says whether the walk it stands in for reached the start of the
-/// history — `!backfill <chat_id> mark partial` says it did not, and the next
-/// backfill carries on under `min_id` instead of treating it as the bottom.
-/// That is the one to use for a history the earlier walk was still working
-/// through: it skips the part already stored and resumes where it stopped.
-async fn mark_walked(chat_id: i64, mine_only: bool, complete: bool) -> String {
+/// The range is reported back to be looked at, and `!backfill <chat_id> full`
+/// undoes it by reading everything again. `partial` forces the unfinished mark
+/// for a log dense to the bottom that is still missing what lies under it.
+async fn mark_walked(chat_id: i64, mine_only: bool, finished: bool) -> String {
+    // The stored ids, and how far each one sits above the one below it. A hole
+    // of a few dozen ids is the ordinary kind — a deleted message, a message the
+    // log never had a reason to keep — and the walk that stopped part-way leaves
+    // one enormously larger than those, which is the one worth finding.
     let bounds = crate::db::clickhouse()
         .query(&format!(
-            "SELECT min(message_id), max(message_id), count() FROM {} \
-             WHERE chat_id = ? AND event IN (?, ?) AND NOT ephemeral",
+            "WITH ids AS ( \
+                 SELECT DISTINCT message_id AS id FROM {} \
+                 WHERE chat_id = ? AND event IN (?, ?) AND NOT ephemeral \
+             ), \
+             stepped AS ( \
+                 SELECT id, id - lagInFrame(id, 1, id) OVER ( \
+                     ORDER BY id ASC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW \
+                 ) AS step FROM ids \
+             ) \
+             SELECT min(id), max(id), count(), argMax(id, step), max(step) - 1 \
+             FROM stepped",
             crate::db::EVENTS
         ))
         .bind(chat_id)
         .bind(crate::db::SEND)
         .bind(crate::db::SERVICE)
-        .fetch_one::<(i64, i64, u64)>()
+        .fetch_one::<(i64, i64, u64, i64, i64)>()
         .await;
 
-    let (min_id, max_id, messages) = match bounds {
+    let (lowest, max_id, messages, above_hole, hole) = match bounds {
         Ok(bounds) => bounds,
         Err(e) => return format!("backfill {chat_id}: cannot read the log — {e}"),
     };
     if max_id == 0 {
         return format!("backfill {chat_id}: the log holds nothing for it — nothing to mark");
     }
+
+    // Where the log stops being dense. A hole this wide is not a few messages
+    // deleted: it is everything an unfinished walk never got to, so the mark
+    // stops above it and the next backfill carries on from there.
+    let broken = hole >= BIGGEST_ORDINARY_HOLE;
+    let min_id = if broken { above_hole } else { lowest };
+    let complete = finished && !broken;
 
     record(
         chat_id,
@@ -733,15 +762,17 @@ async fn mark_walked(chat_id: i64, mine_only: bool, complete: bool) -> String {
     .await;
 
     let whose = if mine_only { "mine" } else { "all" };
-    let reach = if complete {
-        "A later backfill reads only what is above it"
+    let found = if broken {
+        format!(
+            " — dense from {min_id} up, and a hole of {hole} ids under it, \
+             so the next backfill carries on below {min_id}"
+        )
+    } else if complete {
+        " — no hole worth the name in it, so the next backfill reads only above it".to_string()
     } else {
-        "A later backfill reads what is above it and carries on under it"
+        format!(" — the next backfill carries on below {min_id}")
     };
-    format!(
-        "backfill {chat_id}: marked {min_id}..{max_id} ({messages} rows, {whose}) as walked. \
-         {reach} — `full` to undo."
-    )
+    format!("backfill {chat_id}: marked {min_id}..{max_id} ({messages} rows, {whose}) as walked{found}. `full` to undo.")
 }
 
 /// The id range a finished walk has already read, out of `backfill_state`.
