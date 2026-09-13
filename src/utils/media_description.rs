@@ -263,6 +263,15 @@ pub struct MediaMeta {
     pub poll_id: i64,
 }
 
+/// What a message without text says it carries — "[photo]", "[voice, 0:12]" —
+/// for a message that arrived as a message rather than as an update.
+pub fn describe_of(message: &tl::enums::Message) -> Option<String> {
+    match message {
+        tl::enums::Message::Message(msg) => msg.media.as_ref().map(describe_media),
+        _ => None,
+    }
+}
+
 pub fn media_meta(message: &Message) -> Option<MediaMeta> {
     extract_media(message).map(meta_of)
 }

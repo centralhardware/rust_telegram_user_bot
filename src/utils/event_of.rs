@@ -36,6 +36,12 @@ pub async fn event_of(client: &Client, msg: &Message) -> Event {
             Some(&sender_display),
             game_title.as_deref(),
         )
+    } else if let Some(media) = crate::utils::media_description::describe_of(&msg.raw) {
+        // What the live path writes for a message that is a photo, a voice note,
+        // a sticker: the description, not the message's wire form. The raw JSON
+        // below is a last resort for a message that is none of the three, and
+        // was standing in for this one.
+        media
     } else {
         serde_json::to_string(&msg.raw).unwrap_or_default()
     };
