@@ -129,11 +129,17 @@ impl PeerNames {
 /// is found here rather than sending the caller back to Telegram to resolve a
 /// name already in hand.
 ///
-/// `ORDER BY updated_at DESC LIMIT 1` rather than `FINAL`: FINAL is passed to
-/// the destination table but is not applied to the rows still in the buffer, so
-/// a peer renamed this minute would come back as both its old row and its new
-/// one, in no particular order. Ordering by the version column picks the newer
-/// of the two wherever each of them is -- which is what FINAL was doing here.
+/// Collapsed with `argMax` over the version column rather than with `FINAL`,
+/// which is what ClickHouse recommends in place of FINAL and what this table
+/// needs anyway: FINAL is passed to the destination table but is not applied to
+/// the rows still in the buffer, so a peer renamed this minute would come back
+/// as both its old row and its new one. Grouping by the key and taking each
+/// field at the highest `updated_at` collapses the versions wherever they are,
+/// buffer or table, which is what FINAL was doing here.
+///
+/// The version is aliased `version` rather than `updated_at`: an alias that
+/// shadows the column it aggregates makes `argMax(title, updated_at)` read the
+/// alias instead, and ClickHouse rejects the query as a nested aggregate.
 ///
 /// Deliberately unmemoised: ClickHouse is the only place names live, so a
 /// rename anywhere is picked up on the next lookup and nothing has to be
@@ -150,9 +156,15 @@ pub async fn title_of(peer_id: i64) -> String {
 pub async fn load(peer_id: i64) -> Option<PeerNames> {
     match crate::db::clickhouse()
         .query(
-            "SELECT peer_id, title, first_name, last_name, usernames, community_id, updated_at \
+            "SELECT peer_id, \
+                    argMax(title, updated_at) AS title, \
+                    argMax(first_name, updated_at) AS first_name, \
+                    argMax(last_name, updated_at) AS last_name, \
+                    argMax(usernames, updated_at) AS usernames, \
+                    argMax(community_id, updated_at) AS community_id, \
+                    max(updated_at) AS version \
              FROM peer_names_buffer WHERE peer_id = ? \
-             ORDER BY updated_at DESC LIMIT 1",
+             GROUP BY peer_id",
         )
         .bind(peer_id)
         .fetch_one::<PeerNames>()

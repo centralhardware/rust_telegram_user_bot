@@ -26,15 +26,27 @@
 -- one both, in no particular order, and the query takes the first. That is a
 -- stale name, or worse, a stale access hash.
 --
--- So the reads order by the version column instead:
+-- So the reads collapse the versions themselves, with the GROUP BY / argMax
+-- form ClickHouse recommends in place of FINAL:
 --
---     SELECT ... FROM peer_names_buffer WHERE peer_id = ?
---     ORDER BY updated_at DESC LIMIT 1
+--     SELECT peer_id,
+--            argMax(title, updated_at) AS title,
+--            ...
+--            max(updated_at) AS version
+--     FROM peer_names_buffer WHERE peer_id = ?
+--     GROUP BY peer_id
 --
--- which picks the newest row wherever it happens to be -- buffer or table --
--- and is exactly what FINAL was doing here. Both tables are already
--- `ReplacingMergeTree(updated_at)`, so the version they need exists and is the
--- column they are already collapsed by; nothing about the schema changes.
+-- Each field is taken from the row with the highest version, wherever that row
+-- happens to be -- buffer or table -- which is what FINAL was doing here. Both
+-- tables are already `ReplacingMergeTree(updated_at)`, so the version they need
+-- exists and is the column they are already collapsed by; nothing about the
+-- schema changes.
+--
+-- One trap, hit and backed out of: the version cannot be aliased `updated_at`.
+-- An alias that shadows the column it aggregates makes the `updated_at` inside
+-- every `argMax` resolve to the alias, and the query is rejected as a nested
+-- aggregate (Code 184). Hence `AS version`, and `last_hash` / `last_subtype`
+-- on peer_cache, whose own names are used in a WHERE.
 --
 -- The bot now writes `updated_at` itself rather than leaving it to the column's
 -- `DEFAULT now()`. A row read out of the buffer has to carry a version to be

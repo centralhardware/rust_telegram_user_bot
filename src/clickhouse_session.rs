@@ -322,9 +322,19 @@ impl Session for ClickhouseSession {
                     let dialog_id = peer.bot_api_dialog_id().unwrap();
                     clickhouse()
                         .query(
-                            "SELECT peer_id, hash, subtype, updated_at \
+                            // argMax over the version rather than FINAL, which
+                            // ClickHouse recommends against and which a Buffer
+                            // does not apply to its own rows anyway.
+                            // Aliased away from the column names on purpose: an
+                            // alias that shadows the column it aggregates makes
+                            // `argMax(hash, updated_at)` read the alias, and
+                            // ClickHouse rejects that as a nested aggregate.
+                            "SELECT peer_id, \
+                                    argMax(hash, updated_at) AS last_hash, \
+                                    argMax(subtype, updated_at) AS last_subtype, \
+                                    max(updated_at) AS version \
                              FROM peer_cache_buffer WHERE peer_id = ? \
-                             ORDER BY updated_at DESC LIMIT 1",
+                             GROUP BY peer_id",
                         )
                         .bind(dialog_id)
                         .fetch_one::<PeerRow>()
@@ -332,10 +342,21 @@ impl Session for ClickhouseSession {
                 } else {
                     clickhouse()
                         .query(
-                            "SELECT peer_id, hash, subtype, updated_at \
+                            // The WHERE narrows to peers that carried the self
+                            // bit in any version -- it is what makes this a
+                            // lookup rather than a scan of every peer ever
+                            // cached -- and the HAVING asks the same of the
+                            // collapsed row, so a peer that has since lost the
+                            // bit cannot answer for the account.
+                            "SELECT peer_id, \
+                                    argMax(hash, updated_at) AS last_hash, \
+                                    argMax(subtype, updated_at) AS last_subtype, \
+                                    max(updated_at) AS version \
                              FROM peer_cache_buffer \
                              WHERE subtype IS NOT NULL AND bitAnd(subtype, 1) = 1 \
-                             ORDER BY updated_at DESC LIMIT 1",
+                             GROUP BY peer_id \
+                             HAVING bitAnd(last_subtype, 1) = 1 \
+                             LIMIT 1",
                         )
                         .fetch_one::<PeerRow>()
                         .await
