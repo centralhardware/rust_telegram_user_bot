@@ -32,18 +32,17 @@ pub async fn save_service(client: &Client, message: &Message) -> bool {
     let chat_id = message.peer_id().bare_id_unchecked();
     let kind = crate::utils::service_action::kind(action);
 
-    crate::db::EVENTS_BUF
-        .push(Event {
-            date_time: message.date().as_second() as u32,
-            chat_id,
-            message_id: target as i64,
-            // The announcement's own id: the row is keyed on the message the
-            // action was performed on, so this is the only place it fits.
-            service_message_id: message.id() as i64,
-            action: kind.clone(),
-            ..Event::service()
-        })
-        .await;
+    crate::db::log_event(Event {
+        date_time: message.date().as_second() as u32,
+        chat_id,
+        message_id: target as i64,
+        // The announcement's own id: the row is keyed on the message the
+        // action was performed on, so this is the only place it fits.
+        service_message_id: message.id() as i64,
+        action: kind.clone(),
+        ..Event::service()
+    })
+    .await;
 
     if !is_log_ignored(chat_id) {
         let chat = crate::utils::peer_info::chat_info(client, message).await;

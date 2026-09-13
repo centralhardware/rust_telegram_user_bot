@@ -161,8 +161,7 @@ async fn archive(
         }
     };
 
-    crate::db::EVENTS_BUF
-        .push(job.event.file_uploaded(sha256, storage.bucket.clone(), key, size))
+    crate::db::log_event(job.event.file_uploaded(sha256, storage.bucket.clone(), key, size))
         .await;
 
     Ok(())

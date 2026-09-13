@@ -1,5 +1,6 @@
 use clickhouse::{Client, Row};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
 
@@ -9,102 +10,129 @@ static CLICKHOUSE: LazyLock<Client> = LazyLock::new(|| {
         .with_user(std::env::var("CLICKHOUSE_USER").expect("CLICKHOUSE_USER not set"))
         .with_password(std::env::var("CLICKHOUSE_PASSWORD").expect("CLICKHOUSE_PASSWORD not set"))
         .with_database(std::env::var("CLICKHOUSE_DATABASE").expect("CLICKHOUSE_DATABASE not set"))
+        // Batching is the server's job, not ours. Every row is inserted the
+        // moment it is built, and ClickHouse collects them in its own buffer and
+        // writes one part per flush — so a busy chat costs a part a second
+        // rather than a part a message, which is the only thing the write-behind
+        // buffer this replaced was ever protecting against.
+        .with_setting("async_insert", "1")
+        // ...and the insert still returns only once the row is really in the
+        // table. That keeps every read-after-write in this file honest —
+        // `find_message`, `find_target`, `message_exists`, `poll_info::load` all
+        // read back messages the handler logged a moment earlier — and it keeps
+        // a failed insert an error the caller sees rather than a row lost in a
+        // buffer nobody is watching.
+        .with_setting("wait_for_async_insert", "1")
 });
 
 pub fn clickhouse() -> &'static Client {
     &CLICKHOUSE
 }
 
-pub struct WriteBuffer<T: Send + 'static> {
-    table: &'static str,
-    buffer: Mutex<Vec<T>>,
-    /// Rows a flush has taken out of `buffer` and is still writing to
-    /// ClickHouse. They are in neither place otherwise, and a lookup landing in
-    /// that window — `backfill_reply`'s "do we already have this message?" — saw
-    /// nothing and wrote the row a second time. Kept here until the insert ends,
-    /// so `find_last` can still answer for them.
-    inflight: Mutex<Vec<T>>,
-}
-
-impl<T> WriteBuffer<T>
+/// Write rows to a table. Nothing is queued here: `async_insert` on the client
+/// means the server holds the rows and decides when they become a part.
+async fn insert_rows<T>(table: &str, rows: &[T]) -> Result<(), clickhouse::error::Error>
 where
     T: Serialize + Send + 'static,
     for<'a> T: Row<Value<'a> = T>,
 {
-    pub const fn new(table: &'static str) -> Self {
-        Self {
-            table,
-            buffer: Mutex::const_new(Vec::new()),
-            inflight: Mutex::const_new(Vec::new()),
-        }
+    let mut insert = clickhouse().insert::<T>(table).await?;
+    for row in rows {
+        insert.write(row).await?;
     }
+    insert.end().await
+}
 
-    pub async fn push(&self, row: T) {
-        self.buffer.lock().await.push(row);
-    }
-
-    pub async fn find_last<F, R>(&self, f: F) -> Option<R>
-    where
-        F: Fn(&T) -> Option<R>,
-    {
-        // Newest first: the buffer, then the rows a flush is still writing,
-        // which are older than anything left in the buffer.
-        if let Some(found) = self.buffer.lock().await.iter().rev().find_map(&f) {
-            return Some(found);
-        }
-        self.inflight.lock().await.iter().rev().find_map(&f)
-    }
-
-    pub async fn flush(&self) -> usize {
-        // Moved, not dropped: until the insert has ended the rows still have to
-        // answer `find_last`, or a lookup in that window writes them again.
-        let count = {
-            let mut buf = self.buffer.lock().await;
-            if buf.is_empty() {
-                return 0;
-            }
-            let mut inflight = self.inflight.lock().await;
-            inflight.append(&mut buf);
-            inflight.len()
-        };
-
-        let written = self.write_inflight(count).await;
-
-        self.inflight.lock().await.clear();
-        written
-    }
-
-    /// Write what `inflight` holds. Split out so `flush` clears `inflight` on
-    /// every path out of it, error ones included.
-    async fn write_inflight(&self, count: usize) -> usize {
-        let rows = self.inflight.lock().await;
-        match clickhouse().insert::<T>(self.table).await {
-            Ok(mut insert) => {
-                for row in rows.iter() {
-                    if let Err(e) = insert.write(row).await {
-                        log::error!("buffer write to {}: {e}", self.table);
-                        return 0;
-                    }
-                }
-                if let Err(e) = insert.end().await {
-                    log::error!("buffer flush to {}: {e}", self.table);
-                    0
-                } else {
-                    count
-                }
-            }
-            Err(e) => {
-                log::error!("buffer insert to {}: {e}", self.table);
-                0
-            }
-        }
+/// Log one event. Returns once ClickHouse has the row in the table, so a lookup
+/// right after it — a reply preview, a backfill check, a poll's wording — finds
+/// the message the handler has just written.
+pub async fn log_event(event: Event) {
+    if let Err(e) = insert_rows("events_log", std::slice::from_ref(&event)).await {
+        log::error!("insert into events_log: {e}");
     }
 }
 
-/// Every message event the account sees — a message sent, edited or deleted — is
-/// one row in `events_log`. Which columns are filled depends on `event`; the rest
-/// stay at their zero value.
-pub static EVENTS_BUF: WriteBuffer<Event> = WriteBuffer::new("events_log");
+/// The last row this process wrote for each key, so an identical one is never
+/// written again.
+///
+/// `peer_names` and `peer_cache` are written for every peer that passes through
+/// — about twice a message — and almost always with exactly the row that is
+/// already stored. Nothing is delayed here: a row that differs is inserted at
+/// once, the repeats simply never become a request. That is the one thing
+/// `async_insert` cannot do for us, since it batches parts rather than calls.
+///
+/// `events_log` needs none of this: its rows are all distinct, and it inserts
+/// directly through [`log_event`].
+pub struct DedupCache<T> {
+    table: &'static str,
+    written: Mutex<HashMap<i64, T>>,
+}
+
+impl<T> DedupCache<T>
+where
+    T: Serialize + Send + Clone + PartialEq + 'static,
+    for<'a> T: Row<Value<'a> = T>,
+{
+    pub fn new(table: &'static str) -> Self {
+        Self {
+            table,
+            written: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// The row last written for `key`, when this process wrote one. A hit saves
+    /// the caller a lookup; a miss only means it has to ask ClickHouse.
+    pub async fn get(&self, key: i64) -> Option<T> {
+        self.written.lock().await.get(&key).cloned()
+    }
+
+    /// The first row written this process has that `f` accepts. Keyed lookups
+    /// go through [`get`](Self::get); this is for the caller that knows a
+    /// property of the row rather than its key.
+    pub async fn find<F, R>(&self, f: F) -> Option<R>
+    where
+        F: Fn(&T) -> Option<R>,
+    {
+        self.written.lock().await.values().find_map(f)
+    }
+
+    /// Store a row, unless the one already written for `key` is identical.
+    pub async fn remember(&self, key: i64, row: T) {
+        if self.written.lock().await.get(&key) == Some(&row) {
+            return;
+        }
+        self.write(&[row.clone()], vec![(key, row)]).await;
+    }
+
+    /// Store a batch as one insert. grammers hands over every peer at once
+    /// after a dialogs sync, and a request each would be hundreds of them.
+    pub async fn remember_all(&self, rows: Vec<(i64, T)>) {
+        let fresh: Vec<(i64, T)> = {
+            let written = self.written.lock().await;
+            rows.into_iter()
+                .filter(|(key, row)| written.get(key) != Some(row))
+                .collect()
+        };
+        if fresh.is_empty() {
+            return;
+        }
+        let batch: Vec<T> = fresh.iter().map(|(_, row)| row.clone()).collect();
+        self.write(&batch, fresh).await;
+    }
+
+    /// Insert, and remember only what actually landed: a row dropped after a
+    /// failed insert would be skipped for good the next time it came round.
+    async fn write(&self, batch: &[T], remember: Vec<(i64, T)>) {
+        if let Err(e) = insert_rows(self.table, batch).await {
+            log::error!("insert into {}: {e}", self.table);
+            return;
+        }
+        let mut written = self.written.lock().await;
+        for (key, row) in remember {
+            written.insert(key, row);
+        }
+    }
+}
 
 pub const SEND: &str = "send";
 pub const EDIT: &str = "edit";
@@ -155,55 +183,26 @@ struct SendRow {
 
 /// Find message info by chat_id + message_id: the text as it stands now — the
 /// last edit if there was one, the sent text otherwise.
-/// Priority: the unflushed buffer → ClickHouse.
+///
+/// Straight from ClickHouse: `log_event` returns only once the insert has been
+/// flushed, so a message logged a moment ago is already there to be read back.
 pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
-    let sent = EVENTS_BUF
-        .find_last(|e| {
-            (e.event == SEND && e.chat_id == chat_id && e.message_id == message_id).then(|| {
-                (
-                    body_of(e),
-                    e.chat_title.clone(),
-                    e.first_name.clone(),
-                )
-            })
-        })
-        .await;
+    let body = clickhouse()
+        .query(
+            "SELECT message, entities, keyboard FROM events_log \
+             WHERE chat_id = ? AND message_id = ? AND event IN (?, ?) \
+             ORDER BY event = ? DESC, date_time DESC LIMIT 1",
+        )
+        .bind(chat_id)
+        .bind(message_id)
+        .bind(SEND)
+        .bind(EDIT)
+        .bind(EDIT)
+        .fetch_one::<BodyRow>()
+        .await
+        .unwrap_or_default();
 
-    let edited = EVENTS_BUF
-        .find_last(|e| {
-            (e.event == EDIT && e.chat_id == chat_id && e.message_id == message_id)
-                .then(|| body_of(e))
-        })
-        .await;
-
-    let body = if let Some(body) = edited {
-        body
-    } else if let Some((body, _, _)) = sent.as_ref() {
-        BodyRow {
-            message: body.message.clone(),
-            entities: body.entities.clone(),
-            keyboard: body.keyboard.clone(),
-        }
-    } else {
-        clickhouse()
-            .query(
-                "SELECT message, entities, keyboard FROM events_log \
-                 WHERE chat_id = ? AND message_id = ? AND event IN (?, ?) \
-                 ORDER BY event = ? DESC, date_time DESC LIMIT 1",
-            )
-            .bind(chat_id)
-            .bind(message_id)
-            .bind(SEND)
-            .bind(EDIT)
-            .bind(EDIT)
-            .fetch_one::<BodyRow>()
-            .await
-            .unwrap_or_default()
-    };
-
-    let (chat_title, first_name) = if let Some((_, title, name)) = sent {
-        (title, name)
-    } else {
+    let (chat_title, first_name) = {
         let title = clickhouse()
             .query(
                 "SELECT chat_title FROM events_log \
@@ -252,14 +251,6 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
     }
 }
 
-fn body_of(event: &Event) -> BodyRow {
-    BodyRow {
-        message: event.message.clone(),
-        entities: event.entities.clone(),
-        keyboard: event.keyboard.clone(),
-    }
-}
-
 /// What the log knows about the message a reply points at.
 #[derive(Default)]
 pub struct ReplyTarget {
@@ -273,24 +264,10 @@ pub struct ReplyTarget {
     pub post_copy: bool,
 }
 
-/// The message a reply answers, as the log has it: the unflushed buffer first,
-/// then ClickHouse. `chat_id` is the chat the *replied-to* message lives in,
-/// which is not the answering message's chat when it quotes another.
+/// The message a reply answers, as the log has it. `chat_id` is the chat the
+/// *replied-to* message lives in, which is not the answering message's chat
+/// when it quotes another.
 pub async fn find_target(chat_id: i64, message_id: i64) -> ReplyTarget {
-    if let Some(target) = EVENTS_BUF
-        .find_last(|e| {
-            (e.event == SEND && e.chat_id == chat_id && e.message_id == message_id).then(|| {
-                ReplyTarget {
-                    user_id: e.user_id,
-                    post_copy: e.user_id == 0 && e.fwd_from_chat_id != 0 && e.fwd_from_msg_id != 0,
-                }
-            })
-        })
-        .await
-    {
-        return target;
-    }
-
     clickhouse()
         .query(
             "SELECT user_id, user_id = 0 AND fwd_from_chat_id != 0 AND fwd_from_msg_id != 0 \

@@ -6,12 +6,14 @@
 //! `Peer`, so they have to be written from a different path, and a partial row
 //! into a ReplacingMergeTree would blank the access hash the session needs.
 
+use std::sync::LazyLock;
+
 use clickhouse::Row;
 use grammers_client::peer::Peer;
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
 
-use crate::db::WriteBuffer;
+use crate::db::DedupCache;
 use crate::handlers::extract::{ChatInfo, SenderInfo};
 
 /// The community a chat belongs to. Only a channel or a supergroup can be in
@@ -116,9 +118,9 @@ impl PeerNames {
 
 /// The stored names for a peer, or `None` when it has never been seen.
 ///
-/// The buffer is checked first: a peer seen this minute is not in ClickHouse
-/// yet, and missing it would send the caller back to Telegram to resolve a name
-/// already in hand.
+/// The dedup cache answers first, which saves a query for a peer this process
+/// has already written; everything else goes to ClickHouse, where `remember`
+/// has already put it.
 ///
 /// Deliberately unmemoised: ClickHouse is the only place names live, so a
 /// rename anywhere is picked up on the next lookup and nothing has to be
@@ -133,10 +135,7 @@ pub async fn title_of(peer_id: i64) -> String {
 }
 
 pub async fn load(peer_id: i64) -> Option<PeerNames> {
-    if let Some(names) = PEER_NAMES_BUF
-        .find_last(|n| (n.peer_id == peer_id).then(|| n.clone()))
-        .await
-    {
+    if let Some(names) = PEER_NAMES.get(peer_id).await {
         return Some(names);
     }
 
@@ -161,25 +160,17 @@ pub async fn load(peer_id: i64) -> Option<PeerNames> {
     }
 }
 
-/// Names waiting to be written, flushed on the same minute tick as the events.
+/// The names already written, keyed by peer.
 ///
 /// `remember` is called for every named peer that passes through — about twice
-/// per message, chat and sender — and a request each would be a request per
-/// message spent on names that almost never change. Buffering makes it one
-/// batched insert a minute instead, and `ReplacingMergeTree` collapses whatever
-/// repeats still get through.
-pub static PEER_NAMES_BUF: WriteBuffer<PeerNames> = WriteBuffer::new("peer_names");
+/// per message, chat and sender — and an insert each would be a request per
+/// message spent on names that almost never change. Only a name that has
+/// actually changed reaches ClickHouse, and `ReplacingMergeTree` collapses
+/// whatever repeats still get through.
+pub static PEER_NAMES: LazyLock<DedupCache<PeerNames>> =
+    LazyLock::new(|| DedupCache::new("peer_names"));
 
-/// Store a peer's names.
-///
-/// A row identical to one already waiting is dropped rather than queued again,
-/// so the repeated peers of a busy chat cost nothing beyond the first.
+/// Store a peer's names, unless they are the names already stored.
 pub async fn remember(names: &PeerNames) {
-    let queued = PEER_NAMES_BUF
-        .find_last(|n| (n.peer_id == names.peer_id).then(|| n == names))
-        .await;
-    if queued == Some(true) {
-        return;
-    }
-    PEER_NAMES_BUF.push(names.clone()).await;
+    PEER_NAMES.remember(names.peer_id, names.clone()).await;
 }

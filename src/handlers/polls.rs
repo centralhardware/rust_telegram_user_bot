@@ -17,7 +17,7 @@ use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;
 use log::info;
 
-use crate::db::{EVENTS_BUF, Event};
+use crate::db::{log_event, Event};
 use crate::utils::log_ignore::is_log_ignored;
 use crate::utils::peer_names::title_of;
 use crate::utils::poll_info;
@@ -116,20 +116,19 @@ pub async fn save_poll(update: &tl::types::UpdateMessagePoll) {
         );
     }
 
-    EVENTS_BUF
-        .push(Event {
-            date_time: chrono::Utc::now().timestamp() as u32,
-            chat_id,
-            message_id,
-            topic_id: update.top_msg_id.unwrap_or(0),
-            poll_id: update.poll_id,
-            poll_question: question,
-            poll_options: options,
-            poll_results: counts,
-            poll_total_voters: results.total_voters.unwrap_or(0).max(0) as u32,
-            ..Event::poll()
-        })
-        .await;
+    log_event(Event {
+        date_time: chrono::Utc::now().timestamp() as u32,
+        chat_id,
+        message_id,
+        topic_id: update.top_msg_id.unwrap_or(0),
+        poll_id: update.poll_id,
+        poll_question: question,
+        poll_options: options,
+        poll_results: counts,
+        poll_total_voters: results.total_voters.unwrap_or(0).max(0) as u32,
+        ..Event::poll()
+    })
+    .await;
 }
 
 /// The counts as "wording×voters". The results come in the poll's own answer

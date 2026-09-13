@@ -11,7 +11,7 @@
 
 use log::info;
 
-use crate::db::{EVENTS_BUF, Event};
+use crate::db::{log_event, Event};
 use crate::utils::log_ignore::is_log_ignored;
 use crate::utils::peer_names::title_of;
 
@@ -28,16 +28,15 @@ pub async fn save_pinned(chat_id: i64, dialog_id: i64, messages: &[i32], pinned:
     }
 
     for &id in messages {
-        EVENTS_BUF
-            .push(Event {
-                date_time,
-                chat_id,
-                message_id: id as i64,
-                // The state the message is in after the update, so a row read on
-                // its own says which way it went.
-                pinned,
-                ..event.clone()
-            })
-            .await;
+        log_event(Event {
+            date_time,
+            chat_id,
+            message_id: id as i64,
+            // The state the message is in after the update, so a row read on
+            // its own says which way it went.
+            pinned,
+            ..event.clone()
+        })
+        .await;
     }
 }

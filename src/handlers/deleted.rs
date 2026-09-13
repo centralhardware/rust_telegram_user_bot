@@ -42,7 +42,7 @@ pub async fn save_deleted(
 
         // Telegram names nothing but the chat and the id, and that is all the
         // row keeps: what the message was is already on its send row.
-        crate::db::EVENTS_BUF.push(Event {
+        crate::db::log_event(Event {
             date_time: now,
             chat_id: channel_id,
             message_id: msg_id as i64,

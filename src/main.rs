@@ -140,14 +140,15 @@ async fn main() -> Result<()> {
                     _ => {}
                 }
             }
+            // Nothing to flush on the way out any more: every row is written
+            // as it happens, so a shutdown — or a crash, which never got to run
+            // this — leaves nothing behind in memory.
             _ = tokio::signal::ctrl_c() => {
-                log::info!("SIGINT received, flushing buffers...");
-                schedulers::flush_all().await;
+                log::info!("SIGINT received, shutting down");
                 return Ok(());
             }
             _ = sigterm.recv() => {
-                log::info!("SIGTERM received, flushing buffers...");
-                schedulers::flush_all().await;
+                log::info!("SIGTERM received, shutting down");
                 return Ok(());
             }
         }

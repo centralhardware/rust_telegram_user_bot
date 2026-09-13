@@ -78,7 +78,7 @@ pub async fn save_edited(
     // row.
     let meta = crate::utils::media_description::media_meta(message).unwrap_or_default();
 
-    crate::db::EVENTS_BUF.push(Event {
+    crate::db::log_event(Event {
         date_time: now,
         chat_id,
         message_id: msg_id,

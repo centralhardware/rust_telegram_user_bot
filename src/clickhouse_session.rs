@@ -12,7 +12,9 @@ use grammers_session::{Session, SessionData};
 use log::{debug, error, warn};
 use serde::{Deserialize, Serialize};
 
-use crate::db::{clickhouse, WriteBuffer};
+use std::sync::LazyLock;
+
+use crate::db::{clickhouse, DedupCache};
 
 // ── ClickHouse row types ────────────────────────────────────────────
 
@@ -237,28 +239,17 @@ fn dc_option_from_row(row: &DcOptionRow) -> Option<DcOption> {
     })
 }
 
-// ── Write buffer ────────────────────────────────────────────────────
+// ── Dedup cache ─────────────────────────────────────────────────────
 
-/// Peers waiting to be written, flushed on the same minute tick as the events.
+/// The peer rows already written, keyed by peer.
 ///
 /// `cache_peer` is called for every peer grammers sees — every sender and chat
-/// of every update, and a whole dialog list at once after a sync — and a
-/// request each would be several requests per message spent on rows that
-/// almost never change. Buffering makes it one batched insert a minute, and
+/// of every update, and a whole dialog list at once after a sync — and an
+/// insert each would be several requests per message spent on rows that almost
+/// never change. Only a row that has actually changed reaches ClickHouse, and
 /// `ReplacingMergeTree` collapses whatever repeats still get through.
-pub static PEER_CACHE_BUF: WriteBuffer<PeerRow> = WriteBuffer::new("peer_cache");
-
-/// Queue a peer row, dropping one identical to a row already waiting so the
-/// repeated peers of a busy chat cost nothing beyond the first.
-async fn remember_peer(row: PeerRow) {
-    let queued = PEER_CACHE_BUF
-        .find_last(|r| (r.peer_id == row.peer_id).then(|| *r == row))
-        .await;
-    if queued == Some(true) {
-        return;
-    }
-    PEER_CACHE_BUF.push(row).await;
-}
+pub static PEER_CACHE: LazyLock<DedupCache<PeerRow>> =
+    LazyLock::new(|| DedupCache::new("peer_cache"));
 
 // ── Session trait ───────────────────────────────────────────────────
 
@@ -317,24 +308,21 @@ impl Session for ClickhouseSession {
             const MAX_ATTEMPTS: u32 = 5;
             let is_self_query = peer.bot_api_dialog_id().is_none();
 
-            // A peer cached this minute is not in ClickHouse yet, and missing
-            // it would send grammers back to Telegram to resolve an id already
-            // in hand.
-            let buffered = if is_self_query {
-                PEER_CACHE_BUF
-                    .find_last(|r| {
+            // A peer this process has already written is answered from the
+            // dedup cache rather than queried back out of ClickHouse.
+            let cached = if is_self_query {
+                PEER_CACHE
+                    .find(|r| {
                         (r.subtype.is_some_and(|s| s & PeerSubtype::UserSelf as u8 != 0))
                             .then(|| (PeerId::user_unchecked(r.peer_id), r.clone()))
                     })
                     .await
             } else {
                 let dialog_id = peer.bot_api_dialog_id().unwrap();
-                PEER_CACHE_BUF
-                    .find_last(|r| (r.peer_id == dialog_id).then(|| (peer, r.clone())))
-                    .await
+                PEER_CACHE.get(dialog_id).await.map(|row| (peer, row))
             };
-            if let Some((resolved, row)) = buffered {
-                debug!("peer {:?} found in the write buffer", peer);
+            if let Some((resolved, row)) = cached {
+                debug!("peer {:?} found in the peer cache", peer);
                 return Ok(Some(decode_peer(resolved, &row)));
             }
 
@@ -403,19 +391,25 @@ impl Session for ClickhouseSession {
 
     fn cache_peer(&self, peer: PeerInfo) -> BoxFuture<'_, Result<(), Self::Error>> {
         Box::pin(async move {
-            remember_peer(peer_to_row(&peer)).await;
+            let row = peer_to_row(&peer);
+            PEER_CACHE.remember(row.peer_id, row).await;
             Ok(())
         })
     }
 
     /// Bulk variant of [`cache_peer`]: grammers hands us a whole batch after a
-    /// dialogs sync or a large update, so they all land in the same buffer and
-    /// leave as one insert on the next tick.
+    /// dialogs sync or a large update, and they leave as a single insert rather
+    /// than a request per peer.
     fn cache_peers(&self, peers: Vec<PeerInfo>) -> BoxFuture<'_, Result<(), Self::Error>> {
         Box::pin(async move {
-            for peer in &peers {
-                remember_peer(peer_to_row(peer)).await;
-            }
+            let rows = peers
+                .iter()
+                .map(|peer| {
+                    let row = peer_to_row(peer);
+                    (row.peer_id, row)
+                })
+                .collect();
+            PEER_CACHE.remember_all(rows).await;
             Ok(())
         })
     }

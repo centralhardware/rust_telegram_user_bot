@@ -149,7 +149,7 @@ pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, 
         ..base
     };
 
-    crate::db::EVENTS_BUF.push(event.clone()).await;
+    crate::db::log_event(event.clone()).await;
 
     Ok(event)
 }
