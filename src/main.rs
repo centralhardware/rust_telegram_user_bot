@@ -76,6 +76,9 @@ async fn main() -> Result<()> {
                             if let Err(e) = handlers::handle_auto_cat(&message).await {
                                 error!("Failed to handle auto cat: {:?}", e);
                             }
+                            // After the save: `!backfill` is a message like any
+                            // other, and belongs in the log with the rest.
+                            handlers::backfill_command(&client, &message).await;
                         }
                     }
                     Update::MessageEdited(message) => {

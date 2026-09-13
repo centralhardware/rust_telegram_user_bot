@@ -1,4 +1,5 @@
 mod auto_cat;
+mod backfill_chat;
 mod backfill_reply;
 mod deleted;
 mod edited;
@@ -14,6 +15,7 @@ mod service;
 mod views;
 
 pub use auto_cat::handle_auto_cat;
+pub use backfill_chat::handle_command as backfill_command;
 pub use backfill_reply::backfill_reply;
 pub use deleted::save_deleted;
 pub use edited::save_edited;
