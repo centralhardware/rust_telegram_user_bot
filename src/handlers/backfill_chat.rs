@@ -29,13 +29,16 @@
 //! !backfill new all
 //! !backfill <chat_id> full  — ignore what is recorded as walked, read it all
 //! !backfill <chat_id> mark  — record what the log holds as walked, without walking
+//! !backfill <chat_id> mark partial  — the same, for a walk that never finished
 //! ```
 //!
 //! `full` is the way back if a recorded range is ever wrong: it reads the whole
 //! history the way every backfill did before `backfill_state` existed, and
 //! records the range again at the end. `mark` is the other direction — it takes
-//! the range straight from the log for a chat that was walked to the end before
-//! there was anywhere to write that down, so that walk is not owed twice.
+//! the range straight from the log for a chat that was walked before there was
+//! anywhere to write that down, so that walk is not owed twice. With `partial`
+//! it records the range as a walk still owed at the bottom, and the next
+//! backfill skips what is stored and carries on under it.
 //!
 //! `<chat_id>` is the id as `events_log` stores it, and the `-100…` form
 //! Telegram apps show is accepted too.
@@ -120,6 +123,7 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
     let mut every_new = false;
     let mut full = false;
     let mut mark = false;
+    let mut partial = false;
     for arg in args.split_whitespace() {
         match arg {
             "all" => mine_only = false,
@@ -127,6 +131,7 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
             "new" => every_new = true,
             "full" => full = true,
             "mark" => mark = true,
+            "partial" => partial = true,
             other => match other.parse::<i64>() {
                 Ok(id) => wanted_chat = Some(id),
                 Err(_) => {
@@ -197,7 +202,11 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
             reply(message, "backfill: `mark` and `full` are opposites").await;
             return true;
         }
-        reply(message, &mark_walked(chat_id, mine_only).await).await;
+        reply(message, &mark_walked(chat_id, mine_only, !partial).await).await;
+        return true;
+    }
+    if partial {
+        reply(message, "backfill: `partial` only means something with `mark`").await;
         return true;
     }
 
@@ -682,10 +691,15 @@ async fn logged_chat_ids() -> Result<HashSet<i64>, clickhouse::error::Error> {
 ///
 /// It takes the log at its word, which is the one thing the walk itself never
 /// does: the range is the lowest and highest id stored, and anything missing
-/// inside it stays missing, so it is only right for a chat that really was
-/// walked to the end. The range is reported back to be looked at, and
+/// inside it stays missing. The range is reported back to be looked at, and
 /// `!backfill <chat_id> full` undoes it by reading everything again.
-async fn mark_walked(chat_id: i64, mine_only: bool) -> String {
+///
+/// `complete` says whether the walk it stands in for reached the start of the
+/// history — `!backfill <chat_id> mark partial` says it did not, and the next
+/// backfill carries on under `min_id` instead of treating it as the bottom.
+/// That is the one to use for a history the earlier walk was still working
+/// through: it skips the part already stored and resumes where it stopped.
+async fn mark_walked(chat_id: i64, mine_only: bool, complete: bool) -> String {
     let bounds = crate::db::clickhouse()
         .query(&format!(
             "SELECT min(message_id), max(message_id), count() FROM {} \
@@ -712,16 +726,21 @@ async fn mark_walked(chat_id: i64, mine_only: bool) -> String {
         Covered {
             min_id,
             max_id,
-            complete: true,
+            complete,
         },
         messages,
     )
     .await;
 
     let whose = if mine_only { "mine" } else { "all" };
+    let reach = if complete {
+        "A later backfill reads only what is above it"
+    } else {
+        "A later backfill reads what is above it and carries on under it"
+    };
     format!(
         "backfill {chat_id}: marked {min_id}..{max_id} ({messages} rows, {whose}) as walked. \
-         A later backfill reads only what is above it — `full` to undo."
+         {reach} — `full` to undo."
     )
 }
 
