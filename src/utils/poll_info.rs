@@ -10,7 +10,7 @@ use clickhouse::Row;
 use log::{debug, error};
 use serde::Deserialize;
 
-use crate::db::{EVENTS_BUF, EDIT, SEND};
+use crate::db::{EDIT, SEND};
 
 #[derive(Row, Deserialize, Clone, Default, Debug)]
 pub struct PollInfo {
@@ -26,8 +26,6 @@ pub struct PollInfo {
 /// The poll a results update belongs to, or `None` when its message was never
 /// seen — a poll sent before the logger was running, say.
 ///
-/// The buffer is checked first: a poll sent this minute is not in ClickHouse
-/// yet, and the first vote on a fresh poll usually lands in that window.
 /// Unmemoised, like the peer names: the send row is the only place a poll's
 /// wording lives, and an edit that rewrites it is picked up on the next vote.
 pub async fn load(poll_id: i64) -> Option<PollInfo> {
@@ -35,28 +33,10 @@ pub async fn load(poll_id: i64) -> Option<PollInfo> {
         return None;
     }
 
-    if let Some(info) = EVENTS_BUF
-        .find_last(|e| {
-            ((e.event == SEND || e.event == EDIT)
-                && e.poll_id == poll_id
-                && !e.poll_question.is_empty())
-            .then(|| PollInfo {
-                chat_id: e.chat_id,
-                chat_title: e.chat_title.clone(),
-                message_id: e.message_id,
-                question: e.poll_question.clone(),
-                options: e.poll_options.clone(),
-            })
-        })
-        .await
-    {
-        return Some(info);
-    }
-
     match crate::db::clickhouse()
         .query(
             "SELECT chat_id, chat_title, message_id, poll_question, poll_options \
-             FROM events_log \
+             FROM events_log_buffer \
              WHERE poll_id = ? AND event IN (?, ?) AND poll_question != '' \
              ORDER BY date_time DESC LIMIT 1",
         )

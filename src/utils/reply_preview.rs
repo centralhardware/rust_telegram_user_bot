@@ -109,36 +109,12 @@ async fn source_title(target: &Target) -> String {
 }
 
 async fn lookup(chat_id: i64, message_id: i32) -> Target {
-    // Check the unflushed buffer first
-    let from_buf = crate::db::EVENTS_BUF
-        .find_last(|m| {
-            if m.event == crate::db::SEND && m.chat_id == chat_id && m.message_id == message_id as i64 {
-                let sender = if m.second_name.is_empty() {
-                    m.first_name.clone()
-                } else {
-                    format!("{} {}", m.first_name, m.second_name)
-                };
-                Some(Target {
-                    text: m.message.clone(),
-                    sender,
-                    chat_title: m.chat_title.clone(),
-                    post_from_chat_id: post_from(m.user_id, m.fwd_from_chat_id, m.fwd_from_msg_id),
-                })
-            } else {
-                None
-            }
-        })
-        .await;
-    if let Some(target) = from_buf {
-        return target;
-    }
-
     // Incoming and outgoing now share one table, so one query covers both. The row
     // says who sent it, `peer_names` says what they are called.
     let Ok((text, user_id, chat_title, fwd_chat, fwd_msg)) = crate::db::clickhouse()
         .query(
             "SELECT message, user_id, chat_title, fwd_from_chat_id, fwd_from_msg_id \
-             FROM events_log \
+             FROM events_log_buffer \
              WHERE chat_id = ? AND message_id = ? AND event = ? \
              ORDER BY date_time DESC LIMIT 1",
         )

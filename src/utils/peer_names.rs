@@ -11,7 +11,7 @@ use grammers_client::peer::Peer;
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
 
-use crate::db::WriteBuffer;
+use crate::db::{insert_rows, now};
 use crate::handlers::extract::{ChatInfo, SenderInfo};
 
 /// The community a chat belongs to. Only a channel or a supergroup can be in
@@ -41,6 +41,13 @@ pub struct PeerNames {
     /// of the chat rather than of the message, which is why it is remembered
     /// here with the chat's other identity.
     pub community_id: i64,
+    /// The ReplacingMergeTree version, and what a read orders by.
+    ///
+    /// The column defaults to `now()` server-side, but it is written from here
+    /// anyway: rows go into a Buffer table, and a row still sitting in the
+    /// buffer has to carry a version the read can order by just as much as one
+    /// already merged into the table.
+    pub updated_at: u32,
 }
 
 impl PeerNames {
@@ -82,6 +89,7 @@ impl PeerNames {
         }
 
         Some(Self {
+            updated_at: now(),
             peer_id: peer.id().bot_api_dialog_id_unchecked(),
             title,
             first_name,
@@ -116,9 +124,22 @@ impl PeerNames {
 
 /// The stored names for a peer, or `None` when it has never been seen.
 ///
-/// The buffer is checked first: a peer seen this minute is not in ClickHouse
-/// yet, and missing it would send the caller back to Telegram to resolve a name
-/// already in hand.
+/// Read from the Buffer table (migration 041), which answers out of its own
+/// memory and `peer_names` underneath both -- so a peer remembered a moment ago
+/// is found here rather than sending the caller back to Telegram to resolve a
+/// name already in hand.
+///
+/// Collapsed with `argMax` over the version column rather than with `FINAL`,
+/// which is what ClickHouse recommends in place of FINAL and what this table
+/// needs anyway: FINAL is passed to the destination table but is not applied to
+/// the rows still in the buffer, so a peer renamed this minute would come back
+/// as both its old row and its new one. Grouping by the key and taking each
+/// field at the highest `updated_at` collapses the versions wherever they are,
+/// buffer or table, which is what FINAL was doing here.
+///
+/// The version is aliased `version` rather than `updated_at`: an alias that
+/// shadows the column it aggregates makes `argMax(title, updated_at)` read the
+/// alias instead, and ClickHouse rejects the query as a nested aggregate.
 ///
 /// Deliberately unmemoised: ClickHouse is the only place names live, so a
 /// rename anywhere is picked up on the next lookup and nothing has to be
@@ -133,17 +154,17 @@ pub async fn title_of(peer_id: i64) -> String {
 }
 
 pub async fn load(peer_id: i64) -> Option<PeerNames> {
-    if let Some(names) = PEER_NAMES_BUF
-        .find_last(|n| (n.peer_id == peer_id).then(|| n.clone()))
-        .await
-    {
-        return Some(names);
-    }
-
     match crate::db::clickhouse()
         .query(
-            "SELECT peer_id, title, first_name, last_name, usernames, community_id \
-             FROM peer_names FINAL WHERE peer_id = ?",
+            "SELECT peer_id, \
+                    argMax(title, updated_at) AS title, \
+                    argMax(first_name, updated_at) AS first_name, \
+                    argMax(last_name, updated_at) AS last_name, \
+                    argMax(usernames, updated_at) AS usernames, \
+                    argMax(community_id, updated_at) AS community_id, \
+                    max(updated_at) AS version \
+             FROM peer_names_buffer WHERE peer_id = ? \
+             GROUP BY peer_id",
         )
         .bind(peer_id)
         .fetch_one::<PeerNames>()
@@ -161,25 +182,18 @@ pub async fn load(peer_id: i64) -> Option<PeerNames> {
     }
 }
 
-/// Names waiting to be written, flushed on the same minute tick as the events.
-///
-/// `remember` is called for every named peer that passes through — about twice
-/// per message, chat and sender — and a request each would be a request per
-/// message spent on names that almost never change. Buffering makes it one
-/// batched insert a minute instead, and `ReplacingMergeTree` collapses whatever
-/// repeats still get through.
-pub static PEER_NAMES_BUF: WriteBuffer<PeerNames> = WriteBuffer::new("peer_names");
+/// The Buffer table in front of `peer_names` (migration 041). Written and read
+/// through, so nothing about a peer is held back in the bot.
+const PEER_NAMES: &str = "peer_names_buffer";
 
 /// Store a peer's names.
 ///
-/// A row identical to one already waiting is dropped rather than queued again,
-/// so the repeated peers of a busy chat cost nothing beyond the first.
+/// Called for every named peer that passes through -- about twice per message,
+/// chat and sender -- and almost always with the row already stored. Nothing
+/// here filters the repeats: they go into the Buffer, which is memory, and
+/// `ReplacingMergeTree` collapses them on the way down.
 pub async fn remember(names: &PeerNames) {
-    let queued = PEER_NAMES_BUF
-        .find_last(|n| (n.peer_id == names.peer_id).then(|| n == names))
-        .await;
-    if queued == Some(true) {
-        return;
+    if let Err(e) = insert_rows(PEER_NAMES, std::slice::from_ref(names)).await {
+        error!("insert into {PEER_NAMES}: {e}");
     }
-    PEER_NAMES_BUF.push(names.clone()).await;
 }

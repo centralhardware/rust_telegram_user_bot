@@ -12,7 +12,7 @@ use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;
 use log::info;
 
-use crate::db::{EVENTS_BUF, Event};
+use crate::db::{log_event, Event};
 use crate::utils::log_ignore::is_log_ignored;
 
 pub async fn save_reactions(update: &tl::types::UpdateMessageReactions) {
@@ -49,15 +49,14 @@ pub async fn save_reactions(update: &tl::types::UpdateMessageReactions) {
         );
     }
 
-    EVENTS_BUF
-        .push(Event {
-            date_time: chrono::Utc::now().timestamp() as u32,
-            chat_id,
-            message_id: update.msg_id as i64,
-            reactions: counts,
-            ..Event::reaction()
-        })
-        .await;
+    log_event(Event {
+        date_time: chrono::Utc::now().timestamp() as u32,
+        chat_id,
+        message_id: update.msg_id as i64,
+        reactions: counts,
+        ..Event::reaction()
+    })
+    .await;
 }
 
 /// How the reaction is keyed. `Empty` is the absence of one and never appears in

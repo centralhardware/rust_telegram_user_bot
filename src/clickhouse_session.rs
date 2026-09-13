@@ -12,7 +12,7 @@ use grammers_session::{Session, SessionData};
 use log::{debug, error, warn};
 use serde::{Deserialize, Serialize};
 
-use crate::db::{clickhouse, WriteBuffer};
+use crate::db::{clickhouse, insert_rows, now};
 
 // ── ClickHouse row types ────────────────────────────────────────────
 
@@ -21,6 +21,13 @@ pub struct PeerRow {
     peer_id: i64,
     hash: Option<i64>,
     subtype: Option<u8>,
+    /// The ReplacingMergeTree version, and what a read orders by.
+    ///
+    /// The column defaults to `now()` server-side, but it is written from here
+    /// anyway: rows go into a Buffer table, and a row still sitting in the
+    /// buffer has to carry a version the read can order by just as much as one
+    /// already merged into the table.
+    updated_at: u32,
 }
 
 #[derive(Row, Serialize, Deserialize)]
@@ -169,6 +176,7 @@ fn peer_to_row(peer: &PeerInfo) -> PeerRow {
         peer_id: peer.id().bot_api_dialog_id_unchecked(),
         hash: peer.auth().map(|a| a.hash()),
         subtype: encode_subtype(peer),
+        updated_at: now(),
     }
 }
 
@@ -237,28 +245,17 @@ fn dc_option_from_row(row: &DcOptionRow) -> Option<DcOption> {
     })
 }
 
-// ── Write buffer ────────────────────────────────────────────────────
+// ── The peer table ──────────────────────────────────────────────────
 
-/// Peers waiting to be written, flushed on the same minute tick as the events.
+/// The Buffer table in front of `peer_cache` (migration 041). Written and read
+/// through, so nothing about a peer is held back in the bot.
 ///
 /// `cache_peer` is called for every peer grammers sees — every sender and chat
-/// of every update, and a whole dialog list at once after a sync — and a
-/// request each would be several requests per message spent on rows that
-/// almost never change. Buffering makes it one batched insert a minute, and
-/// `ReplacingMergeTree` collapses whatever repeats still get through.
-pub static PEER_CACHE_BUF: WriteBuffer<PeerRow> = WriteBuffer::new("peer_cache");
-
-/// Queue a peer row, dropping one identical to a row already waiting so the
-/// repeated peers of a busy chat cost nothing beyond the first.
-async fn remember_peer(row: PeerRow) {
-    let queued = PEER_CACHE_BUF
-        .find_last(|r| (r.peer_id == row.peer_id).then(|| *r == row))
-        .await;
-    if queued == Some(true) {
-        return;
-    }
-    PEER_CACHE_BUF.push(row).await;
-}
+/// of every update, and a whole dialog list at once after a sync — and almost
+/// always with the row already stored. Nothing here filters the repeats: they
+/// go into the Buffer, which is memory, and `ReplacingMergeTree` collapses them
+/// on the way down.
+const PEER_CACHE: &str = "peer_cache_buffer";
 
 // ── Session trait ───────────────────────────────────────────────────
 
@@ -317,27 +314,6 @@ impl Session for ClickhouseSession {
             const MAX_ATTEMPTS: u32 = 5;
             let is_self_query = peer.bot_api_dialog_id().is_none();
 
-            // A peer cached this minute is not in ClickHouse yet, and missing
-            // it would send grammers back to Telegram to resolve an id already
-            // in hand.
-            let buffered = if is_self_query {
-                PEER_CACHE_BUF
-                    .find_last(|r| {
-                        (r.subtype.is_some_and(|s| s & PeerSubtype::UserSelf as u8 != 0))
-                            .then(|| (PeerId::user_unchecked(r.peer_id), r.clone()))
-                    })
-                    .await
-            } else {
-                let dialog_id = peer.bot_api_dialog_id().unwrap();
-                PEER_CACHE_BUF
-                    .find_last(|r| (r.peer_id == dialog_id).then(|| (peer, r.clone())))
-                    .await
-            };
-            if let Some((resolved, row)) = buffered {
-                debug!("peer {:?} found in the write buffer", peer);
-                return Ok(Some(decode_peer(resolved, &row)));
-            }
-
             let mut attempt = 0;
             loop {
                 attempt += 1;
@@ -346,7 +322,19 @@ impl Session for ClickhouseSession {
                     let dialog_id = peer.bot_api_dialog_id().unwrap();
                     clickhouse()
                         .query(
-                            "SELECT peer_id, hash, subtype FROM peer_cache FINAL WHERE peer_id = ?",
+                            // argMax over the version rather than FINAL, which
+                            // ClickHouse recommends against and which a Buffer
+                            // does not apply to its own rows anyway.
+                            // Aliased away from the column names on purpose: an
+                            // alias that shadows the column it aggregates makes
+                            // `argMax(hash, updated_at)` read the alias, and
+                            // ClickHouse rejects that as a nested aggregate.
+                            "SELECT peer_id, \
+                                    argMax(hash, updated_at) AS last_hash, \
+                                    argMax(subtype, updated_at) AS last_subtype, \
+                                    max(updated_at) AS version \
+                             FROM peer_cache_buffer WHERE peer_id = ? \
+                             GROUP BY peer_id",
                         )
                         .bind(dialog_id)
                         .fetch_one::<PeerRow>()
@@ -354,8 +342,21 @@ impl Session for ClickhouseSession {
                 } else {
                     clickhouse()
                         .query(
-                            "SELECT peer_id, hash, subtype FROM peer_cache FINAL \
-                             WHERE subtype IS NOT NULL AND bitAnd(subtype, 1) = 1 LIMIT 1",
+                            // The WHERE narrows to peers that carried the self
+                            // bit in any version -- it is what makes this a
+                            // lookup rather than a scan of every peer ever
+                            // cached -- and the HAVING asks the same of the
+                            // collapsed row, so a peer that has since lost the
+                            // bit cannot answer for the account.
+                            "SELECT peer_id, \
+                                    argMax(hash, updated_at) AS last_hash, \
+                                    argMax(subtype, updated_at) AS last_subtype, \
+                                    max(updated_at) AS version \
+                             FROM peer_cache_buffer \
+                             WHERE subtype IS NOT NULL AND bitAnd(subtype, 1) = 1 \
+                             GROUP BY peer_id \
+                             HAVING bitAnd(last_subtype, 1) = 1 \
+                             LIMIT 1",
                         )
                         .fetch_one::<PeerRow>()
                         .await
@@ -403,18 +404,22 @@ impl Session for ClickhouseSession {
 
     fn cache_peer(&self, peer: PeerInfo) -> BoxFuture<'_, Result<(), Self::Error>> {
         Box::pin(async move {
-            remember_peer(peer_to_row(&peer)).await;
+            let row = peer_to_row(&peer);
+            if let Err(e) = insert_rows(PEER_CACHE, std::slice::from_ref(&row)).await {
+                error!("insert into {PEER_CACHE}: {e}");
+            }
             Ok(())
         })
     }
 
     /// Bulk variant of [`cache_peer`]: grammers hands us a whole batch after a
-    /// dialogs sync or a large update, so they all land in the same buffer and
-    /// leave as one insert on the next tick.
+    /// dialogs sync or a large update, and they go down as a single insert
+    /// rather than a request per peer.
     fn cache_peers(&self, peers: Vec<PeerInfo>) -> BoxFuture<'_, Result<(), Self::Error>> {
         Box::pin(async move {
-            for peer in &peers {
-                remember_peer(peer_to_row(peer)).await;
+            let rows: Vec<PeerRow> = peers.iter().map(peer_to_row).collect();
+            if let Err(e) = insert_rows(PEER_CACHE, &rows).await {
+                error!("insert into {PEER_CACHE}: {e}");
             }
             Ok(())
         })

@@ -17,7 +17,7 @@ use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;
 use log::info;
 
-use crate::db::{EVENTS_BUF, Event};
+use crate::db::{log_event, Event};
 use crate::utils::log_ignore::is_log_ignored;
 use crate::utils::peer_names;
 
@@ -55,26 +55,25 @@ pub async fn save_ephemeral(message: &tl::enums::EphemeralMessage, event: &str) 
         );
     }
 
-    EVENTS_BUF
-        .push(Event {
-            date_time: msg.date as u32,
-            chat_id,
-            chat_title,
-            message_id: msg.id as i64,
-            message: stored,
-            entities: crate::utils::entities::entities(msg.entities.as_deref()),
-            keyboard: crate::utils::entities::keyboard(msg.reply_markup.as_ref()),
-            user_id: sender.bare_id_unchecked() as u64,
-            out: msg.out,
-            receiver_id: msg.receiver_id as u64,
-            topic_id: msg.top_msg_id.unwrap_or(0),
-            reply_to,
-            reply_to_ephemeral,
-            welcome: msg.welcome_template,
-            ephemeral: true,
-            ..Event::of_ephemeral(event)
-        })
-        .await;
+    log_event(Event {
+        date_time: msg.date as u32,
+        chat_id,
+        chat_title,
+        message_id: msg.id as i64,
+        message: stored,
+        entities: crate::utils::entities::entities(msg.entities.as_deref()),
+        keyboard: crate::utils::entities::keyboard(msg.reply_markup.as_ref()),
+        user_id: sender.bare_id_unchecked() as u64,
+        out: msg.out,
+        receiver_id: msg.receiver_id as u64,
+        topic_id: msg.top_msg_id.unwrap_or(0),
+        reply_to,
+        reply_to_ephemeral,
+        welcome: msg.welcome_template,
+        ephemeral: true,
+        ..Event::of_ephemeral(event)
+    })
+    .await;
 }
 
 /// Ephemeral messages are deleted by id alone: Telegram names the chat and the
@@ -96,16 +95,15 @@ pub async fn save_ephemeral_deleted(peer: &tl::enums::Peer, ids: &[i32]) {
     }
 
     for id in ids {
-        EVENTS_BUF
-            .push(Event {
-                date_time,
-                chat_id,
-                chat_title: chat_title.clone(),
-                message_id: *id as i64,
-                ephemeral: true,
-                ..Event::delete()
-            })
-            .await;
+        log_event(Event {
+            date_time,
+            chat_id,
+            chat_title: chat_title.clone(),
+            message_id: *id as i64,
+            ephemeral: true,
+            ..Event::delete()
+        })
+        .await;
     }
 }
 

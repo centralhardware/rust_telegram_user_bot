@@ -83,62 +83,61 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
     let meta = crate::utils::media_description::media_meta_of(&reply.raw).unwrap_or_default();
     let meta_msg = crate::utils::message_meta::of(&reply.raw);
 
-    crate::db::EVENTS_BUF
-        .push(Event {
-            date_time: reply.date().as_second() as u32,
-            message: msg_content,
-            entities: crate::utils::entities::of_message(&reply),
-            keyboard: crate::utils::entities::keyboard_of_raw(&reply.raw),
-            chat_title: chat.chat_title,
-            chat_id,
-            username: sender.username,
-            first_name: sender.first_name,
-            second_name: sender.second_name,
-            user_id: sender.user_id,
-            community_tag: extract_community_tag(&reply.raw),
-            community_id: chat.community_id,
-            message_id: reply.id() as i64,
-            chat_usernames: chat.chat_usernames,
-            // A backfilled message can be one this account sent: `Event::send()`
-            // defaults to incoming, which would be wrong for half of them.
-            out: crate::utils::self_id::is_outgoing(&reply),
-            reply_to: reply_reply.reply_to,
-            reply_to_user_id,
-            reply_to_chat_id: reply_reply.reply_to_chat_id,
-            quote_text: reply_reply.quote_text,
+    crate::db::log_event(Event {
+        date_time: reply.date().as_second() as u32,
+        message: msg_content,
+        entities: crate::utils::entities::of_message(&reply),
+        keyboard: crate::utils::entities::keyboard_of_raw(&reply.raw),
+        chat_title: chat.chat_title,
+        chat_id,
+        username: sender.username,
+        first_name: sender.first_name,
+        second_name: sender.second_name,
+        user_id: sender.user_id,
+        community_tag: extract_community_tag(&reply.raw),
+        community_id: chat.community_id,
+        message_id: reply.id() as i64,
+        chat_usernames: chat.chat_usernames,
+        // A backfilled message can be one this account sent: `Event::send()`
+        // defaults to incoming, which would be wrong for half of them.
+        out: crate::utils::self_id::is_outgoing(&reply),
+        reply_to: reply_reply.reply_to,
+        reply_to_user_id,
+        reply_to_chat_id: reply_reply.reply_to_chat_id,
+        quote_text: reply_reply.quote_text,
         comment_to: reply_reply.comment_to,
-            topic_id,
-            topic_name,
-            raw: serde_json::to_string(&reply.raw).unwrap_or_default(),
-            media_type: meta.media_type,
-            file_name: meta.file_name,
-            mime_type: meta.mime_type,
-            size: meta.size,
-            duration: meta.duration,
-            width: meta.width,
-            height: meta.height,
-            lat: meta.lat,
-            lon: meta.lon,
-            poll_question: meta.poll_question,
-            poll_options: meta.poll_options,
-            poll_id: meta.poll_id,
-            fwd_from_user_id: meta_msg.fwd_from_user_id,
-            fwd_from_chat_id: meta_msg.fwd_from_chat_id,
-            fwd_from_msg_id: meta_msg.fwd_from_msg_id,
-            fwd_from_name: meta_msg.fwd_from_name,
-            fwd_date: meta_msg.fwd_date,
-            action: meta_msg.action,
-            grouped_id: meta_msg.grouped_id,
-            via_bot_id: meta_msg.via_bot_id,
-            guest_from_id: meta_msg.guest_from_id,
-            post_author: meta_msg.post_author,
-            pinned: meta_msg.pinned,
-            silent: meta_msg.silent,
-            noforwards: meta_msg.noforwards,
-            ttl_period: meta_msg.ttl_period,
-            ..Event::send()
-        })
-        .await;
+        topic_id,
+        topic_name,
+        raw: serde_json::to_string(&reply.raw).unwrap_or_default(),
+        media_type: meta.media_type,
+        file_name: meta.file_name,
+        mime_type: meta.mime_type,
+        size: meta.size,
+        duration: meta.duration,
+        width: meta.width,
+        height: meta.height,
+        lat: meta.lat,
+        lon: meta.lon,
+        poll_question: meta.poll_question,
+        poll_options: meta.poll_options,
+        poll_id: meta.poll_id,
+        fwd_from_user_id: meta_msg.fwd_from_user_id,
+        fwd_from_chat_id: meta_msg.fwd_from_chat_id,
+        fwd_from_msg_id: meta_msg.fwd_from_msg_id,
+        fwd_from_name: meta_msg.fwd_from_name,
+        fwd_date: meta_msg.fwd_date,
+        action: meta_msg.action,
+        grouped_id: meta_msg.grouped_id,
+        via_bot_id: meta_msg.via_bot_id,
+        guest_from_id: meta_msg.guest_from_id,
+        post_author: meta_msg.post_author,
+        pinned: meta_msg.pinned,
+        silent: meta_msg.silent,
+        noforwards: meta_msg.noforwards,
+        ttl_period: meta_msg.ttl_period,
+        ..Event::send()
+    })
+    .await;
 
     if !is_log_ignored(chat_id) {
         info!(
@@ -149,32 +148,14 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
 }
 
 async fn message_exists(chat_id: i64, message_id: i32) -> bool {
-    // Check the unflushed buffer
-    let in_buf = crate::db::EVENTS_BUF
-        .find_last(|e| {
-            // An ephemeral id names a different message entirely, so one must
-            // never answer for an ordinary id. A service message is logged under
-            // its own event, and it is still the message this id names — missing
-            // it would backfill a duplicate of a row already written.
-            if (e.event == crate::db::SEND || e.event == crate::db::SERVICE)
-                && !e.ephemeral
-                && e.chat_id == chat_id
-                && e.message_id == message_id as i64
-            {
-                Some(())
-            } else {
-                None
-            }
-        })
-        .await
-        .is_some();
-    if in_buf {
-        return true;
-    }
-
+    // The Buffer table, so a message logged moments ago answers here rather
+    // than being backfilled a second time. An ephemeral id names a different
+    // message entirely and must never answer for an ordinary one; a service
+    // message is logged under its own event and is still the message this id
+    // names.
     if let Ok(count) = crate::db::clickhouse()
         .query(
-            "SELECT count() FROM events_log \
+            "SELECT count() FROM events_log_buffer \
              WHERE chat_id = ? AND message_id = ? AND event IN (?, ?) AND NOT ephemeral",
         )
         .bind(chat_id)
