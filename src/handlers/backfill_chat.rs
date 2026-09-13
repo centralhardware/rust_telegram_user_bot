@@ -369,9 +369,32 @@ struct Dialog {
 async fn list_dialogs(client: &Client) -> Result<Vec<Dialog>, Box<dyn std::error::Error>> {
     let mut found = Vec::new();
     let mut seen: HashSet<i64> = HashSet::new();
+    // The main list and the archive are separate folders, and a request names
+    // one of them: asked for neither, Telegram answers with the main list and
+    // the archive is simply missing — which is most of what the official
+    // client's export finds and a scan of one folder does not.
+    for folder_id in [MAIN_FOLDER, ARCHIVE_FOLDER] {
+        folder_dialogs(client, folder_id, &mut seen, &mut found).await?;
+    }
+    Ok(found)
+}
+
+/// The main dialog list, and the archive beside it.
+const MAIN_FOLDER: i32 = 0;
+const ARCHIVE_FOLDER: i32 = 1;
+
+/// One folder's dialogs, added to what the other folders found. `seen` carries
+/// across them: a chat is in one folder, but the pinned ones come with every
+/// page of it.
+async fn folder_dialogs(
+    client: &Client,
+    folder_id: i32,
+    seen: &mut HashSet<i64>,
+    found: &mut Vec<Dialog>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut request = tl::functions::messages::GetDialogs {
         exclude_pinned: false,
-        folder_id: None,
+        folder_id: Some(folder_id),
         offset_date: 0,
         offset_id: 0,
         offset_peer: tl::enums::InputPeer::Empty,
@@ -410,31 +433,63 @@ async fn list_dialogs(client: &Client) -> Result<Vec<Dialog>, Box<dyn std::error
             break;
         }
 
-        // Where the next page starts: the last dialog of this one. A community
-        // cannot be one — it names no peer and holds no message — so the last
-        // dialog that does is the offset, and if the page had none at all there
-        // is nothing to page from.
-        let Some((peer, top_message)) = dialogs.iter().rev().find_map(dialog_offset) else {
+        // Where the next page starts: the last dialog of this one that can be
+        // paged from at all. A community names no peer and holds no message, and
+        // a peer the response did not describe cannot be addressed — and
+        // `InputPeerEmpty` would page from the top again rather than skip ahead.
+        //
+        // Which dialog is a fit offset has nothing to do with which is worth
+        // backfilling: a chat this account was thrown out of is skipped as a
+        // chat and is still perfectly good as a place in the list. Ending the
+        // scan on one — as this did — stopped it at the first banned chat that
+        // happened to land last on a page, and lost every dialog under it.
+        let Some((offset_id, offset_date, offset_peer)) =
+            dialogs.iter().rev().find_map(|dialog| {
+                let (peer, top_message) = dialog_offset(dialog)?;
+                let peer = address(&peer, &chats, &users)?;
+                let date = messages
+                    .iter()
+                    .find(|m| m.id() == top_message)
+                    .and_then(message_date)
+                    .unwrap_or(request.offset_date);
+                Some((top_message, date, peer))
+            })
+        else {
             break;
         };
-        request.offset_id = top_message;
-        request.offset_date = messages
-            .iter()
-            .find(|m| m.id() == top_message)
-            .and_then(message_date)
-            .unwrap_or(request.offset_date);
-        // A peer the response did not describe cannot be addressed, and
-        // `InputPeerEmpty` would page from the top again rather than skip ahead.
-        match describe(&peer, &chats, &users) {
-            Some(dialog) => request.offset_peer = dialog.peer.into(),
-            None => break,
-        }
+        request.offset_id = offset_id;
+        request.offset_date = offset_date;
+        request.offset_peer = offset_peer;
         // The pinned dialogs came with the first page.
         request.exclude_pinned = true;
         tokio::time::sleep(REQUEST_GAP).await;
     }
 
-    Ok(found)
+    Ok(())
+}
+
+/// The `InputPeer` for a dialog's peer, out of the chats and users of the same
+/// response — whatever kind of chat it is, and whether or not it is one worth
+/// backfilling. `None` only for a peer the response did not describe.
+fn address(
+    peer: &tl::enums::Peer,
+    chats: &[tl::enums::Chat],
+    users: &[tl::enums::User],
+) -> Option<tl::enums::InputPeer> {
+    match peer {
+        tl::enums::Peer::User(p) => users
+            .iter()
+            .find(|u| u.id() == p.user_id)
+            .map(|u| PeerRef::from(u).into()),
+        tl::enums::Peer::Chat(p) => chats
+            .iter()
+            .find(|c| c.id() == p.chat_id)
+            .map(|c| PeerRef::from(c).into()),
+        tl::enums::Peer::Channel(p) => chats
+            .iter()
+            .find(|c| c.id() == p.channel_id)
+            .map(|c| PeerRef::from(c).into()),
+    }
 }
 
 /// The chat id, peer and title for a dialog's peer, out of the chats and users
