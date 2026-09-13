@@ -457,6 +457,17 @@ async fn folder_dialogs(
         // chat and is still perfectly good as a place in the list. Ending the
         // scan on one — as this did — stopped it at the first banned chat that
         // happened to land last on a page, and lost every dialog under it.
+        //
+        // The date has to be the dialog's own. Telegram pages this list by date
+        // above all, and a dialog whose top message the response did not carry
+        // — deleted since, so the response holds a `messageEmpty` for it — has
+        // none to offer. Carrying the last page's date over would ask for the
+        // dialogs below a point the scan has already passed, and everything
+        // between the two is never asked for at all: the old chats, the ones
+        // whose last message is oldest. So a dialog that cannot say when it last
+        // spoke is not the offset either, and the scan steps back to one that
+        // can — at worst re-reading a dialog it has already seen, which the
+        // `seen` set was there for.
         let Some((offset_id, offset_date, offset_peer)) =
             dialogs.iter().rev().find_map(|dialog| {
                 let (peer, top_message) = dialog_offset(dialog)?;
@@ -464,13 +475,17 @@ async fn folder_dialogs(
                 let date = messages
                     .iter()
                     .find(|m| m.id() == top_message)
-                    .and_then(message_date)
-                    .unwrap_or(request.offset_date);
+                    .and_then(message_date)?;
                 Some((top_message, date, peer))
             })
         else {
             break;
         };
+        // An offset that did not move would ask for the same page forever.
+        if request.offset_id == offset_id && request.offset_date == offset_date {
+            warn!("backfill: dialog paging stopped moving at message {offset_id}");
+            break;
+        }
         request.offset_id = offset_id;
         request.offset_date = offset_date;
         request.offset_peer = offset_peer;
