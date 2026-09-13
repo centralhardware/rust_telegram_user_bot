@@ -148,14 +148,14 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
 }
 
 async fn message_exists(chat_id: i64, message_id: i32) -> bool {
-    // ClickHouse alone: `log_event` returns once the row is in the table, so a
-    // message logged moments ago answers here rather than being backfilled a
-    // second time. An ephemeral id names a different message entirely and must
-    // never answer for an ordinary one; a service message is logged under its
-    // own event and is still the message this id names.
+    // The Buffer table, so a message logged moments ago answers here rather
+    // than being backfilled a second time. An ephemeral id names a different
+    // message entirely and must never answer for an ordinary one; a service
+    // message is logged under its own event and is still the message this id
+    // names.
     if let Ok(count) = crate::db::clickhouse()
         .query(
-            "SELECT count() FROM events_log \
+            "SELECT count() FROM events_log_buffer \
              WHERE chat_id = ? AND message_id = ? AND event IN (?, ?) AND NOT ephemeral",
         )
         .bind(chat_id)

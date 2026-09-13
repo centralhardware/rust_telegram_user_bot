@@ -36,7 +36,7 @@ pub async fn load(poll_id: i64) -> Option<PollInfo> {
     match crate::db::clickhouse()
         .query(
             "SELECT chat_id, chat_title, message_id, poll_question, poll_options \
-             FROM events_log \
+             FROM events_log_buffer \
              WHERE poll_id = ? AND event IN (?, ?) AND poll_question != '' \
              ORDER BY date_time DESC LIMIT 1",
         )

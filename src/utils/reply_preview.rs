@@ -114,7 +114,7 @@ async fn lookup(chat_id: i64, message_id: i32) -> Target {
     let Ok((text, user_id, chat_title, fwd_chat, fwd_msg)) = crate::db::clickhouse()
         .query(
             "SELECT message, user_id, chat_title, fwd_from_chat_id, fwd_from_msg_id \
-             FROM events_log \
+             FROM events_log_buffer \
              WHERE chat_id = ? AND message_id = ? AND event = ? \
              ORDER BY date_time DESC LIMIT 1",
         )

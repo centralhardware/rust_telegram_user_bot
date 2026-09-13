@@ -10,18 +10,15 @@ static CLICKHOUSE: LazyLock<Client> = LazyLock::new(|| {
         .with_user(std::env::var("CLICKHOUSE_USER").expect("CLICKHOUSE_USER not set"))
         .with_password(std::env::var("CLICKHOUSE_PASSWORD").expect("CLICKHOUSE_PASSWORD not set"))
         .with_database(std::env::var("CLICKHOUSE_DATABASE").expect("CLICKHOUSE_DATABASE not set"))
-        // Batching is the server's job, not ours. Every row is inserted the
-        // moment it is built, and ClickHouse collects them in its own buffer and
-        // writes one part per flush — so a busy chat costs a part a second
-        // rather than a part a message, which is the only thing the write-behind
-        // buffer this replaced was ever protecting against.
+        // For the peer tables. `events_log` gets its batching from the Buffer
+        // table in front of it (migration 040); `peer_names` and `peer_cache`
+        // are written straight, and async_insert keeps a row that has actually
+        // changed from becoming a part of its own.
         .with_setting("async_insert", "1")
         // ...and the insert still returns only once the row is really in the
-        // table. That keeps every read-after-write in this file honest —
-        // `find_message`, `find_target`, `message_exists`, `poll_info::load` all
-        // read back messages the handler logged a moment earlier — and it keeps
-        // a failed insert an error the caller sees rather than a row lost in a
-        // buffer nobody is watching.
+        // table, so `peer_names::load` falling through to ClickHouse finds what
+        // `remember` just wrote, and a failed insert stays an error the caller
+        // sees rather than a row lost in a buffer nobody is watching.
         .with_setting("wait_for_async_insert", "1")
 });
 
@@ -43,12 +40,22 @@ where
     insert.end().await
 }
 
-/// Log one event. Returns once ClickHouse has the row in the table, so a lookup
-/// right after it — a reply preview, a backfill check, a poll's wording — finds
-/// the message the handler has just written.
+/// The Buffer table in front of `events_log` (migration 040). Everything the
+/// bot writes goes here and everything it reads back comes from here: ClickHouse
+/// holds the rows in memory and writes them down as one part a minute, and a
+/// SELECT on a Buffer table reads the buffer and the destination both, so a
+/// message logged a moment ago answers immediately.
+///
+/// Readers that are not the bot — Grafana, the aggregates, anything ad hoc —
+/// query `events_log` and are at most a minute behind.
+const EVENTS: &str = "events_log_buffer";
+
+/// Log one event. It lands in the Buffer, which is memory, so this is cheap and
+/// the row is visible to the next lookup without waiting for a part to be
+/// written.
 pub async fn log_event(event: Event) {
-    if let Err(e) = insert_rows("events_log", std::slice::from_ref(&event)).await {
-        log::error!("insert into events_log: {e}");
+    if let Err(e) = insert_rows(EVENTS, std::slice::from_ref(&event)).await {
+        log::error!("insert into {EVENTS}: {e}");
     }
 }
 
@@ -184,12 +191,13 @@ struct SendRow {
 /// Find message info by chat_id + message_id: the text as it stands now — the
 /// last edit if there was one, the sent text otherwise.
 ///
-/// Straight from ClickHouse: `log_event` returns only once the insert has been
-/// flushed, so a message logged a moment ago is already there to be read back.
+/// Straight from ClickHouse: the read goes to the Buffer table, which answers
+/// out of its own memory and the table underneath both, so a message logged a
+/// moment ago is already there to be read back.
 pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
     let body = clickhouse()
         .query(
-            "SELECT message, entities, keyboard FROM events_log \
+            "SELECT message, entities, keyboard FROM events_log_buffer \
              WHERE chat_id = ? AND message_id = ? AND event IN (?, ?) \
              ORDER BY event = ? DESC, date_time DESC LIMIT 1",
         )
@@ -205,7 +213,7 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
     let (chat_title, first_name) = {
         let title = clickhouse()
             .query(
-                "SELECT chat_title FROM events_log \
+                "SELECT chat_title FROM events_log_buffer \
                  WHERE chat_id = ? AND event = ? AND chat_title != '' \
                  ORDER BY date_time DESC LIMIT 1",
             )
@@ -220,7 +228,7 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
         // so a sender renamed since the message was logged is named as they are now.
         let send = clickhouse()
             .query(
-                "SELECT user_id FROM events_log \
+                "SELECT user_id FROM events_log_buffer \
                  WHERE chat_id = ? AND message_id = ? AND event = ? \
                  ORDER BY date_time DESC LIMIT 1",
             )
@@ -271,7 +279,7 @@ pub async fn find_target(chat_id: i64, message_id: i64) -> ReplyTarget {
     clickhouse()
         .query(
             "SELECT user_id, user_id = 0 AND fwd_from_chat_id != 0 AND fwd_from_msg_id != 0 \
-             FROM events_log \
+             FROM events_log_buffer \
              WHERE chat_id = ? AND message_id = ? AND event = ? \
              ORDER BY date_time DESC LIMIT 1",
         )
