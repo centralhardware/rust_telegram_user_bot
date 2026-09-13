@@ -137,9 +137,13 @@ impl PeerNames {
 /// field at the highest `updated_at` collapses the versions wherever they are,
 /// buffer or table, which is what FINAL was doing here.
 ///
-/// The version is aliased `version` rather than `updated_at`: an alias that
-/// shadows the column it aggregates makes `argMax(title, updated_at)` read the
-/// alias instead, and ClickHouse rejects the query as a nested aggregate.
+/// The columns inside the aggregates are written `peer_names_buffer.title`
+/// rather than `title`, and that qualification is load-bearing. The row is
+/// deserialised by column NAME, so every alias has to be the struct's field
+/// name -- but an alias equal to the column it aggregates shadows it, and
+/// `argMax(title, updated_at)` then reads the alias and is rejected as a nested
+/// aggregate (Code 184). Qualifying the argument with the table name resolves it
+/// to the column, and the aliases stay the names the struct needs.
 ///
 /// Deliberately unmemoised: ClickHouse is the only place names live, so a
 /// rename anywhere is picked up on the next lookup and nothing has to be
@@ -157,12 +161,12 @@ pub async fn load(peer_id: i64) -> Option<PeerNames> {
     match crate::db::clickhouse()
         .query(
             "SELECT peer_id, \
-                    argMax(title, updated_at) AS title, \
-                    argMax(first_name, updated_at) AS first_name, \
-                    argMax(last_name, updated_at) AS last_name, \
-                    argMax(usernames, updated_at) AS usernames, \
-                    argMax(community_id, updated_at) AS community_id, \
-                    max(updated_at) AS version \
+                    argMax(peer_names_buffer.title, peer_names_buffer.updated_at) AS title, \
+                    argMax(peer_names_buffer.first_name, peer_names_buffer.updated_at) AS first_name, \
+                    argMax(peer_names_buffer.last_name, peer_names_buffer.updated_at) AS last_name, \
+                    argMax(peer_names_buffer.usernames, peer_names_buffer.updated_at) AS usernames, \
+                    argMax(peer_names_buffer.community_id, peer_names_buffer.updated_at) AS community_id, \
+                    max(peer_names_buffer.updated_at) AS updated_at \
              FROM peer_names_buffer WHERE peer_id = ? \
              GROUP BY peer_id",
         )
