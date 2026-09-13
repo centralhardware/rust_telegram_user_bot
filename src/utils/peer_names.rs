@@ -10,6 +10,9 @@ use clickhouse::Row;
 use grammers_client::peer::Peer;
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::LazyLock;
+use tokio::sync::Mutex;
 
 use crate::db::{insert_rows, now};
 use crate::handlers::extract::{ChatInfo, SenderInfo};
@@ -190,14 +193,39 @@ pub async fn load(peer_id: i64) -> Option<PeerNames> {
 /// through, so nothing about a peer is held back in the bot.
 const PEER_NAMES: &str = "peer_names_buffer";
 
-/// Store a peer's names.
+/// What was last written for each peer, `updated_at` aside. Called about twice
+/// per message — chat and sender — and almost always with the row already
+/// stored, so the repeats used to be left to the Buffer and `ReplacingMergeTree`
+/// to collapse. That is one round trip each all the same, and a backfill reading
+/// a chat's whole history is thousands of them for one unchanging pair of names.
+static WRITTEN: LazyLock<Mutex<HashMap<i64, PeerNames>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Store a peer's names, unless this process has already stored exactly these.
 ///
-/// Called for every named peer that passes through -- about twice per message,
-/// chat and sender -- and almost always with the row already stored. Nothing
-/// here filters the repeats: they go into the Buffer, which is memory, and
-/// `ReplacingMergeTree` collapses them on the way down.
+/// A name that changes is written again: the check is on the names themselves,
+/// not on having seen the peer.
 pub async fn remember(names: &PeerNames) {
+    {
+        let mut written = WRITTEN.lock().await;
+        match written.get(&names.peer_id) {
+            // `updated_at` is the version, not part of the identity: comparing it
+            // would make every call a change and the check pointless.
+            Some(seen) if same_names(seen, names) => return,
+            _ => {
+                written.insert(names.peer_id, names.clone());
+            }
+        }
+    }
     if let Err(e) = insert_rows(PEER_NAMES, std::slice::from_ref(names)).await {
         error!("insert into {PEER_NAMES}: {e}");
     }
+}
+
+fn same_names(a: &PeerNames, b: &PeerNames) -> bool {
+    a.title == b.title
+        && a.first_name == b.first_name
+        && a.last_name == b.last_name
+        && a.usernames == b.usernames
+        && a.community_id == b.community_id
 }

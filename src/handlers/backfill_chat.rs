@@ -30,6 +30,7 @@ use log::{info, warn};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
+use tokio::task::JoinSet;
 
 use crate::db::Event;
 
@@ -40,6 +41,11 @@ use crate::db::Event;
 const BATCH: usize = 1_000;
 /// How often the status message is rewritten, in messages seen.
 const PROGRESS_EVERY: usize = 2_000;
+/// How many messages are turned into rows at once. Building a row is mostly
+/// waiting — on the reply target's lookup, on a name, now and then on Telegram
+/// for a topic title — and done one after another that wait is the whole
+/// backfill. Kept modest so the Telegram calls among them stay a trickle.
+const CONCURRENCY: usize = 16;
 
 /// Chats a backfill is running for. One at a time per chat: two walks of the
 /// same history would only write each other's rows again.
@@ -245,11 +251,30 @@ async fn convert(client: &Client, chat_id: i64, pending: &mut Vec<Message>, batc
         return;
     }
     let known = known_ids(chat_id, &pending.iter().map(|m| m.id() as i64).collect::<Vec<_>>()).await;
+
+    let mut building = JoinSet::new();
     for message in pending.drain(..) {
         if known.contains(&(message.id() as i64)) {
             continue;
         }
-        batch.push(crate::utils::event_of::event_of(client, &message).await);
+        let client = client.clone();
+        building.spawn(async move { crate::utils::event_of::event_of(&client, &message).await });
+        while building.len() >= CONCURRENCY {
+            collect(&mut building, batch).await;
+        }
+    }
+    while !building.is_empty() {
+        collect(&mut building, batch).await;
+    }
+}
+
+/// Take one finished row out of the set. A row that panicked on the way is lost
+/// with a line in the log rather than taking the backfill down with it.
+async fn collect(building: &mut JoinSet<Event>, batch: &mut Vec<Event>) {
+    match building.join_next().await {
+        Some(Ok(event)) => batch.push(event),
+        Some(Err(e)) => warn!("backfill: building a row: {e}"),
+        None => {}
     }
 }
 
