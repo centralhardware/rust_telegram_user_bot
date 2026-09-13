@@ -325,14 +325,16 @@ impl Session for ClickhouseSession {
                             // argMax over the version rather than FINAL, which
                             // ClickHouse recommends against and which a Buffer
                             // does not apply to its own rows anyway.
-                            // Aliased away from the column names on purpose: an
-                            // alias that shadows the column it aggregates makes
-                            // `argMax(hash, updated_at)` read the alias, and
-                            // ClickHouse rejects that as a nested aggregate.
+                            // The table qualification is load-bearing: the row
+                            // is deserialised by column NAME, so each alias has
+                            // to be the struct's field name -- but an alias
+                            // equal to the column it aggregates shadows it, and
+                            // `argMax(hash, updated_at)` then reads the alias
+                            // and is rejected as a nested aggregate (Code 184).
                             "SELECT peer_id, \
-                                    argMax(hash, updated_at) AS last_hash, \
-                                    argMax(subtype, updated_at) AS last_subtype, \
-                                    max(updated_at) AS version \
+                                    argMax(peer_cache_buffer.hash, peer_cache_buffer.updated_at) AS hash, \
+                                    argMax(peer_cache_buffer.subtype, peer_cache_buffer.updated_at) AS subtype, \
+                                    max(peer_cache_buffer.updated_at) AS updated_at \
                              FROM peer_cache_buffer WHERE peer_id = ? \
                              GROUP BY peer_id",
                         )
@@ -348,14 +350,21 @@ impl Session for ClickhouseSession {
                             // cached -- and the HAVING asks the same of the
                             // collapsed row, so a peer that has since lost the
                             // bit cannot answer for the account.
+                            // The WHERE is qualified for the same reason as the
+                            // aggregates -- unqualified, `subtype` there would
+                            // resolve to the alias and land an aggregate in a
+                            // WHERE. The HAVING is deliberately NOT qualified:
+                            // there it is the collapsed value that has to carry
+                            // the bit.
                             "SELECT peer_id, \
-                                    argMax(hash, updated_at) AS last_hash, \
-                                    argMax(subtype, updated_at) AS last_subtype, \
-                                    max(updated_at) AS version \
+                                    argMax(peer_cache_buffer.hash, peer_cache_buffer.updated_at) AS hash, \
+                                    argMax(peer_cache_buffer.subtype, peer_cache_buffer.updated_at) AS subtype, \
+                                    max(peer_cache_buffer.updated_at) AS updated_at \
                              FROM peer_cache_buffer \
-                             WHERE subtype IS NOT NULL AND bitAnd(subtype, 1) = 1 \
+                             WHERE peer_cache_buffer.subtype IS NOT NULL \
+                               AND bitAnd(peer_cache_buffer.subtype, 1) = 1 \
                              GROUP BY peer_id \
-                             HAVING bitAnd(last_subtype, 1) = 1 \
+                             HAVING bitAnd(subtype, 1) = 1 \
                              LIMIT 1",
                         )
                         .fetch_one::<PeerRow>()
