@@ -28,6 +28,10 @@
 //! backfilled: they are the health check talking to itself, thousands of rows
 //! saying only that both ends were up, and the log is no place for them.
 //!
+//! Every request to Telegram is followed by a short gap — a history read as
+//! fast as Telegram will answer earns a FLOOD_WAIT of minutes, which is longer
+//! than all the pauses together.
+//!
 //! `new` reads the dialog list and backfills the chats `events_log` holds no row
 //! for at all — the ones that existed before the bot did and have been silent
 //! since. A chat with even one row in the log is left alone: it is the `<chat_id>`
@@ -40,6 +44,7 @@ use grammers_session::types::{PeerId, PeerInfo, PeerRef};
 use grammers_tl_types as tl;
 use log::{info, warn};
 use std::collections::HashSet;
+use std::time::Duration;
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
@@ -58,6 +63,14 @@ const PROGRESS_EVERY: usize = 2_000;
 /// for a topic title — and done one after another that wait is the whole
 /// backfill. Kept modest so the Telegram calls among them stay a trickle.
 const CONCURRENCY: usize = 16;
+/// How long to wait between one Telegram request and the next. A backfill is
+/// the one thing here that asks Telegram for years of history as fast as it
+/// will answer, and the answer to that is a FLOOD_WAIT measured in minutes —
+/// which costs more than every pause it would have taken to avoid it.
+const REQUEST_GAP: Duration = Duration::from_millis(500);
+/// How many messages `messages.Search` answers with at once. Every this many
+/// read is one round trip made, and one gap owed.
+const SEARCH_PAGE: usize = 100;
 
 /// How many dialogs a page of `messages.getDialogs` asks for. Telegram's limit.
 const DIALOG_PAGE: i32 = 100;
@@ -324,6 +337,7 @@ async fn run_new(client: &Client, mine_only: bool, status: Option<&Message>) -> 
         written += outcome.written;
         done += 1;
         RUNNING.lock().await.remove(&dialog.chat_id);
+        tokio::time::sleep(REQUEST_GAP).await;
     }
 
     let busy = if skipped > 0 {
@@ -417,6 +431,7 @@ async fn list_dialogs(client: &Client) -> Result<Vec<Dialog>, Box<dyn std::error
         }
         // The pinned dialogs came with the first page.
         request.exclude_pinned = true;
+        tokio::time::sleep(REQUEST_GAP).await;
     }
 
     Ok(found)
@@ -563,6 +578,11 @@ async fn run(
         if pending.len() >= BATCH {
             convert(client, chat_id, &mut pending, &mut batch).await;
             flush(&mut batch, &mut written).await;
+        }
+        // A page's worth read is a page's worth fetched: the next message asks
+        // Telegram for the next one.
+        if seen % SEARCH_PAGE == 0 {
+            tokio::time::sleep(REQUEST_GAP).await;
         }
         if seen % PROGRESS_EVERY == 0 {
             if let Some(status) = status {
