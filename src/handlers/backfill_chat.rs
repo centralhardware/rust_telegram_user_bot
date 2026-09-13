@@ -23,7 +23,8 @@
 
 use grammers_client::Client;
 use grammers_client::message::Message;
-use grammers_session::types::PeerRef;
+use grammers_session::Session;
+use grammers_session::types::{PeerId, PeerRef};
 use log::{info, warn};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -89,12 +90,15 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
                 return true;
             }
         },
-        Some(id) => match find_dialog(client, normalize(id)).await {
+        Some(id) => match find_peer(normalize(id)).await {
             Some(peer) => (peer, normalize(id)),
             None => {
                 reply(
                     message,
-                    &format!("backfill: no dialog with chat_id {id} — open it once and retry"),
+                    &format!(
+                        "backfill: chat_id {id} is not in the peer cache — \
+                         say something there once and retry"
+                    ),
                 )
                 .await;
                 return true;
@@ -149,22 +153,32 @@ fn normalize(id: i64) -> i64 {
     }
 }
 
-async fn find_dialog(client: &Client, chat_id: i64) -> Option<PeerRef> {
-    let mut dialogs = client.iter_dialogs();
-    loop {
-        match dialogs.next().await {
-            Ok(Some(dialog)) => {
-                if dialog.peer_id().bare_id_unchecked() == chat_id {
-                    return Some(dialog.peer_ref());
-                }
-            }
-            Ok(None) => return None,
+/// The peer for a chat id, out of the session's peer cache: every peer the bot
+/// has ever seen is stored there with the access hash Telegram needs back.
+///
+/// The cache is keyed by the id together with the kind of peer it is, and a
+/// bare id says nothing about that — so all three are tried, and the one the
+/// session knows is the answer. Listing dialogs would say it outright, but
+/// grammers panics on a dialog whose peer the same response did not name, which
+/// is a whole bot lost to a `!backfill` typo.
+async fn find_peer(chat_id: i64) -> Option<PeerRef> {
+    let session = crate::session::session()?;
+    let candidates = [
+        Some(PeerId::channel_unchecked(chat_id)),
+        Some(PeerId::user_unchecked(chat_id)),
+        PeerId::chat(chat_id),
+    ];
+    for id in candidates.into_iter().flatten() {
+        match session.peer_ref(id).await {
+            Ok(Some(peer)) => return Some(peer),
+            Ok(None) => continue,
             Err(e) => {
-                warn!("backfill: listing dialogs: {e}");
+                warn!("backfill: looking up peer {chat_id}: {e}");
                 return None;
             }
         }
     }
+    None
 }
 
 /// Walk the chat's history newest-first, writing every message the log is
