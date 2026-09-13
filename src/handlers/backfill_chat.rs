@@ -24,6 +24,10 @@
 //! `<chat_id>` is the id as `events_log` stores it, and the `-100…` form
 //! Telegram apps show is accepted too.
 //!
+//! In a chat with a bot, a bare `/ping` and the `pong` it answers with are not
+//! backfilled: they are the health check talking to itself, thousands of rows
+//! saying only that both ends were up, and the log is no place for them.
+//!
 //! `new` reads the dialog list and backfills the chats `events_log` holds no row
 //! for at all — the ones that existed before the bot did and have been silent
 //! since. A chat with even one row in the log is left alone: it is the `<chat_id>`
@@ -32,7 +36,7 @@
 use grammers_client::Client;
 use grammers_client::message::Message;
 use grammers_session::Session;
-use grammers_session::types::{PeerId, PeerRef};
+use grammers_session::types::{PeerId, PeerInfo, PeerRef};
 use grammers_tl_types as tl;
 use log::{info, warn};
 use std::collections::HashSet;
@@ -166,7 +170,8 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
 
     let client = client.clone();
     tokio::spawn(async move {
-        let outcome = run(&client, peer, chat_id, mine_only, status.as_ref()).await;
+        let bot_chat = is_bot_chat(peer).await;
+        let outcome = run(&client, peer, chat_id, mine_only, bot_chat, status.as_ref()).await;
         if let Some(status) = &status {
             let _ = status.edit(outcome.line.as_str()).await;
         }
@@ -303,7 +308,15 @@ async fn run_new(client: &Client, mine_only: bool, status: Option<&Message>) -> 
                 ))
                 .await;
         }
-        let outcome = run(client, dialog.peer, dialog.chat_id, mine_only, status).await;
+        let outcome = run(
+            client,
+            dialog.peer,
+            dialog.chat_id,
+            mine_only,
+            dialog.bot,
+            status,
+        )
+        .await;
         info!(
             "\x1b[96m{:<8} {:>8} {}\x1b[0m",
             "backfill", dialog.chat_id, outcome
@@ -327,6 +340,9 @@ struct Dialog {
     chat_id: i64,
     peer: PeerRef,
     title: String,
+    /// Whether the chat is a conversation with a bot, off the flag the dialog
+    /// list carried — the session's cache may never have been told.
+    bot: bool,
 }
 
 /// Every chat in the dialog list, read through the raw `messages.getDialogs`.
@@ -436,6 +452,7 @@ fn describe(
                 chat_id: user.id,
                 peer: PeerRef::from(user),
                 title,
+                bot: user.bot,
             })
         }
         tl::enums::Peer::Chat(p) => describe_chat(p.chat_id, chats),
@@ -461,6 +478,7 @@ fn describe_chat(id: i64, chats: &[tl::enums::Chat]) -> Option<Dialog> {
         chat_id: id,
         peer: PeerRef::from(chat),
         title,
+        bot: false,
     })
 }
 
@@ -504,6 +522,7 @@ async fn run(
     peer: PeerRef,
     chat_id: i64,
     mine_only: bool,
+    bot_chat: bool,
     status: Option<&Message>,
 ) -> Outcome {
     let mut search = client.search_messages(peer);
@@ -514,6 +533,7 @@ async fn run(
     let total = search.total().await.unwrap_or(0);
     let mut seen = 0usize;
     let mut written = 0usize;
+    let mut pinged = 0usize;
     let mut batch: Vec<Event> = Vec::with_capacity(BATCH);
     let mut pending: Vec<Message> = Vec::with_capacity(BATCH);
 
@@ -534,6 +554,10 @@ async fn run(
             }
         };
         seen += 1;
+        if bot_chat && is_health_check(message.text()) {
+            pinged += 1;
+            continue;
+        }
         pending.push(message);
 
         if pending.len() >= BATCH {
@@ -554,9 +578,46 @@ async fn run(
     convert(client, chat_id, &mut pending, &mut batch).await;
     flush(&mut batch, &mut written).await;
 
+    let health = if pinged > 0 {
+        format!(", {pinged} health checks left out")
+    } else {
+        String::new()
+    };
     Outcome {
         written,
-        line: format!("backfill {chat_id}: done — {seen} read, {written} written"),
+        line: format!("backfill {chat_id}: done — {seen} read, {written} written{health}"),
+    }
+}
+
+/// A message that is nothing but the health check: the `/ping` sent to a bot,
+/// or the `pong` it answers with. `/ping@thebot` is the same command addressed
+/// the way a group needs it.
+fn is_health_check(text: &str) -> bool {
+    let text = text.trim();
+    if text.eq_ignore_ascii_case("pong") {
+        return true;
+    }
+    let command = text.split_once('@').map_or(text, |(command, _)| command);
+    command.eq_ignore_ascii_case("/ping")
+}
+
+/// Whether a chat is the one-to-one conversation with a bot — the only place a
+/// bare `/ping` is the health check rather than something someone said.
+///
+/// Read off the session's peer cache, which keeps the flag Telegram sent with
+/// the user. A peer it does not know is taken as not a bot: leaving a real
+/// message out of the log is the worse mistake of the two.
+async fn is_bot_chat(peer: PeerRef) -> bool {
+    let Some(session) = crate::session::session() else {
+        return false;
+    };
+    match session.peer(peer.id).await {
+        Ok(Some(PeerInfo::User { bot, .. })) => bot.unwrap_or(false),
+        Ok(_) => false,
+        Err(e) => {
+            warn!("backfill: looking up whether {:?} is a bot: {e}", peer.id);
+            false
+        }
     }
 }
 
@@ -667,7 +728,24 @@ async fn reply(message: &Message, text: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize;
+    use super::{is_health_check, normalize};
+
+    #[test]
+    fn the_health_check_is_the_command_and_its_answer() {
+        assert!(is_health_check("/ping"));
+        assert!(is_health_check("  /ping  "));
+        assert!(is_health_check("/ping@some_bot"));
+        assert!(is_health_check("pong"));
+        assert!(is_health_check("Pong"));
+    }
+
+    #[test]
+    fn anything_said_around_it_is_a_message_like_any_other() {
+        assert!(!is_health_check("/ping the server for me"));
+        assert!(!is_health_check("pong?"));
+        assert!(!is_health_check("ping"));
+        assert!(!is_health_check(""));
+    }
 
     #[test]
     fn a_bare_id_is_left_alone() {
