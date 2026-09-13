@@ -3,10 +3,7 @@ use grammers_client::Client;
 use grammers_tl_types as tl;
 use log::{debug, info, warn};
 
-use crate::db::Event;
 use crate::utils::log_ignore::is_log_ignored;
-use super::extract::extract_community_tag;
-use crate::utils::peer_info::{chat_info, sender_info};
 
 /// If the message is a reply and the replied-to message is not yet in ClickHouse,
 /// fetch it from Telegram and save it.
@@ -55,89 +52,9 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
         return;
     }
 
-    let sender = sender_info(client, &reply).await;
-    let chat = chat_info(client, &reply).await;
-
-    let text = crate::utils::format_entities::plain_text(&reply);
-    let sender_bare_id = sender.user_id as i64;
-    let msg_content = if !text.is_empty() {
-        text
-    } else if let Some(action) = reply.action() {
-        let sender_display = if sender.second_name.is_empty() {
-            sender.first_name.clone()
-        } else {
-            format!("{} {}", sender.first_name, sender.second_name)
-        };
-        let game_title = crate::utils::service_action::game_title(client, &reply).await;
-        crate::utils::service_action::format(action, Some(sender_bare_id), Some(&sender_display), game_title.as_deref())
-    } else {
-        serde_json::to_string(&reply.raw).unwrap_or_default()
-    };
-
-    let mut reply_reply = crate::utils::reply_target::reply_info(&reply);
-    let reply_to_user_id = crate::db::resolve_reply(chat_id, &mut reply_reply).await;
-    let (topic_id, topic_name) = crate::utils::topic::topic_of(client, &reply).await;
-
-    // A backfilled message is a message: it gets the same columns a live one
-    // gets, or the row would quietly be the thinner of the two.
-    let meta = crate::utils::media_description::media_meta_of(&reply.raw).unwrap_or_default();
-    let meta_msg = crate::utils::message_meta::of(&reply.raw);
-
-    crate::db::log_event(Event {
-        date_time: reply.date().as_second() as u32,
-        message: msg_content,
-        entities: crate::utils::entities::of_message(&reply),
-        keyboard: crate::utils::entities::keyboard_of_raw(&reply.raw),
-        chat_title: chat.chat_title,
-        chat_id,
-        username: sender.username,
-        first_name: sender.first_name,
-        second_name: sender.second_name,
-        user_id: sender.user_id,
-        community_tag: extract_community_tag(&reply.raw),
-        community_id: chat.community_id,
-        message_id: reply.id() as i64,
-        chat_usernames: chat.chat_usernames,
-        // A backfilled message can be one this account sent: `Event::send()`
-        // defaults to incoming, which would be wrong for half of them.
-        out: crate::utils::self_id::is_outgoing(&reply),
-        reply_to: reply_reply.reply_to,
-        reply_to_user_id,
-        reply_to_chat_id: reply_reply.reply_to_chat_id,
-        quote_text: reply_reply.quote_text,
-        comment_to: reply_reply.comment_to,
-        topic_id,
-        topic_name,
-        raw: serde_json::to_string(&reply.raw).unwrap_or_default(),
-        media_type: meta.media_type,
-        file_name: meta.file_name,
-        mime_type: meta.mime_type,
-        size: meta.size,
-        duration: meta.duration,
-        width: meta.width,
-        height: meta.height,
-        lat: meta.lat,
-        lon: meta.lon,
-        poll_question: meta.poll_question,
-        poll_options: meta.poll_options,
-        poll_id: meta.poll_id,
-        fwd_from_user_id: meta_msg.fwd_from_user_id,
-        fwd_from_chat_id: meta_msg.fwd_from_chat_id,
-        fwd_from_msg_id: meta_msg.fwd_from_msg_id,
-        fwd_from_name: meta_msg.fwd_from_name,
-        fwd_date: meta_msg.fwd_date,
-        action: meta_msg.action,
-        grouped_id: meta_msg.grouped_id,
-        via_bot_id: meta_msg.via_bot_id,
-        guest_from_id: meta_msg.guest_from_id,
-        post_author: meta_msg.post_author,
-        pinned: meta_msg.pinned,
-        silent: meta_msg.silent,
-        noforwards: meta_msg.noforwards,
-        ttl_period: meta_msg.ttl_period,
-        ..Event::send()
-    })
-    .await;
+    // The row a live update would have produced, built where every caller
+    // that logs a fetched message builds it.
+    crate::db::log_event(crate::utils::event_of::event_of(client, &reply).await).await;
 
     if !is_log_ignored(chat_id) {
         info!(

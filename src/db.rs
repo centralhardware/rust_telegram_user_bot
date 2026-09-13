@@ -36,7 +36,7 @@ where
 ///
 /// Readers that are not the bot — Grafana, the aggregates, anything ad hoc —
 /// query `events_log` and are at most a minute behind.
-const EVENTS: &str = "events_log_buffer";
+pub const EVENTS: &str = "events_log_buffer";
 
 /// Log one event. It lands in the Buffer, which is memory, so this is cheap and
 /// the row is visible to the next lookup without waiting for a part to be
