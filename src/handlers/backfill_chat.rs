@@ -5,9 +5,10 @@
 //! This walks a chat's history through `messages.Search` and writes the rows the
 //! updates never delivered, so the log reaches back as far as Telegram does.
 //!
-//! It only ever walks *below* what the log already holds: the oldest stored
-//! message id for the chat is where the walk starts, so a second run picks up
-//! where the first stopped rather than reading the same history again.
+//! It walks the whole history and writes only what the log is missing. Starting
+//! below the oldest stored id would be cheaper, but the log is not dense: one
+//! reply backfilled in 2023 sits thousands of messages under everything else,
+//! and a floor drawn there leaves the whole gap above it unfilled.
 //!
 //! Driven by `!backfill` typed into any chat, from this account:
 //!
@@ -190,13 +191,7 @@ async fn run(
     mine_only: bool,
     status: Option<&Message>,
 ) -> String {
-    // Only history older than the log already reaches: the walk starts just
-    // below the oldest message stored for this chat, so a backfill extends the
-    // log downwards instead of re-reading years it already has. With nothing
-    // stored, `0` starts from the newest message.
-    let floor = oldest_logged(chat_id).await;
-
-    let mut search = client.search_messages(peer).offset_id(floor as i32);
+    let mut search = client.search_messages(peer);
     if mine_only {
         search = search.sent_by_self();
     }
@@ -224,7 +219,7 @@ async fn run(
         pending.push(message);
 
         if pending.len() >= BATCH {
-            convert(client, &mut pending, &mut batch).await;
+            convert(client, chat_id, &mut pending, &mut batch).await;
             flush(&mut batch, &mut written).await;
         }
         if seen % PROGRESS_EVERY == 0 {
@@ -238,39 +233,55 @@ async fn run(
         }
     }
 
-    convert(client, &mut pending, &mut batch).await;
+    convert(client, chat_id, &mut pending, &mut batch).await;
     flush(&mut batch, &mut written).await;
 
     format!("backfill {chat_id}: done — {seen} read, {written} written")
 }
 
-/// Turn the fetched messages into rows.
-async fn convert(client: &Client, pending: &mut Vec<Message>, batch: &mut Vec<Event>) {
+/// Turn the messages the log does not have yet into rows.
+async fn convert(client: &Client, chat_id: i64, pending: &mut Vec<Message>, batch: &mut Vec<Event>) {
+    if pending.is_empty() {
+        return;
+    }
+    let known = known_ids(chat_id, &pending.iter().map(|m| m.id() as i64).collect::<Vec<_>>()).await;
     for message in pending.drain(..) {
+        if known.contains(&(message.id() as i64)) {
+            continue;
+        }
         batch.push(crate::utils::event_of::event_of(client, &message).await);
     }
 }
 
-/// The oldest message id the log holds for this chat, 0 when it holds none.
+/// Which of these message ids the log already holds, asked a batch at a time.
 /// Read through the Buffer, so a message logged a moment ago counts.
-/// `message_id` is Telegram's, so "oldest" and "smallest id" are the same thing.
-async fn oldest_logged(chat_id: i64) -> i64 {
+async fn known_ids(chat_id: i64, ids: &[i64]) -> HashSet<i64> {
+    // The ids come from Telegram as integers, so the list is built rather than
+    // bound: `clickhouse`'s `?` has no array form for an `IN`.
+    let list = ids
+        .iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
     match crate::db::clickhouse()
         .query(&format!(
-            "SELECT min(message_id) FROM {} \
-             WHERE chat_id = ? AND event IN (?, ?) AND NOT ephemeral",
+            "SELECT message_id FROM {} \
+             WHERE chat_id = ? AND event IN (?, ?) AND NOT ephemeral \
+             AND message_id IN ({list})",
             crate::db::EVENTS
         ))
         .bind(chat_id)
         .bind(crate::db::SEND)
         .bind(crate::db::SERVICE)
-        .fetch_one::<i64>()
+        .fetch_all::<i64>()
         .await
     {
-        Ok(id) => id,
+        Ok(found) => found.into_iter().collect(),
+        // Writing a row the log already has is harmless — `events_log` replaces
+        // on merge — so a failed check is worth carrying on past.
         Err(e) => {
-            warn!("backfill: reading the oldest logged id: {e}");
-            0
+            warn!("backfill: checking existing ids: {e}");
+            HashSet::new()
         }
     }
 }
