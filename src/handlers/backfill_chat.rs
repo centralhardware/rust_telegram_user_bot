@@ -5,10 +5,18 @@
 //! This walks a chat's history through `messages.Search` and writes the rows the
 //! updates never delivered, so the log reaches back as far as Telegram does.
 //!
-//! It walks the whole history and writes only what the log is missing. Starting
-//! below the oldest stored id would be cheaper, but the log is not dense: one
-//! reply backfilled in 2023 sits thousands of messages under everything else,
-//! and a floor drawn there leaves the whole gap above it unfilled.
+//! It writes only what the log is missing. Which stretch of the history it has
+//! to read for that cannot be asked of `events_log`: its ids are full of holes
+//! that are not gaps — a deleted message, the health checks a backfill leaves
+//! out, everyone else's messages in a `mine` walk — and a floor drawn at the
+//! oldest stored id is wrong for the same reason, one reply backfilled in 2023
+//! sitting thousands of messages under everything else.
+//!
+//! So a walk records the contiguous id range it read in `backfill_state`, and
+//! the next one reads only around it: from the newest message down to the top of
+//! that range, and — if that walk never reached the start of the history — from
+//! its bottom downwards. A chat walked to the end and quiet since costs two
+//! requests instead of its whole history.
 //!
 //! Driven by `!backfill` typed into any chat, from this account:
 //!
@@ -19,7 +27,15 @@
 //! !backfill <chat_id> all
 //! !backfill new          — every dialog the log has never seen, one after another
 //! !backfill new all
+//! !backfill <chat_id> full  — ignore what is recorded as walked, read it all
+//! !backfill <chat_id> mark  — record what the log holds as walked, without walking
 //! ```
+//!
+//! `full` is the way back if a recorded range is ever wrong: it reads the whole
+//! history the way every backfill did before `backfill_state` existed, and
+//! records the range again at the end. `mark` is the other direction — it takes
+//! the range straight from the log for a chat that was walked to the end before
+//! there was anywhere to write that down, so that walk is not owed twice.
 //!
 //! `<chat_id>` is the id as `events_log` stores it, and the `-100…` form
 //! Telegram apps show is accepted too.
@@ -41,15 +57,17 @@
 //! since. A chat with even one row in the log is left alone: it is the `<chat_id>`
 //! form's job, which walks a history the log already reaches into.
 
+use clickhouse::Row;
 use grammers_client::Client;
 use grammers_client::message::Message;
 use grammers_session::Session;
 use grammers_session::types::{PeerId, PeerInfo, PeerRef};
 use grammers_tl_types as tl;
 use log::{info, warn};
+use serde::Serialize;
 use std::collections::HashSet;
-use std::time::Duration;
 use std::sync::LazyLock;
+use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 
@@ -100,11 +118,15 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
     let mut mine_only = true;
     let mut wanted_chat: Option<i64> = None;
     let mut every_new = false;
+    let mut full = false;
+    let mut mark = false;
     for arg in args.split_whitespace() {
         match arg {
             "all" => mine_only = false,
             "mine" => mine_only = true,
             "new" => every_new = true,
+            "full" => full = true,
+            "mark" => mark = true,
             other => match other.parse::<i64>() {
                 Ok(id) => wanted_chat = Some(id),
                 Err(_) => {
@@ -118,6 +140,15 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
     if every_new {
         if wanted_chat.is_some() {
             reply(message, "backfill: `new` takes no chat_id").await;
+            return true;
+        }
+        if full || mark {
+            reply(
+                message,
+                "backfill: `full` and `mark` make no sense with `new` — \
+                 a chat `new` picks has never been walked",
+            )
+            .await;
             return true;
         }
         start_new(client, message, mine_only).await;
@@ -161,6 +192,15 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
         return true;
     }
 
+    if mark {
+        if full {
+            reply(message, "backfill: `mark` and `full` are opposites").await;
+            return true;
+        }
+        reply(message, &mark_walked(chat_id, mine_only).await).await;
+        return true;
+    }
+
     {
         let mut running = RUNNING.lock().await;
         if !running.insert(chat_id) {
@@ -188,7 +228,16 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
     let client = client.clone();
     tokio::spawn(async move {
         let bot_chat = is_bot_chat(peer).await;
-        let outcome = run(&client, peer, chat_id, mine_only, bot_chat, status.as_ref()).await;
+        let outcome = run(
+            &client,
+            peer,
+            chat_id,
+            mine_only,
+            bot_chat,
+            full,
+            status.as_ref(),
+        )
+        .await;
         if let Some(status) = &status {
             let _ = status.edit(outcome.line.as_str()).await;
         }
@@ -332,6 +381,9 @@ async fn run_new(client: &Client, mine_only: bool, status: Option<&Message>) -> 
             dialog.chat_id,
             mine_only,
             dialog.bot,
+            // A dialog `new` picked has no row in the log and so nothing
+            // recorded as covered either.
+            false,
             status,
         )
         .await;
@@ -621,25 +673,168 @@ async fn logged_chat_ids() -> Result<HashSet<i64>, clickhouse::error::Error> {
         .collect())
 }
 
-/// Walk the chat's history newest-first, writing every message the log is
-/// missing. Returns the line to leave in the status message.
-async fn run(
+/// Record what the log already holds for a chat as walked, without walking it:
+/// `!backfill <chat_id> mark`.
+///
+/// For the chats backfilled before `backfill_state` existed. Their history is in
+/// the log already, and reading a quarter of a million messages back out of
+/// Telegram to find that out again is hours spent to write nothing.
+///
+/// It takes the log at its word, which is the one thing the walk itself never
+/// does: the range is the lowest and highest id stored, and anything missing
+/// inside it stays missing, so it is only right for a chat that really was
+/// walked to the end. The range is reported back to be looked at, and
+/// `!backfill <chat_id> full` undoes it by reading everything again.
+async fn mark_walked(chat_id: i64, mine_only: bool) -> String {
+    let bounds = crate::db::clickhouse()
+        .query(&format!(
+            "SELECT min(message_id), max(message_id), count() FROM {} \
+             WHERE chat_id = ? AND event IN (?, ?) AND NOT ephemeral",
+            crate::db::EVENTS
+        ))
+        .bind(chat_id)
+        .bind(crate::db::SEND)
+        .bind(crate::db::SERVICE)
+        .fetch_one::<(i64, i64, u64)>()
+        .await;
+
+    let (min_id, max_id, messages) = match bounds {
+        Ok(bounds) => bounds,
+        Err(e) => return format!("backfill {chat_id}: cannot read the log — {e}"),
+    };
+    if max_id == 0 {
+        return format!("backfill {chat_id}: the log holds nothing for it — nothing to mark");
+    }
+
+    record(
+        chat_id,
+        mine_only,
+        Covered {
+            min_id,
+            max_id,
+            complete: true,
+        },
+        messages,
+    )
+    .await;
+
+    let whose = if mine_only { "mine" } else { "all" };
+    format!(
+        "backfill {chat_id}: marked {min_id}..{max_id} ({messages} rows, {whose}) as walked. \
+         A later backfill reads only what is above it — `full` to undo."
+    )
+}
+
+/// The id range a finished walk has already read, out of `backfill_state`.
+#[derive(Clone, Copy)]
+struct Covered {
+    min_id: i64,
+    max_id: i64,
+    /// Whether that walk reached the start of the history. When it did there is
+    /// nothing under `min_id` to go back for.
+    complete: bool,
+}
+
+/// What a chat's earlier walks covered, for the messages this one is after.
+///
+/// A `mine` walk reads the `all` row as well: everything an `all` walk stored
+/// covers this account's messages inside the same range too. An `all` walk reads
+/// only its own — a `mine` row says nothing about everyone else's messages.
+async fn covered(chat_id: i64, mine_only: bool) -> Option<Covered> {
+    match crate::db::clickhouse()
+        .query(
+            "SELECT min(min_id), max(max_id), min(complete) \
+             FROM backfill_state FINAL \
+             WHERE chat_id = ? AND (NOT mine_only OR ?) AND max_id > 0",
+        )
+        .bind(chat_id)
+        .bind(mine_only)
+        .fetch_one::<(i64, i64, bool)>()
+        .await
+    {
+        Ok((_, 0, _)) => None,
+        Ok((min_id, max_id, complete)) => Some(Covered {
+            min_id,
+            max_id,
+            complete,
+        }),
+        // Not knowing what is covered costs a walk of the whole history, which
+        // is what every backfill did before this table existed.
+        Err(e) => {
+            warn!("backfill: reading the covered range: {e}");
+            None
+        }
+    }
+}
+
+#[derive(Row, Serialize)]
+struct CoveredRow {
+    chat_id: i64,
+    mine_only: bool,
+    min_id: i64,
+    max_id: i64,
+    complete: bool,
+    messages: u64,
+    walked_at: u32,
+}
+
+/// Write down what is covered now, so the next walk can jump over it.
+async fn record(chat_id: i64, mine_only: bool, covered: Covered, messages: u64) {
+    let row = CoveredRow {
+        chat_id,
+        mine_only,
+        min_id: covered.min_id,
+        max_id: covered.max_id,
+        complete: covered.complete,
+        messages,
+        walked_at: crate::db::now(),
+    };
+    if let Err(e) = crate::db::insert_rows("backfill_state", &[row]).await {
+        warn!("backfill: recording the covered range: {e}");
+    }
+}
+
+/// What one segment of a walk read.
+#[derive(Default)]
+struct Read {
+    seen: usize,
+    pinged: usize,
+    /// The ids at either end of what this segment actually read, 0 while it has
+    /// read nothing.
+    lowest: i64,
+    highest: i64,
+    /// Telegram's refusal, if the segment ended on one.
+    error: Option<String>,
+}
+
+/// Walk one stretch of a chat's history, newest-first, writing every message the
+/// log is missing.
+///
+/// Starts just under `offset_id` — 0 for the newest message there is — and stops
+/// once it is past `floor`, which is the top of a range already covered. With
+/// `floor` at 0 it runs to the start of the history.
+#[allow(clippy::too_many_arguments)]
+async fn walk(
     client: &Client,
     peer: PeerRef,
     chat_id: i64,
     mine_only: bool,
     bot_chat: bool,
+    offset_id: i64,
+    floor: i64,
+    total: usize,
+    written: &mut usize,
     status: Option<&Message>,
-) -> Outcome {
+) -> Read {
     let mut search = client.search_messages(peer);
     if mine_only {
         search = search.sent_by_self();
     }
+    if offset_id > 0 {
+        search = search.offset_id(offset_id as i32);
+    }
 
-    let total = search.total().await.unwrap_or(0);
-    let mut seen = 0usize;
-    let mut written = 0usize;
-    let mut pinged = 0usize;
+    let mut read = Read::default();
     let mut batch: Vec<Event> = Vec::with_capacity(BATCH);
     let mut pending: Vec<Message> = Vec::with_capacity(BATCH);
 
@@ -648,47 +843,45 @@ async fn run(
             Ok(Some(message)) => message,
             Ok(None) => break,
             Err(e) => {
-                // Whatever is already in hand is still worth keeping.
-                flush(&mut batch, &mut written).await;
-                // Nothing read at all is Telegram turning the chat down rather
-                // than a walk cut short: a left chat it will not answer for, a
-                // chat this account was thrown out of since the list was read.
-                let line = if seen == 0 {
-                    format!("backfill {chat_id}: Telegram would not answer for it — {e}")
-                } else {
-                    format!(
-                        "backfill {chat_id}: stopped after {seen} of {total} — {e}. \
-                         Run it again to carry on."
-                    )
-                };
-                return Outcome {
-                    written,
-                    refused: true,
-                    line,
-                };
+                read.error = Some(e.to_string());
+                break;
             }
         };
-        seen += 1;
+        let id = message.id() as i64;
+        // Everything from here down is already in the log, put there by the walk
+        // that recorded the range. This is the whole saving: the segment ends
+        // here instead of reading years of history to find nothing missing.
+        if floor > 0 && id <= floor {
+            break;
+        }
+        read.seen += 1;
+        read.highest = read.highest.max(id);
+        read.lowest = if read.lowest == 0 {
+            id
+        } else {
+            read.lowest.min(id)
+        };
         if bot_chat && is_health_check(message.text()) {
-            pinged += 1;
+            read.pinged += 1;
             continue;
         }
         pending.push(message);
 
         if pending.len() >= BATCH {
             convert(client, chat_id, &mut pending, &mut batch).await;
-            flush(&mut batch, &mut written).await;
+            flush(&mut batch, written).await;
         }
         // A page's worth read is a page's worth fetched: the next message asks
         // Telegram for the next one.
-        if seen % SEARCH_PAGE == 0 {
+        if read.seen % SEARCH_PAGE == 0 {
             tokio::time::sleep(REQUEST_GAP).await;
         }
-        if seen % PROGRESS_EVERY == 0 {
+        if read.seen % PROGRESS_EVERY == 0 {
             if let Some(status) = status {
                 let _ = status
                     .edit(format!(
-                        "backfill {chat_id}: {seen}/{total} read, {written} written…"
+                        "backfill {chat_id}: {}/{total} read, {written} written…",
+                        read.seen
                     ))
                     .await;
             }
@@ -696,17 +889,144 @@ async fn run(
     }
 
     convert(client, chat_id, &mut pending, &mut batch).await;
-    flush(&mut batch, &mut written).await;
+    // Whatever is already in hand is worth keeping even when the segment ended
+    // on a refusal.
+    flush(&mut batch, written).await;
+    read
+}
+
+/// Walk the chat's history, writing every message the log is missing, and skip
+/// whatever an earlier walk already covered. Returns the line to show for it.
+///
+/// Two stretches at most: from the newest message down to the top of the covered
+/// range, then — only if that earlier walk never reached the start of the history
+/// — from its bottom downwards. `full` ignores the covered range and reads
+/// everything, which is the way back if a recorded range is ever wrong.
+async fn run(
+    client: &Client,
+    peer: PeerRef,
+    chat_id: i64,
+    mine_only: bool,
+    bot_chat: bool,
+    full: bool,
+    status: Option<&Message>,
+) -> Outcome {
+    let known = if full {
+        None
+    } else {
+        covered(chat_id, mine_only).await
+    };
+
+    let mut counter = client.search_messages(peer);
+    if mine_only {
+        counter = counter.sent_by_self();
+    }
+    let total = counter.total().await.unwrap_or(0);
+
+    let mut written = 0usize;
+
+    // Above the covered range: the messages that arrived since it was walked.
+    let above = walk(
+        client,
+        peer,
+        chat_id,
+        mine_only,
+        bot_chat,
+        0,
+        known.map_or(0, |c| c.max_id),
+        total,
+        &mut written,
+        status,
+    )
+    .await;
+
+    // Below it, when the earlier walk stopped short of the start of the history.
+    let below = match known {
+        Some(c) if !c.complete && above.error.is_none() => {
+            tokio::time::sleep(REQUEST_GAP).await;
+            walk(
+                client,
+                peer,
+                chat_id,
+                mine_only,
+                bot_chat,
+                c.min_id,
+                0,
+                total,
+                &mut written,
+                status,
+            )
+            .await
+        }
+        _ => Read::default(),
+    };
+
+    let seen = above.seen + below.seen;
+    let pinged = above.pinged + below.pinged;
+    let error = above.error.clone().or_else(|| below.error.clone());
+
+    // What is covered now. A stretch that ended on a refusal still covers what
+    // it read, as long as it joins onto the range already recorded — a walk cut
+    // short above it leaves a hole in between, and a range claiming that hole
+    // would hide it from every later walk.
+    let now = match (known, above.highest, below.lowest) {
+        (None, 0, _) => None,
+        (None, high, _) => Some(Covered {
+            min_id: above.lowest,
+            max_id: high,
+            complete: above.error.is_none(),
+        }),
+        (Some(c), high, low) => {
+            let joins = high == 0 || above.lowest <= c.max_id + 1;
+            let reached_bottom = below.seen > 0 && below.error.is_none();
+            joins.then_some(Covered {
+                min_id: if low > 0 { low.min(c.min_id) } else { c.min_id },
+                max_id: c.max_id.max(high),
+                complete: c.complete || reached_bottom,
+            })
+        }
+    };
+    if let Some(now) = now
+        && seen > 0
+    {
+        record(chat_id, mine_only, now, seen as u64).await;
+    }
 
     let health = if pinged > 0 {
         format!(", {pinged} health checks left out")
     } else {
         String::new()
     };
+    // How much of the history the covered range spared this walk. `total` counts
+    // every message Telegram has for the chat, read or not.
+    let jumped = match known {
+        Some(_) if total > seen => format!(", {} skipped as already walked", total - seen),
+        _ => String::new(),
+    };
+
+    if let Some(e) = error {
+        // Nothing read at all is Telegram turning the chat down rather than a
+        // walk cut short: a left chat it will not answer for, a chat this
+        // account was thrown out of since the list was read.
+        let line = if seen == 0 {
+            format!("backfill {chat_id}: Telegram would not answer for it — {e}")
+        } else {
+            format!(
+                "backfill {chat_id}: stopped after {seen} of {total} — {e}. \
+                 Run it again to carry on."
+            )
+        };
+        return Outcome {
+            written,
+            refused: true,
+            line,
+        };
+    }
+
     Outcome {
         written,
         refused: false,
-        line: format!("backfill {chat_id}: done — {seen} read, {written} written{health}"),
+        line: format!("backfill {chat_id}: done — {seen} read, {written} written{health}{jumped}"),
     }
 }
 
