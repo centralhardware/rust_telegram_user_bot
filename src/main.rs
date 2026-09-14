@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
                         // A pin is not a message of its own: it is logged against
                         // the message it pins, which the backfill above has just
                         // made sure is in the log.
-                        if !handlers::save_service(&client, &message).await {
+                        if !handlers::save_service(&message).await {
                             let saved = if utils::self_id::is_outgoing(&message) {
                                 handlers::save_outgoing(&message, &client, client_id).await
                             } else {
@@ -82,7 +82,7 @@ async fn main() -> Result<()> {
                         }
                     }
                     Update::MessageEdited(message) => {
-                        if let Err(e) = handlers::save_edited(&message, &client).await {
+                        if let Err(e) = handlers::save_edited(&message).await {
                             error!("Failed to save edited message: {:?}", e);
                         }
                     }
