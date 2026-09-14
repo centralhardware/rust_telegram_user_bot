@@ -10,8 +10,8 @@ use crate::utils::peer_info::{chat_info, sender_info};
 pub async fn save_incoming(message: &Message, client: &Client) -> Result<Event, Box<dyn std::error::Error>> {
     let media_desc = crate::utils::media_description::describe(message);
 
-    let sender = sender_info(client, message).await;
-    let chat = chat_info(client, message).await;
+    let sender = sender_info(message).await;
+    let chat = chat_info(message).await;
     let community_tag = extract_community_tag_from_update(&message.raw);
     let buttons = crate::utils::inline_buttons::format_buttons(message);
 

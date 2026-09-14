@@ -16,8 +16,8 @@ use crate::utils::peer_info::{chat_info, sender_info};
 pub async fn event_of(client: &Client, msg: &Message) -> Event {
     let chat_id = msg.peer_id().bare_id_unchecked();
 
-    let sender = sender_info(client, msg).await;
-    let chat = chat_info(client, msg).await;
+    let sender = sender_info(msg).await;
+    let chat = chat_info(msg).await;
 
     let text = crate::utils::format_entities::plain_text(msg);
     let sender_bare_id = sender.user_id as i64;

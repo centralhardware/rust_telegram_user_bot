@@ -14,7 +14,7 @@ struct LastChatRow {
 }
 
 pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Result<Event, Box<dyn std::error::Error>> {
-    let chat = crate::utils::peer_info::chat_info(client, message).await;
+    let chat = crate::utils::peer_info::chat_info(message).await;
     let community_id = chat.community_id;
     let (title, usernames) = (chat.chat_title, chat.chat_usernames);
 

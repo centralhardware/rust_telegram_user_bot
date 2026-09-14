@@ -1,6 +1,5 @@
 use grammers_client::peer::Peer;
 use grammers_client::update::Message;
-use grammers_client::Client;
 use log::info;
 
 use crate::db::Event;
@@ -21,7 +20,7 @@ use crate::utils::log_ignore::is_log_ignored;
 ///
 /// Returns whether it took the message. A service message that carries its own
 /// meaning — a title change, a join, a call — is left to the ordinary save.
-pub async fn save_service(client: &Client, message: &Message) -> bool {
+pub async fn save_service(message: &Message) -> bool {
     let Some(action) = message.action() else {
         return false;
     };
@@ -45,7 +44,7 @@ pub async fn save_service(client: &Client, message: &Message) -> bool {
     .await;
 
     if !is_log_ignored(chat_id) {
-        let chat = crate::utils::peer_info::chat_info(client, message).await;
+        let chat = crate::utils::peer_info::chat_info(message).await;
         let chat_short: String = chat.chat_title.chars().take(25).collect();
         let sender_short: String = message
             .sender()

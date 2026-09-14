@@ -1,14 +1,10 @@
 use grammers_client::update::Message;
-use grammers_client::Client;
 use log::info;
 
 use crate::db::Event;
 use crate::utils::log_ignore::is_log_ignored;
 
-pub async fn save_edited(
-    message: &Message,
-    client: &Client,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn save_edited(message: &Message) -> Result<(), Box<dyn std::error::Error>> {
     let chat_id = message.peer_id().bare_id_unchecked();
     let msg_id = message.id() as i64;
     let message_content = crate::utils::format_entities::plain_text(message);
@@ -34,9 +30,9 @@ pub async fn save_edited(
     let original = original.message;
     let diff = crate::utils::diff::word_patch(&original, &message_content);
 
-    let sender = crate::utils::peer_info::sender_info(client, message).await;
+    let sender = crate::utils::peer_info::sender_info(message).await;
 
-    let chat = crate::utils::peer_info::chat_info(client, message).await;
+    let chat = crate::utils::peer_info::chat_info(message).await;
     let chat_name = chat.chat_title.clone();
     let sender_name = if sender.second_name.is_empty() {
         sender.first_name.clone()

@@ -229,26 +229,3 @@ fn same_names(a: &PeerNames, b: &PeerNames) -> bool {
         && a.usernames == b.usernames
         && a.community_id == b.community_id
 }
-
-/// Which of these peers the log already holds names for.
-///
-/// One query for a whole page of senders. `load` is a round trip each, and a
-/// backfill page is hundreds of them — nearly all for peers already stored, so
-/// asking one by one spends a query per message to learn nothing.
-pub async fn known(peer_ids: &[i64]) -> std::collections::HashSet<i64> {
-    if peer_ids.is_empty() {
-        return std::collections::HashSet::new();
-    }
-    match crate::db::clickhouse()
-        .query("SELECT DISTINCT peer_id FROM peer_names_buffer WHERE peer_id IN ?")
-        .bind(peer_ids)
-        .fetch_all::<i64>()
-        .await
-    {
-        Ok(ids) => ids.into_iter().collect(),
-        Err(e) => {
-            error!("looking up which of {} peers are stored: {e}", peer_ids.len());
-            std::collections::HashSet::new()
-        }
-    }
-}
