@@ -57,6 +57,11 @@
 //! deleted, it is still in the dialog list and Telegram usually still answers
 //! for its history. The ones it refuses are counted, not guessed at in advance.
 //!
+//! A supergroup made from a basic group is walked as two chats: the messages
+//! said before the migration stayed in the old chat, under its own id, and that
+//! chat is in no dialog list. Every backfill of a supergroup asks Telegram what
+//! it was made from and walks that chat after it, on its own recorded range.
+//!
 //! `new` reads the dialog list and backfills the chats `events_log` holds no row
 //! for at all — the ones that existed before the bot did and have been silent
 //! since. A chat with even one row in the log is left alone: it is the `<chat_id>`
@@ -66,7 +71,7 @@ use clickhouse::Row;
 use grammers_client::Client;
 use grammers_client::message::Message;
 use grammers_session::Session;
-use grammers_session::types::{PeerId, PeerInfo, PeerRef};
+use grammers_session::types::{PeerId, PeerInfo, PeerKind, PeerRef};
 use grammers_tl_types as tl;
 use log::{debug, info, warn};
 use serde::Serialize;
@@ -1045,14 +1050,104 @@ async fn walk(
     read
 }
 
-/// Walk the chat's history, writing every message the log is missing, and skip
+/// Walk a chat's history and, when it is a supergroup, the basic group it was
+/// made from. Returns the line to show for the pair.
+///
+/// A supergroup made out of a basic group keeps none of that group's messages:
+/// they stay where they were said, under the old chat's id, and the supergroup's
+/// own history starts at the migration. The old chat is not in the dialog list
+/// either — Telegram shows the pair as one chat — so nothing else here would
+/// ever reach it, and every word said before the migration is out of the log for
+/// good. `channelFull.migrated_from_chat_id` names it, and it is walked after the
+/// supergroup, on its own id and with its own recorded range.
+async fn run(
+    client: &Client,
+    peer: PeerRef,
+    chat_id: i64,
+    mine_only: bool,
+    bot_chat: bool,
+    full: bool,
+    status: Option<&Message>,
+) -> Outcome {
+    let mut outcome = walk_chat(client, peer, chat_id, mine_only, bot_chat, full, status).await;
+
+    let Some(old_id) = migrated_from(client, peer).await else {
+        return outcome;
+    };
+    // A basic group needs no access hash: its bare id addresses it.
+    let old_peer = PeerId::chat_unchecked(old_id).to_ambient_ref();
+
+    if crate::utils::log_ignore::is_log_ignored(old_id) {
+        return outcome;
+    }
+    // The chat the supergroup came from is a chat like any other, and a walk of
+    // it may already be running under its own id.
+    if !RUNNING.lock().await.insert(old_id) {
+        outcome.line = format!(
+            "{}\nbackfill {chat_id}: made from chat {old_id}, left to the backfill already running for it",
+            outcome.line
+        );
+        return outcome;
+    }
+    if let Some(status) = status {
+        let _ = status
+            .edit(format!(
+                "backfill {chat_id}: made from chat {old_id}, walking it too…"
+            ))
+            .await;
+    }
+    tokio::time::sleep(REQUEST_GAP).await;
+    let before = walk_chat(client, old_peer, old_id, mine_only, false, full, status).await;
+    RUNNING.lock().await.remove(&old_id);
+
+    info!("\x1b[96m{:<8} {:>8} {}\x1b[0m", "backfill", old_id, before);
+    Outcome {
+        written: outcome.written + before.written,
+        refused: outcome.refused || before.refused,
+        line: format!(
+            "{}\nbackfill {chat_id}: made from chat {old_id} — {}",
+            outcome.line,
+            before.line.trim_start_matches(&format!("backfill {old_id}: "))
+        ),
+    }
+}
+
+/// The basic group a supergroup was made from, if it was made from one.
+///
+/// Only a channel can have been migrated from anything, and only `getFullChannel`
+/// says so — the id is nowhere on the chat itself. A refusal is not an answer
+/// worth stopping the backfill for: the supergroup's own history is walked either
+/// way, and the pre-migration one is simply missed.
+async fn migrated_from(client: &Client, peer: PeerRef) -> Option<i64> {
+    if peer.id.kind() != PeerKind::Channel {
+        return None;
+    }
+    let channel: tl::enums::InputChannel = peer.into();
+    let full = match client
+        .invoke(&tl::functions::channels::GetFullChannel { channel })
+        .await
+    {
+        Ok(tl::enums::messages::ChatFull::Full(full)) => full.full_chat,
+        Err(e) => {
+            warn!("backfill: asking what {:?} was made from: {e}", peer.id);
+            return None;
+        }
+    };
+    match full {
+        tl::enums::ChatFull::ChannelFull(full) => full.migrated_from_chat_id,
+        _ => None,
+    }
+}
+
+/// Walk one chat's history, writing every message the log is missing, and skip
 /// whatever an earlier walk already covered. Returns the line to show for it.
 ///
 /// Two stretches at most: from the newest message down to the top of the covered
 /// range, then — only if that earlier walk never reached the start of the history
 /// — from its bottom downwards. `full` ignores the covered range and reads
 /// everything, which is the way back if a recorded range is ever wrong.
-async fn run(
+#[allow(clippy::too_many_arguments)]
+async fn walk_chat(
     client: &Client,
     peer: PeerRef,
     chat_id: i64,
