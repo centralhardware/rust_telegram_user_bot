@@ -67,7 +67,7 @@ use grammers_client::message::Message;
 use grammers_session::Session;
 use grammers_session::types::{PeerId, PeerInfo, PeerRef};
 use grammers_tl_types as tl;
-use log::{info, warn};
+use log::{debug, info, warn};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -863,6 +863,12 @@ struct Read {
 /// Starts just under `offset_id` — 0 for the newest message there is — and stops
 /// once it is past `floor`, which is the top of a range already covered. With
 /// `floor` at 0 it runs to the start of the history.
+///
+/// A search that runs out of messages is re-anchored at the lowest id it read
+/// before that is believed: Telegram answers a page with nothing in it when a
+/// wide stretch of the history under the offset has been deleted, and taking
+/// that for the start of the history seals the rest of it away — the range is
+/// recorded as complete and no later walk ever goes back under it.
 #[allow(clippy::too_many_arguments)]
 async fn walk(
     client: &Client,
@@ -876,13 +882,20 @@ async fn walk(
     written: &mut usize,
     status: Option<&Message>,
 ) -> Read {
-    let mut search = client.search_messages(peer);
-    if mine_only {
-        search = search.sent_by_self();
-    }
-    if offset_id > 0 {
-        search = search.offset_id(offset_id as i32);
-    }
+    let anchored = |at: i64| {
+        let mut search = client.search_messages(peer);
+        if mine_only {
+            search = search.sent_by_self();
+        }
+        if at > 0 {
+            search = search.offset_id(at as i32);
+        }
+        search
+    };
+    let mut search = anchored(offset_id);
+    // The id the search was last re-anchored at, so an anchored search that ends
+    // where it started is taken as the end rather than re-anchored for ever.
+    let mut resumed_at = 0i64;
 
     let mut read = Read::default();
     let mut batch: Vec<Event> = Vec::with_capacity(BATCH);
@@ -891,6 +904,22 @@ async fn walk(
     loop {
         let message = match search.next().await {
             Ok(Some(message)) => message,
+            // The search says it is out of messages, which is not the same as
+            // the history being out of messages: `messages.Search` hands back an
+            // empty page when a wide enough stretch under the offset is deleted,
+            // and the iterator reports that as the end. Re-anchoring at the
+            // lowest id read asks Telegram for what lies under that stretch, and
+            // only an anchored search that comes back empty too is the bottom.
+            Ok(None) if read.lowest > 0 && read.lowest != resumed_at => {
+                resumed_at = read.lowest;
+                debug!(
+                    "backfill {chat_id}: search ran out at {}, re-anchoring under it",
+                    read.lowest
+                );
+                tokio::time::sleep(REQUEST_GAP).await;
+                search = anchored(read.lowest);
+                continue;
+            }
             Ok(None) => break,
             Err(e) => {
                 read.error = Some(e.to_string());
@@ -1047,11 +1076,13 @@ async fn run(
     } else {
         String::new()
     };
-    // How much of the history the covered range spared this walk. `total` counts
-    // every message Telegram has for the chat, read or not.
+    // What the covered range spared this walk. Said as the range itself, not as
+    // a count: `total` is every message Telegram has for the chat, and
+    // `total - seen` would call the whole of it walked on the word of a range
+    // that may cover a fraction.
     let jumped = match known {
-        Some(_) if total > seen => format!(", {} skipped as already walked", total - seen),
-        _ => String::new(),
+        Some(c) => format!(", {}..{} already walked", c.min_id, c.max_id),
+        None => String::new(),
     };
 
     if let Some(e) = error {
