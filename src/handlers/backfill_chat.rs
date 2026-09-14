@@ -60,7 +60,9 @@
 //! A supergroup made from a basic group is walked as two chats: the messages
 //! said before the migration stayed in the old chat, under its own id, and that
 //! chat is in no dialog list. Every backfill of a supergroup asks Telegram what
-//! it was made from and walks that chat after it, on its own recorded range.
+//! it was made from and walks that chat after it, on its own recorded range —
+//! and writes the pair to `chat_migrations`, since `events_log` holds the two
+//! halves as unrelated chats and nothing else says they are one conversation.
 //!
 //! `new` reads the dialog list and backfills the chats `events_log` holds no row
 //! for at all — the ones that existed before the bot did and have been silent
@@ -1074,6 +1076,10 @@ async fn run(
     let Some(old_id) = migrated_from(client, peer).await else {
         return outcome;
     };
+    // Written down whether or not the walk below happens: `events_log` holds the
+    // two as unrelated chats, and this row is the only thing that says the
+    // history under `old_id` is the earlier half of this one.
+    record_migration(chat_id, old_id).await;
     // A basic group needs no access hash: its bare id addresses it.
     let old_peer = PeerId::chat_unchecked(old_id).to_ambient_ref();
 
@@ -1109,6 +1115,31 @@ async fn run(
             outcome.line,
             before.line.trim_start_matches(&format!("backfill {old_id}: "))
         ),
+    }
+}
+
+#[derive(Row, Serialize)]
+struct MigrationRow {
+    chat_id: i64,
+    from_chat_id: i64,
+    noticed_at: u32,
+}
+
+/// Write down that this supergroup was made from that chat.
+///
+/// Nothing else records it. The service message that says a supergroup was
+/// created from a chat is only in the log for a migration this account was
+/// listening through, and the old chats migrated years before the bot existed.
+/// Without the pair, the history walked under the old id is a stranger's chat
+/// sitting in the log next to the one it belongs to.
+async fn record_migration(chat_id: i64, from_chat_id: i64) {
+    let row = MigrationRow {
+        chat_id,
+        from_chat_id,
+        noticed_at: crate::db::now(),
+    };
+    if let Err(e) = crate::db::insert_rows("chat_migrations", &[row]).await {
+        warn!("backfill: recording the migration {from_chat_id} -> {chat_id}: {e}");
     }
 }
 
