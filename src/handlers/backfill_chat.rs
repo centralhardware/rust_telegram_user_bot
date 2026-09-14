@@ -27,6 +27,7 @@
 //! !backfill <chat_id> all
 //! !backfill new          — every dialog the log has never seen, one after another
 //! !backfill new all
+//! !backfill new dry      — name what `new` would walk, and walk nothing
 //! !backfill <chat_id> full  — ignore what is recorded as walked, read it all
 //! !backfill <chat_id> mark  — record what the log holds as walked, without walking
 //! !backfill <chat_id> mark partial  — the same, forced to count as unfinished
@@ -82,6 +83,10 @@ use crate::db::Event;
 /// front of it is there to spare it the one-row inserts of live traffic, and
 /// pushing a whole history through memory would be the one thing it is not for.
 const BATCH: usize = 1_000;
+/// How many chats a dry run names in its message, before the rest is left to
+/// the log. A Telegram message is 4096 characters and a report that does not fit
+/// is not sent at all.
+const DRY_RUN_NAMES: usize = 50;
 /// How often the status message is rewritten, in messages seen.
 const PROGRESS_EVERY: usize = 2_000;
 /// How many messages are turned into rows at once. Building a row is mostly
@@ -132,6 +137,7 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
     let mut full = false;
     let mut mark = false;
     let mut partial = false;
+    let mut dry_run = false;
     for arg in args.split_whitespace() {
         match arg {
             "all" => mine_only = false,
@@ -140,6 +146,7 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
             "full" => full = true,
             "mark" => mark = true,
             "partial" => partial = true,
+            "dry" => dry_run = true,
             other => match other.parse::<i64>() {
                 Ok(id) => wanted_chat = Some(id),
                 Err(_) => {
@@ -150,6 +157,10 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
         }
     }
 
+    if dry_run && !every_new {
+        reply(message, "backfill: `dry` is only for `new`").await;
+        return true;
+    }
     if every_new {
         if wanted_chat.is_some() {
             reply(message, "backfill: `new` takes no chat_id").await;
@@ -164,7 +175,7 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
             .await;
             return true;
         }
-        start_new(client, message, mine_only).await;
+        start_new(client, message, mine_only, dry_run).await;
         return true;
     }
 
@@ -311,7 +322,7 @@ const NEW_SCAN: i64 = 0;
 
 /// Handle `!backfill new`: find the dialogs `events_log` has no row for and
 /// walk each of them, one after another.
-async fn start_new(client: &Client, message: &Message, mine_only: bool) {
+async fn start_new(client: &Client, message: &Message, mine_only: bool, dry_run: bool) {
     {
         let mut running = RUNNING.lock().await;
         if !running.insert(NEW_SCAN) {
@@ -338,7 +349,7 @@ async fn start_new(client: &Client, message: &Message, mine_only: bool) {
 
     let client = client.clone();
     tokio::spawn(async move {
-        let outcome = run_new(&client, mine_only, status.as_ref()).await;
+        let outcome = run_new(&client, mine_only, dry_run, status.as_ref()).await;
         if let Some(status) = &status {
             let _ = status.edit(outcome.as_str()).await;
         }
@@ -348,9 +359,14 @@ async fn start_new(client: &Client, message: &Message, mine_only: bool) {
 }
 
 /// The body of a `new` scan. Returns the line to leave in the status message.
-async fn run_new(client: &Client, mine_only: bool, status: Option<&Message>) -> String {
-    let dialogs = match list_dialogs(client).await {
-        Ok(dialogs) => dialogs,
+async fn run_new(
+    client: &Client,
+    mine_only: bool,
+    dry_run: bool,
+    status: Option<&Message>,
+) -> String {
+    let scan = match list_dialogs(client).await {
+        Ok(scan) => scan,
         Err(e) => return format!("backfill new: cannot read the dialog list — {e}"),
     };
     let logged = match logged_chat_ids().await {
@@ -360,15 +376,53 @@ async fn run_new(client: &Client, mine_only: bool, status: Option<&Message>) -> 
         Err(e) => return format!("backfill new: cannot read the logged chats — {e}"),
     };
 
-    let missing: Vec<Dialog> = dialogs
+    let listed = scan.dialogs.len();
+    let missing: Vec<Dialog> = scan
+        .dialogs
         .into_iter()
         .filter(|d| {
             !logged.contains(&d.chat_id) && !crate::utils::log_ignore::is_log_ignored(d.chat_id)
         })
         .collect();
 
+    // Where every dialog went, so a count that looks short can be read rather
+    // than guessed at: what the list held, what the log already had, and what
+    // Telegram named but will not answer for.
+    let census = format!(
+        "{listed} chats in the dialog list, {} already in the log, \
+         {} unreadable, {} not a chat",
+        listed - missing.len(),
+        scan.unreadable,
+        scan.peerless
+    );
+    info!("\x1b[96m{:<8} {:>8} {census}\x1b[0m", "backfill", "new");
+
     if missing.is_empty() {
-        return "backfill new: nothing to do — every dialog is already in the log".to_string();
+        return format!("backfill new: nothing to do — {census}");
+    }
+
+    if dry_run {
+        // What a real run would walk, named rather than counted, so it can be
+        // held against the list the official client's export produces.
+        let mut lines = vec![format!("backfill new (dry): {census}")];
+        for dialog in missing.iter().take(DRY_RUN_NAMES) {
+            lines.push(format!("{} — {}", dialog.chat_id, dialog.title));
+        }
+        // A message Telegram will not take is a report that never arrives; the
+        // rest is in the log, which has no such limit.
+        if missing.len() > DRY_RUN_NAMES {
+            lines.push(format!(
+                "…and {} more, all of them in the log",
+                missing.len() - DRY_RUN_NAMES
+            ));
+        }
+        for dialog in &missing {
+            info!(
+                "\x1b[96m{:<8} {:>8} would walk {}\x1b[0m",
+                "backfill", dialog.chat_id, dialog.title
+            );
+        }
+        return lines.join("\n");
     }
 
     let total = missing.len();
@@ -427,7 +481,7 @@ async fn run_new(client: &Client, mine_only: bool, status: Option<&Message>) -> 
     };
     format!(
         "backfill new: done — {done} of {total} chats walked, \
-         {written} written{turned_away}{busy}"
+         {written} written{turned_away}{busy}\n{census}"
     )
 }
 
@@ -449,17 +503,32 @@ struct Dialog {
 /// the same response did not name, and `dialogCommunity` names none at all.
 /// Nothing here needs a `Dialog` object: the id, the access hash and the title
 /// are all on the `chats` and `users` of the response.
-async fn list_dialogs(client: &Client) -> Result<Vec<Dialog>, Box<dyn std::error::Error>> {
-    let mut found = Vec::new();
+async fn list_dialogs(client: &Client) -> Result<Scan, Box<dyn std::error::Error>> {
+    let mut scan = Scan::default();
     let mut seen: HashSet<i64> = HashSet::new();
     // The main list and the archive are separate folders, and a request names
     // one of them: asked for neither, Telegram answers with the main list and
     // the archive is simply missing — which is most of what the official
     // client's export finds and a scan of one folder does not.
     for folder_id in [MAIN_FOLDER, ARCHIVE_FOLDER] {
-        folder_dialogs(client, folder_id, &mut seen, &mut found).await?;
+        folder_dialogs(client, folder_id, &mut seen, &mut scan).await?;
     }
-    Ok(found)
+    Ok(scan)
+}
+
+/// What a walk of the dialog list came to. The counts are there to be reported:
+/// a scan that finds fewer chats than expected is a question about where the
+/// rest went, and the answer is one of these three numbers.
+#[derive(Default)]
+struct Scan {
+    /// The chats worth backfilling.
+    dialogs: Vec<Dialog>,
+    /// Dialogs that name a peer the response described as unreadable — a chat
+    /// this account was thrown out of, a `min` peer named only in passing.
+    unreadable: usize,
+    /// Dialogs that name no peer at all: a community, which is a folder of
+    /// chats rather than a chat.
+    peerless: usize,
 }
 
 /// The main dialog list, and the archive beside it.
@@ -473,7 +542,7 @@ async fn folder_dialogs(
     client: &Client,
     folder_id: i32,
     seen: &mut HashSet<i64>,
-    found: &mut Vec<Dialog>,
+    scan: &mut Scan,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut request = tl::functions::messages::GetDialogs {
         exclude_pinned: false,
@@ -499,9 +568,11 @@ async fn folder_dialogs(
 
         for dialog in &dialogs {
             let Some((peer, _)) = dialog_offset(dialog) else {
+                scan.peerless += 1;
                 continue;
             };
             let Some(dialog) = describe(&peer, &chats, &users) else {
+                scan.unreadable += 1;
                 continue;
             };
             // The pinned dialogs come with the first page and again in place on
@@ -509,7 +580,7 @@ async fn folder_dialogs(
             if !seen.insert(dialog.chat_id) {
                 continue;
             }
-            found.push(dialog);
+            scan.dialogs.push(dialog);
         }
 
         if last_page {
