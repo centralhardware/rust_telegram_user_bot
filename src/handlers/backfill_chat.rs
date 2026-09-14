@@ -1246,16 +1246,6 @@ async fn convert(
     )
     .await;
 
-    // Name the page's senders in one request rather than one per sender. The
-    // search does not carry the people who have left the chat, and every one of
-    // them is a `users.getUsers` on the way to a row otherwise.
-    let unknown: Vec<&Message> = pending
-        .iter()
-        .filter(|m| !known.contains(&(m.id() as i64)))
-        .collect();
-    crate::utils::peer_info::prefetch_senders(client, &unknown).await;
-    drop(unknown);
-
     let mut building = JoinSet::new();
     for message in pending.drain(..) {
         if known.contains(&(message.id() as i64)) {
