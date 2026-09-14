@@ -1073,7 +1073,7 @@ async fn run(
 ) -> Outcome {
     let mut outcome = walk_chat(client, peer, chat_id, mine_only, bot_chat, full, status).await;
 
-    let Some(old_id) = migrated_from(client, peer).await else {
+    let Some(old_id) = migrated_from(client, peer, chat_id).await else {
         return outcome;
     };
     // Written down whether or not the walk below happens: `events_log` holds the
@@ -1149,10 +1149,30 @@ async fn record_migration(chat_id: i64, from_chat_id: i64) {
 /// says so — the id is nowhere on the chat itself. A refusal is not an answer
 /// worth stopping the backfill for: the supergroup's own history is walked either
 /// way, and the pre-migration one is simply missed.
-async fn migrated_from(client: &Client, peer: PeerRef) -> Option<i64> {
+async fn migrated_from(client: &Client, peer: PeerRef, chat_id: i64) -> Option<i64> {
     if peer.id.kind() != PeerKind::Channel {
         return None;
     }
+    if let Some(id) = full_channel_migrated_from(client, peer).await {
+        return Some(id);
+    }
+    // Telegram does not always own up to it: `channelFull` left
+    // `migrated_from_chat_id` out for a supergroup whose first message is the
+    // migration itself. That message is the other witness, and the log has it
+    // whenever the supergroup was walked at all — message 1, the service action
+    // that says which chat it was made from.
+    let from_log = migrated_from_log(chat_id).await;
+    if let Some(id) = from_log {
+        info!("backfill {chat_id}: made from chat {id}, off the log's own migration message");
+    }
+    from_log
+}
+
+/// What `channels.getFullChannel` says the supergroup was made from.
+///
+/// A refusal is not an answer worth stopping the backfill for: the supergroup's
+/// own history is walked either way.
+async fn full_channel_migrated_from(client: &Client, peer: PeerRef) -> Option<i64> {
     let channel: tl::enums::InputChannel = peer.into();
     let full = match client
         .invoke(&tl::functions::channels::GetFullChannel { channel })
@@ -1168,6 +1188,41 @@ async fn migrated_from(client: &Client, peer: PeerRef) -> Option<i64> {
         tl::enums::ChatFull::ChannelFull(full) => full.migrated_from_chat_id,
         _ => None,
     }
+}
+
+/// The chat id out of the `channel_migrate_from` service message in the log.
+///
+/// The row's text is what `service_action::format` wrote for it — the title the
+/// chat had, and its id at the end — so the id is read back off the end rather
+/// than stored as a number anywhere. A row that does not end that way is left
+/// alone: a wrong id here would send the walk at a stranger's chat.
+async fn migrated_from_log(chat_id: i64) -> Option<i64> {
+    let text: String = match crate::db::clickhouse()
+        .query(&format!(
+            "SELECT message FROM {} \
+             WHERE chat_id = ? AND action = 'channel_migrate_from' AND NOT ephemeral \
+             ORDER BY message_id ASC LIMIT 1",
+            crate::db::EVENTS
+        ))
+        .bind(chat_id)
+        .fetch_optional::<String>()
+        .await
+    {
+        Ok(Some(text)) => text,
+        Ok(None) => return None,
+        Err(e) => {
+            warn!("backfill {chat_id}: reading the migration message: {e}");
+            return None;
+        }
+    };
+    parse_migrated_from(&text)
+}
+
+/// The chat id at the end of a `channel_migrate_from` row:
+/// `[supergroup created from chat "…", chat 175562287]`.
+fn parse_migrated_from(text: &str) -> Option<i64> {
+    let (_, tail) = text.trim_end_matches(']').rsplit_once(", chat ")?;
+    tail.trim().parse::<i64>().ok().filter(|id| *id > 0)
 }
 
 /// Walk one chat's history, writing every message the log is missing, and skip
@@ -1450,7 +1505,7 @@ async fn reply(message: &Message, text: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_health_check, normalize};
+    use super::{is_health_check, normalize, parse_migrated_from};
 
     #[test]
     fn the_health_check_is_the_command_and_its_answer() {
@@ -1479,5 +1534,23 @@ mod tests {
     fn the_form_telegram_apps_show_becomes_the_one_the_log_stores() {
         assert_eq!(normalize(-1001234567890), 1234567890);
         assert_eq!(normalize(-428985392), 428985392);
+    }
+
+    #[test]
+    fn the_migration_message_names_the_chat_it_came_from() {
+        assert_eq!(
+            parse_migrated_from("[supergroup created from chat \"Космическая тр💥йка\", chat 175562287]"),
+            Some(175562287)
+        );
+    }
+
+    #[test]
+    fn anything_else_names_nothing() {
+        assert_eq!(parse_migrated_from("[migrated to supergroup 1149242811]"), None);
+        assert_eq!(parse_migrated_from(""), None);
+        assert_eq!(
+            parse_migrated_from("[supergroup created from chat \"x\", chat nowhere]"),
+            None
+        );
     }
 }
