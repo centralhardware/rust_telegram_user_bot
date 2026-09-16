@@ -930,6 +930,27 @@ struct Read {
     error: Option<String>,
 }
 
+/// The highest id under `anchor` that still exists, out of `messages.getHistory`.
+///
+/// Only for the case the search cannot answer: an empty page where the walk has
+/// read nothing yet. getHistory returns the next message that is really there
+/// however wide the deleted stretch under the anchor is, and nothing at all when
+/// the anchor is the start of the history.
+///
+/// It is not filtered to this account for a `mine` walk: what comes back is used
+/// as a place to re-anchor the search, and the search does its own filtering.
+async fn next_id_below(client: &Client, peer: PeerRef, anchor: i64) -> Option<i64> {
+    let mut history = client.iter_messages(peer).offset_id(anchor as i32).limit(1);
+    match history.next().await {
+        Ok(Some(message)) => Some(message.id() as i64),
+        Ok(None) => None,
+        Err(e) => {
+            warn!("backfill: reading the history under {anchor}: {e}");
+            None
+        }
+    }
+}
+
 /// Walk one stretch of a chat's history, newest-first, writing every message the
 /// log is missing.
 ///
@@ -937,11 +958,13 @@ struct Read {
 /// once it is past `floor`, which is the top of a range already covered. With
 /// `floor` at 0 it runs to the start of the history.
 ///
-/// A search that runs out of messages is re-anchored at the lowest id it read
-/// before that is believed: Telegram answers a page with nothing in it when a
-/// wide stretch of the history under the offset has been deleted, and taking
-/// that for the start of the history seals the rest of it away — the range is
-/// recorded as complete and no later walk ever goes back under it.
+/// A search that runs out of messages is re-anchored before that is believed:
+/// Telegram answers a page with nothing in it when a wide stretch of the history
+/// under the offset has been deleted, and taking that for the start of the
+/// history seals the rest of it away — the range is recorded as complete and no
+/// later walk ever goes back under it. Re-anchoring is at the lowest id read, or,
+/// for a segment whose very first page came back empty, at whatever
+/// `next_id_below` finds under the offset it started at.
 #[allow(clippy::too_many_arguments)]
 async fn walk(
     client: &Client,
@@ -980,20 +1003,47 @@ async fn walk(
             // The search says it is out of messages, which is not the same as
             // the history being out of messages: `messages.Search` hands back an
             // empty page when a wide enough stretch under the offset is deleted,
-            // and the iterator reports that as the end. Re-anchoring at the
-            // lowest id read asks Telegram for what lies under that stretch, and
-            // only an anchored search that comes back empty too is the bottom.
-            Ok(None) if read.lowest > 0 && read.lowest != resumed_at => {
-                resumed_at = read.lowest;
-                debug!(
-                    "backfill {chat_id}: search ran out at {}, re-anchoring under it",
+            // and the iterator reports that as the end.
+            //
+            // Re-anchoring asks Telegram for what lies under that stretch. The
+            // id to re-anchor at is the lowest one read, or — when the segment
+            // read nothing at all, which is what an anchored segment starting on
+            // top of such a stretch does — the id it was anchored at. That
+            // second case cannot be re-anchored by the search alone: anchoring
+            // again where it already was returns the same empty page. So the
+            // next id that really exists under the anchor is asked of
+            // `messages.getHistory`, which walks the history itself and has no
+            // such quirk, and only an empty answer from it is the bottom.
+            Ok(None) => {
+                let anchor = if read.lowest > 0 {
                     read.lowest
-                );
+                } else {
+                    offset_id
+                };
+                if anchor == 0 || anchor == resumed_at {
+                    break;
+                }
+                resumed_at = anchor;
+                debug!("backfill {chat_id}: search ran out at {anchor}, looking under it");
                 tokio::time::sleep(REQUEST_GAP).await;
-                search = anchored(read.lowest);
-                continue;
+                if read.lowest > 0 {
+                    search = anchored(anchor);
+                    continue;
+                }
+                match next_id_below(client, peer, anchor).await {
+                    // `offset_id` is exclusive, so the search is anchored one
+                    // above the id it must read first.
+                    Some(next) if floor == 0 || next > floor => {
+                        debug!(
+                            "backfill {chat_id}: nothing under {anchor} in search, \
+                             resuming at {next}"
+                        );
+                        search = anchored(next + 1);
+                        continue;
+                    }
+                    _ => break,
+                }
             }
-            Ok(None) => break,
             Err(e) => {
                 read.error = Some(e.to_string());
                 break;
