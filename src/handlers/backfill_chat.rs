@@ -218,11 +218,6 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
         },
     };
 
-    if crate::utils::log_ignore::is_log_ignored(chat_id) {
-        reply(message, "backfill: that chat is in LOG_IGNORE_CHATS").await;
-        return true;
-    }
-
     if mark {
         if full {
             reply(message, "backfill: `mark` and `full` are opposites").await;
