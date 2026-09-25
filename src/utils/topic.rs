@@ -9,6 +9,8 @@ use tokio::sync::Mutex;
 static TOPIC_NAMES: LazyLock<Mutex<HashMap<(i64, i32), String>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+const CACHE_LIMIT: usize = 10_000;
+
 /// The topic a message was posted in, ready for the `events_log` row: its id and
 /// its title, or `(0, "")` outside a forum topic.
 pub async fn topic_of(client: &Client, message: &Message) -> (i32, String) {
@@ -37,7 +39,12 @@ pub async fn topic_name(client: &Client, message: &Message) -> String {
     // Only cache a real title: a failed fetch (offline, no access) must not
     // pin an empty name onto the topic for the rest of the process's life.
     if !name.is_empty() {
-        TOPIC_NAMES.lock().await.insert((chat_id, topic_id), name.clone());
+        let mut names = TOPIC_NAMES.lock().await;
+        // Bounded by starting over: a dropped title is one more lookup.
+        if names.len() >= CACHE_LIMIT {
+            names.clear();
+        }
+        names.insert((chat_id, topic_id), name.clone());
     }
     name
 }
