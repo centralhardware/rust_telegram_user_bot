@@ -44,26 +44,17 @@
 //! deleted, it is still in the dialog list and Telegram usually still answers
 //! for its history. The ones it refuses are counted, not guessed at in advance.
 //!
-//! A supergroup made from a basic group is walked as two chats: the messages
-//! said before the migration stayed in the old chat, under its own id, and that
-//! chat is in no dialog list. Every backfill of a supergroup asks Telegram what
-//! it was made from and walks that chat after it, on its own recorded range —
-//! and writes the pair to `chat_migrations`, since `events_log` holds the two
-//! halves as unrelated chats and nothing else says they are one conversation.
-//!
 //! `new` reads the dialog list and backfills the chats `events_log` holds no row
 //! for at all — the ones that existed before the bot did and have been silent
 //! since. A chat with even one row in the log is left alone: it is the `<chat_id>`
 //! form's job, which walks a history the log already reaches into.
 
-use clickhouse::Row;
 use grammers_client::Client;
 use grammers_client::message::Message;
 use grammers_session::Session;
-use grammers_session::types::{PeerId, PeerInfo, PeerKind, PeerRef};
+use grammers_session::types::{PeerId, PeerInfo, PeerRef};
 use grammers_tl_types as tl;
 use log::{debug, info, warn};
-use serde::Serialize;
 use std::collections::HashSet;
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -72,10 +63,8 @@ use tokio::task::JoinSet;
 
 use crate::db::Event;
 
-mod migration;
 mod new;
 mod walk;
-use migration::*;
 use new::*;
 use walk::*;
 
@@ -236,7 +225,7 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
     let client = client.clone();
     tokio::spawn(async move {
         let bot_chat = is_bot_chat(peer).await;
-        let outcome = run(
+        let outcome = walk_chat(
             &client,
             peer,
             chat_id,
@@ -304,7 +293,7 @@ pub(super) async fn reply(message: &Message, text: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_health_check, normalize, parse_migrated_from};
+    use super::{is_health_check, normalize};
 
     #[test]
     fn the_health_check_is_the_command_and_its_answer() {
@@ -333,23 +322,5 @@ mod tests {
     fn the_form_telegram_apps_show_becomes_the_one_the_log_stores() {
         assert_eq!(normalize(-1001234567890), 1234567890);
         assert_eq!(normalize(-428985392), 428985392);
-    }
-
-    #[test]
-    fn the_migration_message_names_the_chat_it_came_from() {
-        assert_eq!(
-            parse_migrated_from("[supergroup created from chat \"Космическая тр💥йка\", chat 175562287]"),
-            Some(175562287)
-        );
-    }
-
-    #[test]
-    fn anything_else_names_nothing() {
-        assert_eq!(parse_migrated_from("[migrated to supergroup 1149242811]"), None);
-        assert_eq!(parse_migrated_from(""), None);
-        assert_eq!(
-            parse_migrated_from("[supergroup created from chat \"x\", chat nowhere]"),
-            None
-        );
     }
 }

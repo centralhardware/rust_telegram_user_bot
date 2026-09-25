@@ -132,7 +132,7 @@ pub(super) async fn run_new(
                 ))
                 .await;
         }
-        let outcome = run(
+        let outcome = walk_chat(
             client,
             dialog.peer,
             dialog.chat_id,
