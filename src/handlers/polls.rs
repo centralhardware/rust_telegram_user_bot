@@ -154,6 +154,10 @@ static LAST_COUNTS: LazyLock<Mutex<HashMap<i64, Vec<(String, u32)>>>> =
 /// first time.
 fn changed_options(poll_id: i64, counts: &[(String, u32)]) -> Vec<bool> {
     let mut last = LAST_COUNTS.lock().unwrap_or_else(|e| e.into_inner());
+    // Bounded by starting over: a forgotten poll just prints in full once.
+    if last.len() >= 10_000 && !last.contains_key(&poll_id) {
+        last.clear();
+    }
     let previous = last.insert(poll_id, counts.to_vec());
     counts
         .iter()
