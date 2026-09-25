@@ -41,8 +41,6 @@ async fn main() -> Result<()> {
         log::error!("{}\n{}", info, backtrace);
     }));
 
-    db::replay_spool().await;
-
     let (client, mut updates): (grammers_client::Client, _) = session::connect().await?;
 
     log::info!("Listening for messages...");
