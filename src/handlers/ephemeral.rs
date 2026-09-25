@@ -51,7 +51,7 @@ pub async fn save_ephemeral(message: &tl::enums::EphemeralMessage, event: &str) 
             msg.id,
             chat_short,
             sender_short,
-            &text
+            text
         );
     }
 

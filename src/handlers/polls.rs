@@ -75,8 +75,8 @@ pub async fn save_poll(update: &tl::types::UpdateMessagePoll) {
     // was voted on rather than leaving the reader an id and a row of indexes.
     let mut chat_title = String::new();
     let mut message_id = update.msg_id.unwrap_or(0) as i64;
-    if question.is_empty() || peer.is_none() || message_id == 0 {
-        if let Some(info) = poll_info::load(update.poll_id).await {
+    if (question.is_empty() || peer.is_none() || message_id == 0)
+        && let Some(info) = poll_info::load(update.poll_id).await {
             if question.is_empty() {
                 question = info.question;
                 options = info.options;
@@ -89,7 +89,6 @@ pub async fn save_poll(update: &tl::types::UpdateMessagePoll) {
             }
             chat_title = info.chat_title;
         }
-    }
 
     if !is_log_ignored(chat_id) {
         let title = match &peer {
