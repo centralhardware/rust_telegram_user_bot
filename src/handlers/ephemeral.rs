@@ -17,7 +17,7 @@ use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;
 use log::info;
 
-use crate::db::{Event, log_event};
+use crate::db::{log_event, Event};
 use crate::utils::log_ignore::is_log_ignored;
 use crate::utils::peer_names;
 
@@ -111,10 +111,7 @@ pub async fn save_ephemeral_deleted(peer: &tl::enums::Peer, ids: &[i32]) {
 /// text with its entities, with the media description and the buttons around it
 /// exactly as an ordinary message gets them.
 fn body(msg: &tl::types::EphemeralMessage) -> String {
-    let rich = msg
-        .rich_message
-        .as_ref()
-        .and_then(crate::utils::rich_message::render);
+    let rich = msg.rich_message.as_ref().and_then(crate::utils::rich_message::render);
     let text = match rich {
         Some(rich) => rich,
         None => crate::utils::format_entities::render(&msg.message, msg.entities.as_deref()),
@@ -148,10 +145,7 @@ fn body(msg: &tl::types::EphemeralMessage) -> String {
 /// standing in for it when there is none. The formatting and the buttons `body`
 /// renders in are columns of their own.
 fn stored_body(msg: &tl::types::EphemeralMessage) -> String {
-    let rich = msg
-        .rich_message
-        .as_ref()
-        .and_then(crate::utils::rich_message::render);
+    let rich = msg.rich_message.as_ref().and_then(crate::utils::rich_message::render);
     let text = rich.unwrap_or_else(|| msg.message.clone());
 
     let media = msg
