@@ -7,9 +7,9 @@
 //!
 //! It writes only what the log is missing, but it reads the whole history to
 //! find that out — the log's ids are full of holes that are not gaps, so they
-//! cannot say which stretch was already walked. `last` is the exception: it
-//! reads only what came after the newest message the log holds for the chat,
-//! and `from <message_id>` only what came after that one.
+//! cannot say which stretch was already walked. `last` picks up where an
+//! earlier walk stopped, under the oldest message the log holds for the chat,
+//! and `from <message_id>` starts under that one.
 //!
 //! Driven by `!backfill` typed into any chat, from this account:
 //!
@@ -21,9 +21,9 @@
 //! !backfill new          — every dialog the log has never seen, one after another
 //! !backfill new all
 //! !backfill new dry      — name what `new` would walk, and walk nothing
-//! !backfill <chat_id> all last  — only what came after the newest message
-//!                                  the log already holds for that chat
-//! !backfill <chat_id> all from <message_id>  — only what came after that message
+//! !backfill <chat_id> all last  — carry on down from the oldest message the
+//!                                  log already holds for that chat
+//! !backfill <chat_id> all from <message_id>  — walk down from that message
 //! ```
 //!
 //! Without `last` a walk reads the chat's whole history and writes whatever the
@@ -128,7 +128,7 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
     let mut mine_only = true;
     let mut wanted_chat: Option<i64> = None;
     let mut every_new = false;
-    let mut start = Start::Beginning;
+    let mut start = Start::Newest;
     let mut dry_run = false;
     let mut words = args.split_whitespace();
     while let Some(arg) = words.next() {
@@ -164,7 +164,7 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
             reply(message, "backfill: `new` takes no chat_id").await;
             return true;
         }
-        if start != Start::Beginning {
+        if start != Start::Newest {
             reply(
                 message,
                 "backfill: `last` and `from` make no sense with `new` — \

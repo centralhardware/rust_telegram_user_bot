@@ -40,7 +40,7 @@ pub(super) async fn next_id_below(client: &Client, peer: PeerRef, anchor: i64) -
 /// log is missing.
 ///
 /// Starts just under `offset_id` — 0 for the newest message there is — and stops
-/// once it is past `floor`, the newest id the log already holds for `last`. With
+/// once it is past `floor`. With
 /// `floor` at 0 it runs to the start of the history.
 ///
 /// A search that runs out of messages is re-anchored before that is believed:
@@ -240,7 +240,7 @@ pub(super) async fn run(
         false,
         // An exact id belongs to the supergroup, not to the chat it came from.
         match start {
-            Start::From(_) => Start::Beginning,
+            Start::From(_) => Start::Newest,
             other => other,
         },
         status,
@@ -262,9 +262,10 @@ pub(super) async fn run(
 /// Walk one chat's history, writing every message the log is missing. Returns
 /// the line to show for it.
 ///
-/// Reads the history newest first, down to where `start` says: the beginning
-/// of the chat, the newest message the log already holds for it (`last`), or an
-/// exact message id (`from <id>`).
+/// Reads the history newest first, down to its start. `start` says where to
+/// begin: the newest message there is, just under the oldest message the log
+/// already holds for the chat (`last` — carrying on where an earlier walk got
+/// to), or just under an exact message id (`from <id>`).
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn walk_chat(
     client: &Client,
@@ -275,9 +276,9 @@ pub(super) async fn walk_chat(
     start: Start,
     status: Option<&Message>,
 ) -> Outcome {
-    let floor = match start {
-        Start::Beginning => 0,
-        Start::Last => last_logged_id(chat_id).await,
+    let offset = match start {
+        Start::Newest => 0,
+        Start::Last => oldest_logged_id(chat_id).await,
         Start::From(id) => id,
     };
 
@@ -294,8 +295,8 @@ pub(super) async fn walk_chat(
         chat_id,
         mine_only,
         bot_chat,
+        offset,
         0,
-        floor,
         total,
         &mut written,
         status,
@@ -310,8 +311,8 @@ pub(super) async fn walk_chat(
     } else {
         String::new()
     };
-    let jumped = if floor > 0 {
-        format!(", from {floor} up")
+    let jumped = if offset > 0 {
+        format!(", from {offset} down")
     } else {
         String::new()
     };
@@ -476,11 +477,12 @@ pub(super) async fn flush(batch: &mut Vec<Event>, written: &mut usize) {
     batch.clear();
 }
 
-/// The newest message id the log holds for a chat, 0 when it holds none.
-async fn last_logged_id(chat_id: i64) -> i64 {
+/// The oldest message id the log holds for a chat, 0 (the newest message
+/// there is) when it holds none.
+async fn oldest_logged_id(chat_id: i64) -> i64 {
     crate::db::clickhouse()
         .query(&format!(
-            "SELECT max(message_id) FROM {} WHERE chat_id = ? AND event = ?",
+            "SELECT min(message_id) FROM {} WHERE chat_id = ? AND event = ?",
             crate::db::EVENTS
         ))
         .bind(chat_id)
@@ -488,18 +490,18 @@ async fn last_logged_id(chat_id: i64) -> i64 {
         .fetch_one::<i64>()
         .await
         .unwrap_or_else(|e| {
-            warn!("backfill: reading the last logged id of {chat_id}: {e}");
+            warn!("backfill: reading the oldest logged id of {chat_id}: {e}");
             0
         })
 }
 
-/// Where a walk stops going back.
+/// Where a walk begins; it always runs down to the start of the history.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(super) enum Start {
-    /// The start of the chat's history.
-    Beginning,
-    /// The newest message the log already holds for the chat.
+    /// The newest message in the chat.
+    Newest,
+    /// Just under the oldest message the log holds for the chat.
     Last,
-    /// Just above this message id.
+    /// Just under this message id.
     From(i64),
 }
