@@ -298,12 +298,11 @@ fn meta_of(media: &tl::enums::MessageMedia) -> MediaMeta {
             // the one the message actually shows.
             if let Some(tl::enums::Photo::Photo(photo)) = p.photo.as_ref() {
                 for size in &photo.sizes {
-                    if let tl::enums::PhotoSize::Size(s) = size {
-                        if (s.w as u32) > meta.width {
+                    if let tl::enums::PhotoSize::Size(s) = size
+                        && (s.w as u32) > meta.width {
                             meta.width = s.w.max(0) as u32;
                             meta.height = s.h.max(0) as u32;
                         }
-                    }
                 }
             }
         }

@@ -73,8 +73,8 @@ pub async fn save_poll(update: &tl::types::UpdateMessagePoll) {
     // was voted on rather than leaving the reader an id and a row of indexes.
     let mut chat_title = String::new();
     let mut message_id = update.msg_id.unwrap_or(0) as i64;
-    if question.is_empty() || peer.is_none() || message_id == 0 {
-        if let Some(info) = poll_info::load(update.poll_id).await {
+    if (question.is_empty() || peer.is_none() || message_id == 0)
+        && let Some(info) = poll_info::load(update.poll_id).await {
             if question.is_empty() {
                 question = info.question;
                 options = info.options;
@@ -87,7 +87,6 @@ pub async fn save_poll(update: &tl::types::UpdateMessagePoll) {
             }
             chat_title = info.chat_title;
         }
-    }
 
     if !is_log_ignored(chat_id) {
         let title = match &peer {
@@ -100,20 +99,15 @@ pub async fn save_poll(update: &tl::types::UpdateMessagePoll) {
             _ => update.poll_id.to_string(),
         };
         let chat_short: String = title.chars().take(25).collect();
-        let rendered = render_counts(&counts, &options);
-        let rendered = if question.is_empty() {
-            rendered
-        } else {
-            let q: String = question.replace('\n', " ").chars().take(40).collect();
-            format!("{q} \x1b[90m—\x1b[96m {rendered}")
-        };
+        let question: String = question.replace('\n', " ").chars().take(40).collect();
         info!(
             "\x1b[96m{:<8} {:>8} {:<25} \x1b[90m│\x1b[96m {}\x1b[0m",
-            "poll",
-            message_id,
-            chat_short,
-            rendered,
+            "poll", message_id, chat_short, question,
         );
+        // One option per line, under the question, so a long poll stays readable.
+        for line in render_counts(&counts, &options) {
+            info!("\x1b[96m{:<44}\x1b[90m│\x1b[96m   {line}\x1b[0m", "");
+        }
     }
 
     log_event(Event {
@@ -131,19 +125,18 @@ pub async fn save_poll(update: &tl::types::UpdateMessagePoll) {
     .await;
 }
 
-/// The counts as "wording×voters". The results come in the poll's own answer
+/// The counts as "wording × voters", one per option. The results come in the poll's own answer
 /// order, so the wording lines up by position; an option whose wording is not
 /// known — a poll whose message was never seen — keeps its key.
-fn render_counts(counts: &[(String, u32)], options: &[String]) -> String {
+fn render_counts(counts: &[(String, u32)], options: &[String]) -> Vec<String> {
     counts
         .iter()
         .enumerate()
         .map(|(i, (option, voters))| {
             let label = options.get(i).filter(|o| !o.is_empty()).unwrap_or(option);
-            format!("{label}×{voters}")
+            format!("{label} × {voters}")
         })
-        .collect::<Vec<_>>()
-        .join(" ")
+        .collect()
 }
 
 /// The option's own bytes when they are readable text — which is what a client
@@ -177,13 +170,13 @@ mod tests {
     #[test]
     fn a_count_is_shown_under_the_option_in_the_same_position() {
         let options = vec!["Yes".to_string(), "No".to_string()];
-        assert_eq!(render_counts(&counts(), &options), "Yes×8901 No×9144");
+        assert_eq!(render_counts(&counts(), &options), ["Yes × 8901", "No × 9144"]);
     }
 
     #[test]
     fn and_under_its_key_when_the_wording_is_not_known() {
-        assert_eq!(render_counts(&counts(), &[]), "0×8901 1×9144");
+        assert_eq!(render_counts(&counts(), &[]), ["0 × 8901", "1 × 9144"]);
         let partial = vec![String::new(), "No".to_string()];
-        assert_eq!(render_counts(&counts(), &partial), "0×8901 No×9144");
+        assert_eq!(render_counts(&counts(), &partial), ["0 × 8901", "No × 9144"]);
     }
 }

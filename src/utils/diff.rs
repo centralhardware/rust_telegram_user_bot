@@ -484,10 +484,9 @@ pub fn parse_patch(patch: &str) -> Option<Vec<Hunk>> {
             });
         } else if let Some(rest) = line.strip_prefix('-') {
             hunks.last_mut()?.removed = unescape_payload(rest);
-        } else if let Some(rest) = line.strip_prefix('+') {
-            hunks.last_mut()?.added = unescape_payload(rest);
         } else {
-            return None;
+            let rest = line.strip_prefix('+')?;
+            hunks.last_mut()?.added = unescape_payload(rest);
         }
     }
     Some(hunks)
