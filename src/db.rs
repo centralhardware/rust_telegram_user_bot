@@ -43,8 +43,8 @@ pub const EVENTS: &str = "events_log_buffer";
 /// written.
 ///
 /// A failed write is retried a few times; if ClickHouse is still unreachable
-/// the row is appended to the spool file, which `replay_spool` writes back on
-/// the next start, so an outage costs latency rather than rows.
+/// the row is appended to the spool file, which `replay_spool` writes back at
+/// startup and then once a minute, so an outage costs latency rather than rows.
 pub async fn log_event(event: Event) {
     let mut delay = std::time::Duration::from_millis(500);
     for attempt in 1..=INSERT_ATTEMPTS {
@@ -66,7 +66,7 @@ pub async fn log_event(event: Event) {
 const INSERT_ATTEMPTS: u32 = 3;
 
 fn spool_path() -> String {
-    std::env::var("EVENT_SPOOL").unwrap_or_else(|_| "events_spool.jsonl".to_string())
+    std::env::var("EVENT_SPOOL").unwrap_or_else(|_| "data/events_spool.jsonl".to_string())
 }
 
 static SPOOL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -78,10 +78,14 @@ async fn spool(event: &Event) {
         Err(e) => return log::error!("spool: cannot serialise the row: {e}"),
     };
     let _guard = SPOOL_LOCK.lock().await;
+    let path = spool_path();
+    if let Some(dir) = std::path::Path::new(&path).parent() {
+        let _ = tokio::fs::create_dir_all(dir).await;
+    }
     let file = tokio::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(spool_path())
+        .open(&path)
         .await;
     match file {
         Ok(mut f) => {
@@ -91,6 +95,19 @@ async fn spool(event: &Event) {
         }
         Err(e) => log::error!("spool: open failed, row lost: {e}"),
     }
+}
+
+/// Replay the spool once a minute, so rows come back as soon as ClickHouse
+/// does rather than at the next restart.
+pub fn start_spool_replay() {
+    tokio::spawn(async {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+        tick.tick().await;
+        loop {
+            tick.tick().await;
+            replay_spool().await;
+        }
+    });
 }
 
 /// Write the rows spooled during an outage back to ClickHouse. The file is

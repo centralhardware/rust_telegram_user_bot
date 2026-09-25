@@ -42,6 +42,7 @@ async fn main() -> Result<()> {
     }));
 
     db::replay_spool().await;
+    db::start_spool_replay();
 
     let (client, mut updates): (grammers_client::Client, _) = session::connect().await?;
 
