@@ -5,18 +5,11 @@
 //! This walks a chat's history through `messages.Search` and writes the rows the
 //! updates never delivered, so the log reaches back as far as Telegram does.
 //!
-//! It writes only what the log is missing. Which stretch of the history it has
-//! to read for that cannot be asked of `events_log`: its ids are full of holes
-//! that are not gaps — a deleted message, the health checks a backfill leaves
-//! out, everyone else's messages in a `mine` walk — and a floor drawn at the
-//! oldest stored id is wrong for the same reason, one reply backfilled in 2023
-//! sitting thousands of messages under everything else.
-//!
-//! So a walk records the contiguous id range it read in `backfill_state`, and
-//! the next one reads only around it: from the newest message down to the top of
-//! that range, and — if that walk never reached the start of the history — from
-//! its bottom downwards. A chat walked to the end and quiet since costs two
-//! requests instead of its whole history.
+//! It writes only what the log is missing, but it reads the whole history to
+//! find that out — the log's ids are full of holes that are not gaps, so they
+//! cannot say which stretch was already walked. `last` is the exception: it
+//! reads only what came after the newest message the log holds for the chat,
+//! and `from <message_id>` only what came after that one.
 //!
 //! Driven by `!backfill` typed into any chat, from this account:
 //!
@@ -28,19 +21,13 @@
 //! !backfill new          — every dialog the log has never seen, one after another
 //! !backfill new all
 //! !backfill new dry      — name what `new` would walk, and walk nothing
-//! !backfill <chat_id> full  — ignore what is recorded as walked, read it all
-//! !backfill <chat_id> mark  — record what the log holds as walked, without walking
-//! !backfill <chat_id> mark partial  — the same, forced to count as unfinished
+//! !backfill <chat_id> all last  — only what came after the newest message
+//!                                  the log already holds for that chat
+//! !backfill <chat_id> all from <message_id>  — only what came after that message
 //! ```
 //!
-//! `full` is the way back if a recorded range is ever wrong: it reads the whole
-//! history the way every backfill did before `backfill_state` existed, and
-//! records the range again at the end. `mark` is the other direction — it takes
-//! the range straight from the log for a chat that was walked before there was
-//! anywhere to write that down, so that walk is not owed twice. It stops the
-//! range where the stored ids stop being dense, so a walk that never finished is
-//! marked only as far as it actually got, and the next backfill resumes under
-//! there instead of reading it all again.
+//! Without `last` a walk reads the chat's whole history and writes whatever the
+//! log is missing; `last` is the cheap way to catch a chat up.
 //!
 //! `<chat_id>` is the id as `events_log` stores it, and the `-100…` form
 //! Telegram apps show is accepted too.
@@ -87,11 +74,9 @@ use crate::db::Event;
 
 mod migration;
 mod new;
-mod state;
 mod walk;
 use migration::*;
 use new::*;
-use state::*;
 use walk::*;
 
 /// Rows per ClickHouse insert. A backfill is thousands of messages at once, and
@@ -119,13 +104,6 @@ pub(super) const REQUEST_GAP: Duration = Duration::from_millis(500);
 /// read is one round trip made, and one gap owed.
 pub(super) const SEARCH_PAGE: usize = 100;
 
-/// The widest hole in a chat's stored ids that is still the ordinary kind: a
-/// message deleted, a message the log never had a reason to keep. Chats run to
-/// a couple of hundred missing ids in a row on that account alone. Anything
-/// wider is where an unfinished walk stopped, and `mark` draws the line above
-/// it rather than claiming the history under it.
-pub(super) const BIGGEST_ORDINARY_HOLE: i64 = 1_000;
-
 /// How many dialogs a page of `messages.getDialogs` asks for. Telegram's limit.
 pub(super) const DIALOG_PAGE: i32 = 100;
 
@@ -150,18 +128,22 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
     let mut mine_only = true;
     let mut wanted_chat: Option<i64> = None;
     let mut every_new = false;
-    let mut full = false;
-    let mut mark = false;
-    let mut partial = false;
+    let mut start = Start::Beginning;
     let mut dry_run = false;
-    for arg in args.split_whitespace() {
+    let mut words = args.split_whitespace();
+    while let Some(arg) = words.next() {
         match arg {
             "all" => mine_only = false,
             "mine" => mine_only = true,
             "new" => every_new = true,
-            "full" => full = true,
-            "mark" => mark = true,
-            "partial" => partial = true,
+            "last" => start = Start::Last,
+            "from" => match words.next().map(str::parse::<i64>) {
+                Some(Ok(id)) if id > 0 => start = Start::From(id),
+                _ => {
+                    reply(message, "backfill: `from` needs a message id").await;
+                    return true;
+                }
+            },
             "dry" => dry_run = true,
             other => match other.parse::<i64>() {
                 Ok(id) => wanted_chat = Some(id),
@@ -182,11 +164,11 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
             reply(message, "backfill: `new` takes no chat_id").await;
             return true;
         }
-        if full || mark {
+        if start != Start::Beginning {
             reply(
                 message,
-                "backfill: `full` and `mark` make no sense with `new` — \
-                 a chat `new` picks has never been walked",
+                "backfill: `last` and `from` make no sense with `new` — \
+                 a chat `new` picks has nothing logged",
             )
             .await;
             return true;
@@ -227,19 +209,6 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
         },
     };
 
-    if mark {
-        if full {
-            reply(message, "backfill: `mark` and `full` are opposites").await;
-            return true;
-        }
-        reply(message, &mark_walked(chat_id, mine_only, !partial).await).await;
-        return true;
-    }
-    if partial {
-        reply(message, "backfill: `partial` only means something with `mark`").await;
-        return true;
-    }
-
     {
         let mut running = RUNNING.lock().await;
         if !running.insert(chat_id) {
@@ -273,7 +242,7 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
             chat_id,
             mine_only,
             bot_chat,
-            full,
+            start,
             status.as_ref(),
         )
         .await;

@@ -138,9 +138,8 @@ pub(super) async fn run_new(
             dialog.chat_id,
             mine_only,
             dialog.bot,
-            // A dialog `new` picked has no row in the log and so nothing
-            // recorded as covered either.
-            false,
+            // A dialog `new` picked has no row in the log to start after.
+            Start::Beginning,
             status,
         )
         .await;
