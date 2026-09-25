@@ -40,7 +40,7 @@ pub(super) async fn next_id_below(client: &Client, peer: PeerRef, anchor: i64) -
 /// log is missing.
 ///
 /// Starts just under `offset_id` — 0 for the newest message there is — and stops
-/// once it is past `floor`, which is the top of a range already covered. With
+/// once it is past `floor`. With
 /// `floor` at 0 it runs to the start of the history.
 ///
 /// A search that runs out of messages is re-anchored before that is believed:
@@ -181,79 +181,13 @@ pub(super) async fn walk(
     read
 }
 
-/// Walk a chat's history and, when it is a supergroup, the basic group it was
-/// made from. Returns the line to show for the pair.
+/// Walk one chat's history, writing every message the log is missing. Returns
+/// the line to show for it.
 ///
-/// A supergroup made out of a basic group keeps none of that group's messages:
-/// they stay where they were said, under the old chat's id, and the supergroup's
-/// own history starts at the migration. The old chat is not in the dialog list
-/// either — Telegram shows the pair as one chat — so nothing else here would
-/// ever reach it, and every word said before the migration is out of the log for
-/// good. `channelFull.migrated_from_chat_id` names it, and it is walked after the
-/// supergroup, on its own id and with its own recorded range.
-pub(super) async fn run(
-    client: &Client,
-    peer: PeerRef,
-    chat_id: i64,
-    mine_only: bool,
-    bot_chat: bool,
-    full: bool,
-    status: Option<&Message>,
-) -> Outcome {
-    let mut outcome = walk_chat(client, peer, chat_id, mine_only, bot_chat, full, status).await;
-
-    let Some(old_id) = migrated_from(client, peer, chat_id).await else {
-        return outcome;
-    };
-    // Written down whether or not the walk below happens: `events_log` holds the
-    // two as unrelated chats, and this row is the only thing that says the
-    // history under `old_id` is the earlier half of this one.
-    record_migration(chat_id, old_id).await;
-    // A basic group needs no access hash: its bare id addresses it.
-    let old_peer = PeerId::chat_unchecked(old_id).to_ambient_ref();
-
-    if crate::utils::log_ignore::is_log_ignored(old_id) {
-        return outcome;
-    }
-    // The chat the supergroup came from is a chat like any other, and a walk of
-    // it may already be running under its own id.
-    if !RUNNING.lock().await.insert(old_id) {
-        outcome.line = format!(
-            "{}\nbackfill {chat_id}: made from chat {old_id}, left to the backfill already running for it",
-            outcome.line
-        );
-        return outcome;
-    }
-    if let Some(status) = status {
-        let _ = status
-            .edit(format!(
-                "backfill {chat_id}: made from chat {old_id}, walking it too…"
-            ))
-            .await;
-    }
-    tokio::time::sleep(REQUEST_GAP).await;
-    let before = walk_chat(client, old_peer, old_id, mine_only, false, full, status).await;
-    RUNNING.lock().await.remove(&old_id);
-
-    info!("\x1b[96m{:<8} {:>8} {}\x1b[0m", "backfill", old_id, before);
-    Outcome {
-        written: outcome.written + before.written,
-        refused: outcome.refused || before.refused,
-        line: format!(
-            "{}\nbackfill {chat_id}: made from chat {old_id} — {}",
-            outcome.line,
-            before.line.trim_start_matches(&format!("backfill {old_id}: "))
-        ),
-    }
-}
-
-/// Walk one chat's history, writing every message the log is missing, and skip
-/// whatever an earlier walk already covered. Returns the line to show for it.
-///
-/// Two stretches at most: from the newest message down to the top of the covered
-/// range, then — only if that earlier walk never reached the start of the history
-/// — from its bottom downwards. `full` ignores the covered range and reads
-/// everything, which is the way back if a recorded range is ever wrong.
+/// Reads the history newest first, down to its start. `start` says where to
+/// begin: the newest message there is, just under the oldest message the log
+/// already holds for the chat (`last` — carrying on where an earlier walk got
+/// to), or just under an exact message id (`from <id>`).
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn walk_chat(
     client: &Client,
@@ -261,13 +195,13 @@ pub(super) async fn walk_chat(
     chat_id: i64,
     mine_only: bool,
     bot_chat: bool,
-    full: bool,
+    start: Start,
     status: Option<&Message>,
 ) -> Outcome {
-    let known = if full {
-        None
-    } else {
-        covered(chat_id, mine_only).await
+    let offset = match start {
+        Start::Newest => 0,
+        Start::Last => oldest_logged_id(chat_id).await,
+        Start::From(id) => id,
     };
 
     let mut counter = client.search_messages(peer);
@@ -277,86 +211,32 @@ pub(super) async fn walk_chat(
     let total = counter.total().await.unwrap_or(0);
 
     let mut written = 0usize;
-
-    // Above the covered range: the messages that arrived since it was walked.
-    let above = walk(
+    let read = walk(
         client,
         peer,
         chat_id,
         mine_only,
         bot_chat,
+        offset,
         0,
-        known.map_or(0, |c| c.max_id),
         total,
         &mut written,
         status,
     )
     .await;
-
-    // Below it, when the earlier walk stopped short of the start of the history.
-    let below = match known {
-        Some(c) if !c.complete && above.error.is_none() => {
-            tokio::time::sleep(REQUEST_GAP).await;
-            walk(
-                client,
-                peer,
-                chat_id,
-                mine_only,
-                bot_chat,
-                c.min_id,
-                0,
-                total,
-                &mut written,
-                status,
-            )
-            .await
-        }
-        _ => Read::default(),
-    };
-
-    let seen = above.seen + below.seen;
-    let pinged = above.pinged + below.pinged;
-    let error = above.error.clone().or_else(|| below.error.clone());
-
-    // What is covered now. A stretch that ended on a refusal still covers what
-    // it read, as long as it joins onto the range already recorded — a walk cut
-    // short above it leaves a hole in between, and a range claiming that hole
-    // would hide it from every later walk.
-    let now = match (known, above.highest, below.lowest) {
-        (None, 0, _) => None,
-        (None, high, _) => Some(Covered {
-            min_id: above.lowest,
-            max_id: high,
-            complete: above.error.is_none(),
-        }),
-        (Some(c), high, low) => {
-            let joins = high == 0 || above.lowest <= c.max_id + 1;
-            let reached_bottom = below.seen > 0 && below.error.is_none();
-            joins.then_some(Covered {
-                min_id: if low > 0 { low.min(c.min_id) } else { c.min_id },
-                max_id: c.max_id.max(high),
-                complete: c.complete || reached_bottom,
-            })
-        }
-    };
-    if let Some(now) = now
-        && seen > 0
-    {
-        record(chat_id, mine_only, now, seen as u64).await;
-    }
+    let seen = read.seen;
+    let pinged = read.pinged;
+    let error = read.error;
 
     let health = if pinged > 0 {
         format!(", {pinged} health checks left out")
     } else {
         String::new()
     };
-    // What the covered range spared this walk. Said as the range itself, not as
-    // a count: `total` is every message Telegram has for the chat, and
-    // `total - seen` would call the whole of it walked on the word of a range
-    // that may cover a fraction.
-    let jumped = match known {
-        Some(c) => format!(", {}..{} already walked", c.min_id, c.max_id),
-        None => String::new(),
+    let jumped = if offset > 0 {
+        format!(", from {offset} down")
+    } else {
+        String::new()
     };
 
     if let Some(e) = error {
@@ -517,4 +397,33 @@ pub(super) async fn flush(batch: &mut Vec<Event>, written: &mut usize) {
         Err(e) => warn!("backfill: insert: {e}"),
     }
     batch.clear();
+}
+
+/// The oldest message id the log holds for a chat, 0 (the newest message
+/// there is) when it holds none.
+async fn oldest_logged_id(chat_id: i64) -> i64 {
+    crate::db::clickhouse()
+        .query(&format!(
+            "SELECT min(message_id) FROM {} WHERE chat_id = ? AND event = ?",
+            crate::db::EVENTS
+        ))
+        .bind(chat_id)
+        .bind(crate::db::SEND)
+        .fetch_one::<i64>()
+        .await
+        .unwrap_or_else(|e| {
+            warn!("backfill: reading the oldest logged id of {chat_id}: {e}");
+            0
+        })
+}
+
+/// Where a walk begins; it always runs down to the start of the history.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) enum Start {
+    /// The newest message in the chat.
+    Newest,
+    /// Just under the oldest message the log holds for the chat.
+    Last,
+    /// Just under this message id.
+    From(i64),
 }

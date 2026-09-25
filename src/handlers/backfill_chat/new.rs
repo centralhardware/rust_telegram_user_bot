@@ -132,15 +132,14 @@ pub(super) async fn run_new(
                 ))
                 .await;
         }
-        let outcome = run(
+        let outcome = walk_chat(
             client,
             dialog.peer,
             dialog.chat_id,
             mine_only,
             dialog.bot,
-            // A dialog `new` picked has no row in the log and so nothing
-            // recorded as covered either.
-            false,
+            // A dialog `new` picked has no row in the log to carry on from.
+            Start::Newest,
             status,
         )
         .await;

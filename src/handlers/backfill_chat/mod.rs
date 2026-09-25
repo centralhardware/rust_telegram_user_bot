@@ -5,18 +5,11 @@
 //! This walks a chat's history through `messages.Search` and writes the rows the
 //! updates never delivered, so the log reaches back as far as Telegram does.
 //!
-//! It writes only what the log is missing. Which stretch of the history it has
-//! to read for that cannot be asked of `events_log`: its ids are full of holes
-//! that are not gaps — a deleted message, the health checks a backfill leaves
-//! out, everyone else's messages in a `mine` walk — and a floor drawn at the
-//! oldest stored id is wrong for the same reason, one reply backfilled in 2023
-//! sitting thousands of messages under everything else.
-//!
-//! So a walk records the contiguous id range it read in `backfill_state`, and
-//! the next one reads only around it: from the newest message down to the top of
-//! that range, and — if that walk never reached the start of the history — from
-//! its bottom downwards. A chat walked to the end and quiet since costs two
-//! requests instead of its whole history.
+//! It writes only what the log is missing, but it reads the whole history to
+//! find that out — the log's ids are full of holes that are not gaps, so they
+//! cannot say which stretch was already walked. `last` picks up where an
+//! earlier walk stopped, under the oldest message the log holds for the chat,
+//! and `from <message_id>` starts under that one.
 //!
 //! Driven by `!backfill` typed into any chat, from this account:
 //!
@@ -28,19 +21,13 @@
 //! !backfill new          — every dialog the log has never seen, one after another
 //! !backfill new all
 //! !backfill new dry      — name what `new` would walk, and walk nothing
-//! !backfill <chat_id> full  — ignore what is recorded as walked, read it all
-//! !backfill <chat_id> mark  — record what the log holds as walked, without walking
-//! !backfill <chat_id> mark partial  — the same, forced to count as unfinished
+//! !backfill <chat_id> all last  — carry on down from the oldest message the
+//!                                  log already holds for that chat
+//! !backfill <chat_id> all from <message_id>  — walk down from that message
 //! ```
 //!
-//! `full` is the way back if a recorded range is ever wrong: it reads the whole
-//! history the way every backfill did before `backfill_state` existed, and
-//! records the range again at the end. `mark` is the other direction — it takes
-//! the range straight from the log for a chat that was walked before there was
-//! anywhere to write that down, so that walk is not owed twice. It stops the
-//! range where the stored ids stop being dense, so a walk that never finished is
-//! marked only as far as it actually got, and the next backfill resumes under
-//! there instead of reading it all again.
+//! Without `last` a walk reads the chat's whole history and writes whatever the
+//! log is missing; `last` is the cheap way to catch a chat up.
 //!
 //! `<chat_id>` is the id as `events_log` stores it, and the `-100…` form
 //! Telegram apps show is accepted too.
@@ -57,26 +44,17 @@
 //! deleted, it is still in the dialog list and Telegram usually still answers
 //! for its history. The ones it refuses are counted, not guessed at in advance.
 //!
-//! A supergroup made from a basic group is walked as two chats: the messages
-//! said before the migration stayed in the old chat, under its own id, and that
-//! chat is in no dialog list. Every backfill of a supergroup asks Telegram what
-//! it was made from and walks that chat after it, on its own recorded range —
-//! and writes the pair to `chat_migrations`, since `events_log` holds the two
-//! halves as unrelated chats and nothing else says they are one conversation.
-//!
 //! `new` reads the dialog list and backfills the chats `events_log` holds no row
 //! for at all — the ones that existed before the bot did and have been silent
 //! since. A chat with even one row in the log is left alone: it is the `<chat_id>`
 //! form's job, which walks a history the log already reaches into.
 
-use clickhouse::Row;
 use grammers_client::Client;
 use grammers_client::message::Message;
 use grammers_session::Session;
-use grammers_session::types::{PeerId, PeerInfo, PeerKind, PeerRef};
+use grammers_session::types::{PeerId, PeerInfo, PeerRef};
 use grammers_tl_types as tl;
 use log::{debug, info, warn};
-use serde::Serialize;
 use std::collections::HashSet;
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -85,13 +63,9 @@ use tokio::task::JoinSet;
 
 use crate::db::Event;
 
-mod migration;
 mod new;
-mod state;
 mod walk;
-use migration::*;
 use new::*;
-use state::*;
 use walk::*;
 
 /// Rows per ClickHouse insert. A backfill is thousands of messages at once, and
@@ -119,13 +93,6 @@ pub(super) const REQUEST_GAP: Duration = Duration::from_millis(500);
 /// read is one round trip made, and one gap owed.
 pub(super) const SEARCH_PAGE: usize = 100;
 
-/// The widest hole in a chat's stored ids that is still the ordinary kind: a
-/// message deleted, a message the log never had a reason to keep. Chats run to
-/// a couple of hundred missing ids in a row on that account alone. Anything
-/// wider is where an unfinished walk stopped, and `mark` draws the line above
-/// it rather than claiming the history under it.
-pub(super) const BIGGEST_ORDINARY_HOLE: i64 = 1_000;
-
 /// How many dialogs a page of `messages.getDialogs` asks for. Telegram's limit.
 pub(super) const DIALOG_PAGE: i32 = 100;
 
@@ -150,18 +117,22 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
     let mut mine_only = true;
     let mut wanted_chat: Option<i64> = None;
     let mut every_new = false;
-    let mut full = false;
-    let mut mark = false;
-    let mut partial = false;
+    let mut start = Start::Newest;
     let mut dry_run = false;
-    for arg in args.split_whitespace() {
+    let mut words = args.split_whitespace();
+    while let Some(arg) = words.next() {
         match arg {
             "all" => mine_only = false,
             "mine" => mine_only = true,
             "new" => every_new = true,
-            "full" => full = true,
-            "mark" => mark = true,
-            "partial" => partial = true,
+            "last" => start = Start::Last,
+            "from" => match words.next().map(str::parse::<i64>) {
+                Some(Ok(id)) if id > 0 => start = Start::From(id),
+                _ => {
+                    reply(message, "backfill: `from` needs a message id").await;
+                    return true;
+                }
+            },
             "dry" => dry_run = true,
             other => match other.parse::<i64>() {
                 Ok(id) => wanted_chat = Some(id),
@@ -182,11 +153,11 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
             reply(message, "backfill: `new` takes no chat_id").await;
             return true;
         }
-        if full || mark {
+        if start != Start::Newest {
             reply(
                 message,
-                "backfill: `full` and `mark` make no sense with `new` — \
-                 a chat `new` picks has never been walked",
+                "backfill: `last` and `from` make no sense with `new` — \
+                 a chat `new` picks has nothing logged",
             )
             .await;
             return true;
@@ -227,19 +198,6 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
         },
     };
 
-    if mark {
-        if full {
-            reply(message, "backfill: `mark` and `full` are opposites").await;
-            return true;
-        }
-        reply(message, &mark_walked(chat_id, mine_only, !partial).await).await;
-        return true;
-    }
-    if partial {
-        reply(message, "backfill: `partial` only means something with `mark`").await;
-        return true;
-    }
-
     {
         let mut running = RUNNING.lock().await;
         if !running.insert(chat_id) {
@@ -267,13 +225,13 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
     let client = client.clone();
     tokio::spawn(async move {
         let bot_chat = is_bot_chat(peer).await;
-        let outcome = run(
+        let outcome = walk_chat(
             &client,
             peer,
             chat_id,
             mine_only,
             bot_chat,
-            full,
+            start,
             status.as_ref(),
         )
         .await;
@@ -335,7 +293,7 @@ pub(super) async fn reply(message: &Message, text: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_health_check, normalize, parse_migrated_from};
+    use super::{is_health_check, normalize};
 
     #[test]
     fn the_health_check_is_the_command_and_its_answer() {
@@ -364,23 +322,5 @@ mod tests {
     fn the_form_telegram_apps_show_becomes_the_one_the_log_stores() {
         assert_eq!(normalize(-1001234567890), 1234567890);
         assert_eq!(normalize(-428985392), 428985392);
-    }
-
-    #[test]
-    fn the_migration_message_names_the_chat_it_came_from() {
-        assert_eq!(
-            parse_migrated_from("[supergroup created from chat \"Космическая тр💥йка\", chat 175562287]"),
-            Some(175562287)
-        );
-    }
-
-    #[test]
-    fn anything_else_names_nothing() {
-        assert_eq!(parse_migrated_from("[migrated to supergroup 1149242811]"), None);
-        assert_eq!(parse_migrated_from(""), None);
-        assert_eq!(
-            parse_migrated_from("[supergroup created from chat \"x\", chat nowhere]"),
-            None
-        );
     }
 }
