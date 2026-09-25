@@ -227,7 +227,11 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
         return true;
     }
     if partial {
-        reply(message, "backfill: `partial` only means something with `mark`").await;
+        reply(
+            message,
+            "backfill: `partial` only means something with `mark`",
+        )
+        .await;
         return true;
     }
 
@@ -610,17 +614,15 @@ async fn folder_dialogs(
         // spoke is not the offset either, and the scan steps back to one that
         // can — at worst re-reading a dialog it has already seen, which the
         // `seen` set was there for.
-        let Some((offset_id, offset_date, offset_peer)) =
-            dialogs.iter().rev().find_map(|dialog| {
-                let (peer, top_message) = dialog_offset(dialog)?;
-                let peer = address(&peer, &chats, &users)?;
-                let date = messages
-                    .iter()
-                    .find(|m| m.id() == top_message)
-                    .and_then(message_date)?;
-                Some((top_message, date, peer))
-            })
-        else {
+        let Some((offset_id, offset_date, offset_peer)) = dialogs.iter().rev().find_map(|dialog| {
+            let (peer, top_message) = dialog_offset(dialog)?;
+            let peer = address(&peer, &chats, &users)?;
+            let date = messages
+                .iter()
+                .find(|m| m.id() == top_message)
+                .and_then(message_date)?;
+            Some((top_message, date, peer))
+        }) else {
             break;
         };
         // An offset that did not move would ask for the same page forever.
@@ -845,7 +847,9 @@ async fn mark_walked(chat_id: i64, mine_only: bool, finished: bool) -> String {
     } else {
         format!(" — the next backfill carries on below {min_id}")
     };
-    format!("backfill {chat_id}: marked {min_id}..{max_id} ({messages} rows, {whose}) as walked{found}. `full` to undo.")
+    format!(
+        "backfill {chat_id}: marked {min_id}..{max_id} ({messages} rows, {whose}) as walked{found}. `full` to undo."
+    )
 }
 
 /// The id range a finished walk has already read, out of `backfill_state`.
@@ -1158,7 +1162,9 @@ async fn run(
         line: format!(
             "{}\nbackfill {chat_id}: made from chat {old_id} — {}",
             outcome.line,
-            before.line.trim_start_matches(&format!("backfill {old_id}: "))
+            before
+                .line
+                .trim_start_matches(&format!("backfill {old_id}: "))
         ),
     }
 }
@@ -1584,14 +1590,19 @@ mod tests {
     #[test]
     fn the_migration_message_names_the_chat_it_came_from() {
         assert_eq!(
-            parse_migrated_from("[supergroup created from chat \"Космическая тр💥йка\", chat 175562287]"),
+            parse_migrated_from(
+                "[supergroup created from chat \"Космическая тр💥йка\", chat 175562287]"
+            ),
             Some(175562287)
         );
     }
 
     #[test]
     fn anything_else_names_nothing() {
-        assert_eq!(parse_migrated_from("[migrated to supergroup 1149242811]"), None);
+        assert_eq!(
+            parse_migrated_from("[migrated to supergroup 1149242811]"),
+            None
+        );
         assert_eq!(parse_migrated_from(""), None);
         assert_eq!(
             parse_migrated_from("[supergroup created from chat \"x\", chat nowhere]"),

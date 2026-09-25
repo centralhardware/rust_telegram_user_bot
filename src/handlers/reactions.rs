@@ -12,7 +12,7 @@ use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;
 use log::info;
 
-use crate::db::{log_event, Event};
+use crate::db::{Event, log_event};
 use crate::utils::log_ignore::is_log_ignored;
 
 pub async fn save_reactions(update: &tl::types::UpdateMessageReactions) {
