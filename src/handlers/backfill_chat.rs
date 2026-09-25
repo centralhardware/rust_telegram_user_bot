@@ -1078,8 +1078,8 @@ async fn walk(
         if read.seen % SEARCH_PAGE == 0 {
             tokio::time::sleep(REQUEST_GAP).await;
         }
-        if read.seen % PROGRESS_EVERY == 0 {
-            if let Some(status) = status {
+        if read.seen % PROGRESS_EVERY == 0
+            && let Some(status) = status {
                 let _ = status
                     .edit(format!(
                         "backfill {chat_id}: {}/{total} read, {written} written…",
@@ -1087,7 +1087,6 @@ async fn walk(
                     ))
                     .await;
             }
-        }
     }
 
     convert(client, chat_id, &mut pending, &mut batch).await;
