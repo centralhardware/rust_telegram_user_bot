@@ -20,13 +20,11 @@ pub fn is_message_ignored(msg: &str) -> bool {
     for keyword in ["Channel(", "Chat("] {
         if let Some(start) = msg.find(keyword) {
             let after = &msg[start + keyword.len()..];
-            if let Some(end) = after.find(')') {
-                if let Ok(id) = after[..end].parse::<i64>() {
-                    if IGNORED_CHAT_IDS.contains(&id) {
+            if let Some(end) = after.find(')')
+                && let Ok(id) = after[..end].parse::<i64>()
+                    && IGNORED_CHAT_IDS.contains(&id) {
                         return true;
                     }
-                }
-            }
         }
     }
     false
