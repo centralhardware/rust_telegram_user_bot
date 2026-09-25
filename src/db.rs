@@ -42,16 +42,14 @@ pub const EVENTS: &str = "events_log_buffer";
 /// the row is visible to the next lookup without waiting for a part to be
 /// written.
 ///
-/// A failed write is retried a few times; if ClickHouse is still unreachable
-/// the row is appended to the spool file, which `replay_spool` writes back on
-/// the next start, so an outage costs latency rather than rows.
+/// A failed write is retried a few times, which rides out a short hiccup.
 pub async fn log_event(event: Event) {
     let mut delay = std::time::Duration::from_millis(500);
     for attempt in 1..=INSERT_ATTEMPTS {
         match insert_rows(EVENTS, std::slice::from_ref(&event)).await {
             Ok(()) => return,
             Err(e) if attempt == INSERT_ATTEMPTS => {
-                log::error!("insert into {EVENTS}: {e}; spooling the row");
+                log::error!("insert into {EVENTS}: {e}");
             }
             Err(e) => {
                 log::warn!("insert into {EVENTS} (attempt {attempt}): {e}");
@@ -60,67 +58,9 @@ pub async fn log_event(event: Event) {
             }
         }
     }
-    spool(&event).await;
 }
 
 const INSERT_ATTEMPTS: u32 = 3;
-
-fn spool_path() -> String {
-    std::env::var("EVENT_SPOOL").unwrap_or_else(|_| "events_spool.jsonl".to_string())
-}
-
-static SPOOL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-async fn spool(event: &Event) {
-    use tokio::io::AsyncWriteExt;
-    let line = match serde_json::to_string(event) {
-        Ok(line) => line + "\n",
-        Err(e) => return log::error!("spool: cannot serialise the row: {e}"),
-    };
-    let _guard = SPOOL_LOCK.lock().await;
-    let file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(spool_path())
-        .await;
-    match file {
-        Ok(mut f) => {
-            if let Err(e) = f.write_all(line.as_bytes()).await {
-                log::error!("spool: write failed, row lost: {e}");
-            }
-        }
-        Err(e) => log::error!("spool: open failed, row lost: {e}"),
-    }
-}
-
-/// Write the rows spooled during an outage back to ClickHouse. The file is
-/// removed only once every row is in; on failure it stays for the next start.
-pub async fn replay_spool() {
-    let path = spool_path();
-    let _guard = SPOOL_LOCK.lock().await;
-    let Ok(text) = tokio::fs::read_to_string(&path).await else {
-        return;
-    };
-    let rows: Vec<Event> = text
-        .lines()
-        .filter_map(|l| match serde_json::from_str(l) {
-            Ok(row) => Some(row),
-            Err(e) => {
-                log::error!("spool: skipping unreadable row: {e}");
-                None
-            }
-        })
-        .collect();
-    match insert_rows(EVENTS, &rows).await {
-        Ok(()) => {
-            log::info!("spool: replayed {} rows", rows.len());
-            if let Err(e) = tokio::fs::remove_file(&path).await {
-                log::error!("spool: replayed but could not remove {path}: {e}");
-            }
-        }
-        Err(e) => log::error!("spool: replay failed, keeping {path}: {e}"),
-    }
-}
 
 pub const SEND: &str = "send";
 pub const EDIT: &str = "edit";
@@ -317,7 +257,7 @@ pub async fn resolve_reply(chat_id: i64, reply: &mut crate::utils::reply_target:
 /// what that media is in the `media_*` columns. A file archived to S3 is a row
 /// of its own — `file_uploaded`, carrying `sha256` / `s3_*` and the identity of
 /// the message it belongs to — so no row of this table is ever written twice.
-#[derive(Row, Serialize, Deserialize, Default, Clone)]
+#[derive(Row, Serialize, Default, Clone)]
 pub struct Event {
     pub date_time: u32,
     pub event: String,
@@ -615,20 +555,3 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod spool_tests {
-    use super::Event;
-
-    #[test]
-    fn a_row_survives_the_spool_round_trip() {
-        let event = Event {
-            chat_id: -100,
-            message: "hi\nthere".into(),
-            reactions: vec![("👍".into(), 3)],
-            ..Event::default()
-        };
-        let line = serde_json::to_string(&event).unwrap();
-        let back: Event = serde_json::from_str(&line).unwrap();
-        assert_eq!(serde_json::to_string(&back).unwrap(), line);
-    }
-}
