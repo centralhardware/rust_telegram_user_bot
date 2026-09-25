@@ -8,14 +8,26 @@ static CLICKHOUSE: LazyLock<Client> = LazyLock::new(|| {
         .with_user(std::env::var("CLICKHOUSE_USER").expect("CLICKHOUSE_USER not set"))
         .with_password(std::env::var("CLICKHOUSE_PASSWORD").expect("CLICKHOUSE_PASSWORD not set"))
         .with_database(std::env::var("CLICKHOUSE_DATABASE").expect("CLICKHOUSE_DATABASE not set"))
+        // Many small writes — one per event, one per update position — so the
+        // server batches them into parts. Not waiting for the flush: an insert
+        // returns once the server has the rows, and only a connection or
+        // parsing failure comes back as an error.
+        .with_setting("async_insert", "1")
+        .with_setting("wait_for_async_insert", "0")
 });
+
+/// Build the client now, so a missing setting stops the bot at startup rather
+/// than at the first write.
+pub fn init() {
+    LazyLock::force(&CLICKHOUSE);
+}
 
 pub fn clickhouse() -> &'static Client {
     &CLICKHOUSE
 }
 
 /// Write rows to a table. Nothing is queued here: `async_insert` on the client
-/// means the server holds the rows and decides when they become a part.
+/// (set above) means the server holds the rows and decides when they become a part.
 pub async fn insert_rows<T>(table: &str, rows: &[T]) -> Result<(), clickhouse::error::Error>
 where
     T: Serialize + Send + 'static,

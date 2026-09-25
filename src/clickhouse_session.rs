@@ -275,13 +275,7 @@ impl Session for ClickhouseSession {
     fn set_home_dc_id(&self, dc_id: i32) -> BoxFuture<'_, Result<(), Self::Error>> {
         self.cache.lock().unwrap_or_else(PoisonError::into_inner).home_dc = dc_id;
         Box::pin(async move {
-            if let Ok(mut ins) = clickhouse().insert::<DcHomeRow>("session_dc_home").await {
-                if let Err(e) = ins.write(&DcHomeRow { dc_id }).await {
-                    error!("failed to write home_dc to clickhouse: {e}");
-                } else if let Err(e) = ins.end().await {
-                    error!("failed to flush home_dc to clickhouse: {e}");
-                }
-            }
+            persist("session_dc_home", DcHomeRow { dc_id }).await;
             Ok(())
         })
     }
@@ -299,13 +293,7 @@ impl Session for ClickhouseSession {
 
         let row = dc_option_to_row(dc_option);
         Box::pin(async move {
-            if let Ok(mut ins) = clickhouse().insert::<DcOptionRow>("session_dc_option").await {
-                if let Err(e) = ins.write(&row).await {
-                    error!("failed to write dc_option to clickhouse: {e}");
-                } else if let Err(e) = ins.end().await {
-                    error!("failed to flush dc_option to clickhouse: {e}");
-                }
-            }
+            persist("session_dc_option", row).await;
             Ok(())
         })
     }
@@ -473,20 +461,12 @@ impl Session for ClickhouseSession {
             match &update {
                 UpdateState::All(state) => {
                     // Write full update_state
-                    if let Ok(mut ins) = clickhouse()
-                        .insert::<UpdateStateRow>("session_update_state")
-                        .await
-                    {
-                        let _ = ins
-                            .write(&UpdateStateRow {
+                    persist("session_update_state", UpdateStateRow {
                                 pts: state.pts,
                                 qts: state.qts,
                                 date: state.date,
                                 seq: state.seq,
-                            })
-                            .await;
-                        let _ = ins.end().await;
-                    }
+                            }).await;
 
                     // Replace all channel states: truncate + re-insert
                     if let Err(e) = clickhouse()
@@ -496,19 +476,17 @@ impl Session for ClickhouseSession {
                     {
                         warn!("failed to truncate channel_state: {e}");
                     }
-                    for ch in &state.channels {
-                        if let Ok(mut ins) = clickhouse()
-                            .insert::<ChannelStateRow>("session_channel_state")
-                            .await
-                        {
-                            let _ = ins
-                                .write(&ChannelStateRow {
-                                    peer_id: ch.id,
-                                    pts: ch.pts,
-                                })
-                                .await;
-                            let _ = ins.end().await;
-                        }
+                    // One insert for every channel, right after the truncate,
+                    // so the window with no channel state is a single round trip.
+                    let rows: Vec<ChannelStateRow> = state
+                        .channels
+                        .iter()
+                        .map(|ch| ChannelStateRow { peer_id: ch.id, pts: ch.pts })
+                        .collect();
+                    if let Err(e) =
+                        crate::db::insert_rows("session_channel_state", &rows).await
+                    {
+                        error!("failed to write session_channel_state: {e}");
                     }
                 }
                 UpdateState::Primary { pts, date, seq } => {
@@ -521,13 +499,7 @@ impl Session for ClickhouseSession {
                             seq: *seq,
                         }
                     };
-                    if let Ok(mut ins) = clickhouse()
-                        .insert::<UpdateStateRow>("session_update_state")
-                        .await
-                    {
-                        let _ = ins.write(&row).await;
-                        let _ = ins.end().await;
-                    }
+                    persist("session_update_state", row).await;
                 }
                 UpdateState::Secondary { qts } => {
                     let row = {
@@ -539,30 +511,28 @@ impl Session for ClickhouseSession {
                             seq: cache.updates.seq,
                         }
                     };
-                    if let Ok(mut ins) = clickhouse()
-                        .insert::<UpdateStateRow>("session_update_state")
-                        .await
-                    {
-                        let _ = ins.write(&row).await;
-                        let _ = ins.end().await;
-                    }
+                    persist("session_update_state", row).await;
                 }
                 UpdateState::Channel { id, pts } => {
-                    if let Ok(mut ins) = clickhouse()
-                        .insert::<ChannelStateRow>("session_channel_state")
-                        .await
-                    {
-                        let _ = ins
-                            .write(&ChannelStateRow {
+                    persist("session_channel_state", ChannelStateRow {
                                 peer_id: *id,
                                 pts: *pts,
-                            })
-                            .await;
-                        let _ = ins.end().await;
-                    }
+                            }).await;
                 }
             }
             Ok(())
         })
+    }
+}
+
+/// Write one session row, saying so when it fails: a lost update position
+/// means the next start resumes from an older one, and that should be visible.
+async fn persist<T>(table: &str, row: T)
+where
+    T: serde::Serialize + Send + 'static,
+    for<'a> T: clickhouse::Row<Value<'a> = T>,
+{
+    if let Err(e) = crate::db::insert_rows(table, std::slice::from_ref(&row)).await {
+        error!("failed to write {table}: {e}");
     }
 }
