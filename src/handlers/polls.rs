@@ -146,7 +146,9 @@ const QUESTION_WIDTH: usize = 40;
 const OPTION_WIDTH: usize = 30;
 
 /// Last counts seen per poll, so a busy poll prints only what moved.
-static LAST_COUNTS: LazyLock<Mutex<HashMap<i64, Vec<(String, u32)>>>> =
+type Counts = Vec<(String, u32)>;
+
+static LAST_COUNTS: LazyLock<Mutex<HashMap<i64, Counts>>> =
     LazyLock::new(Default::default);
 
 /// Which positions changed since this poll was last seen — all of them the
@@ -200,7 +202,7 @@ fn render_counts(
         .enumerate()
         .filter(|(i, _)| changed.get(*i).copied().unwrap_or(true))
         .map(|(_, ((_, voters), label))| {
-            let share = if total > 0 { voters * 100 / total } else { 0 };
+            let share = (voters * 100).checked_div(total).unwrap_or(0);
             let star = if top > 0 && *voters == top { " ★" } else { "" };
             format!("{label:<pad$} × {voters} ({share}%){star}")
         })
