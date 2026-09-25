@@ -20,11 +20,7 @@ pub fn format_markup(markup: &tl::enums::ReplyMarkup) -> Option<String> {
         }
     }
 
-    if lines.is_empty() {
-        None
-    } else {
-        Some(lines.join("\n"))
-    }
+    if lines.is_empty() { None } else { Some(lines.join("\n")) }
 }
 
 pub fn extract_reply_markup(update: &tl::enums::Update) -> Option<&tl::enums::ReplyMarkup> {

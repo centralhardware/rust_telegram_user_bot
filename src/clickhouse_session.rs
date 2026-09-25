@@ -98,9 +98,7 @@ impl ClickhouseSession {
 
         // Load updates state
         let updates = clickhouse()
-            .query(
-                "SELECT pts, qts, date, seq FROM session_update_state FINAL WHERE key = 1 LIMIT 1",
-            )
+            .query("SELECT pts, qts, date, seq FROM session_update_state FINAL WHERE key = 1 LIMIT 1")
             .fetch_one::<UpdateStateRow>()
             .await
             .ok()
@@ -300,10 +298,7 @@ impl Session for ClickhouseSession {
 
         let row = dc_option_to_row(dc_option);
         Box::pin(async move {
-            if let Ok(mut ins) = clickhouse()
-                .insert::<DcOptionRow>("session_dc_option")
-                .await
-            {
+            if let Ok(mut ins) = clickhouse().insert::<DcOptionRow>("session_dc_option").await {
                 if let Err(e) = ins.write(&row).await {
                     error!("failed to write dc_option to clickhouse: {e}");
                 } else if let Err(e) = ins.end().await {
@@ -464,10 +459,10 @@ impl Session for ClickhouseSession {
                         if let Some(ch) = cache.updates.channels.iter_mut().find(|c| c.id == *id) {
                             ch.pts = *pts;
                         } else {
-                            cache
-                                .updates
-                                .channels
-                                .push(ChannelState { id: *id, pts: *pts });
+                            cache.updates.channels.push(ChannelState {
+                                id: *id,
+                                pts: *pts,
+                            });
                         }
                     }
                 }

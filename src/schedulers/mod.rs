@@ -1,6 +1,6 @@
-mod admin_actions;
 mod health;
 mod user_sessions;
+mod admin_actions;
 
 use grammers_client::Client;
 
