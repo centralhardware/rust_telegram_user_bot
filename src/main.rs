@@ -41,6 +41,8 @@ async fn main() -> Result<()> {
         log::error!("{}\n{}", info, backtrace);
     }));
 
+    db::init();
+
     let (client, mut updates): (grammers_client::Client, _) = session::connect().await?;
 
     log::info!("Listening for messages...");
@@ -201,7 +203,8 @@ async fn handle(client: &grammers_client::Client, client_id: u64, update: Update
             tl::enums::Update::PinnedChannelMessages(u) => {
                 handlers::save_pinned(
                     u.channel_id,
-                    -1_000_000_000_000 - u.channel_id,
+                    grammers_client::session::types::PeerId::channel_unchecked(u.channel_id)
+                        .bot_api_dialog_id_unchecked(),
                     &u.messages,
                     u.pinned,
                 )
