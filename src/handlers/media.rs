@@ -106,15 +106,14 @@ async fn archive(
     };
     let media_type = job.event.media_type.as_str();
 
-    if let Some(size) = Downloadable::size(&job.media) {
-        if size as u64 > storage.max_bytes {
+    if let Some(size) = Downloadable::size(&job.media)
+        && size as u64 > storage.max_bytes {
             warn!(
                 "media archive: skipping {} B file in chat {} (limit {} B)",
                 size, job.event.chat_id, storage.max_bytes
             );
             return Ok(());
         }
-    }
 
     let mut bytes: Vec<u8> = Vec::new();
     let mut download = client.iter_download(&job.media);
