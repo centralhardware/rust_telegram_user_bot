@@ -17,7 +17,7 @@ use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;
 use log::info;
 
-use crate::db::{log_event, Event};
+use crate::db::{Event, log_event};
 use crate::utils::log_ignore::is_log_ignored;
 use crate::utils::peer_names::title_of;
 use crate::utils::poll_info;
@@ -109,10 +109,7 @@ pub async fn save_poll(update: &tl::types::UpdateMessagePoll) {
         };
         info!(
             "\x1b[96m{:<8} {:>8} {:<25} \x1b[90m│\x1b[96m {}\x1b[0m",
-            "poll",
-            message_id,
-            chat_short,
-            rendered,
+            "poll", message_id, chat_short, rendered,
         );
     }
 

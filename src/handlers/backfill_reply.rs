@@ -1,5 +1,5 @@
-use grammers_client::update::Message;
 use grammers_client::Client;
+use grammers_client::update::Message;
 use grammers_tl_types as tl;
 use log::{debug, info, warn};
 
@@ -48,7 +48,10 @@ pub async fn backfill_reply(client: &Client, message: &Message) {
     };
 
     if matches!(reply.raw, tl::enums::Message::Empty(_)) {
-        info!("reply_to {} is an empty message, skipping backfill", reply_id);
+        info!(
+            "reply_to {} is an empty message, skipping backfill",
+            reply_id
+        );
         return;
     }
 

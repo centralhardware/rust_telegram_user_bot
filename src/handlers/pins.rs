@@ -11,7 +11,7 @@
 
 use log::info;
 
-use crate::db::{log_event, Event};
+use crate::db::{Event, log_event};
 use crate::utils::log_ignore::is_log_ignored;
 use crate::utils::peer_names::title_of;
 

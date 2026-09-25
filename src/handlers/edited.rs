@@ -96,7 +96,8 @@ pub async fn save_edited(message: &Message) -> Result<(), Box<dyn std::error::Er
         poll_options: meta.poll_options,
         poll_id: meta.poll_id,
         ..Event::edit()
-    }).await;
+    })
+    .await;
 
     Ok(())
 }
