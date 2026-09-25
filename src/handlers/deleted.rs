@@ -36,7 +36,7 @@ pub async fn save_deleted(
                 msg_id,
                 title_short,
                 sender_short,
-                &message,
+                message,
             );
         }
 

@@ -34,7 +34,13 @@ pub async fn connect() -> Result<(Client, UpdateStream)> {
         updates,
     } = SenderPool::new(Arc::clone(&session), api_id);
     let client = Client::new(handle);
-    let _ = tokio::spawn(runner.run());
+    // The pool is what talks to Telegram; with it gone the bot would sit
+    // connected to nothing, so exit and let the restart policy bring it back.
+    tokio::spawn(async move {
+        runner.run().await;
+        log::error!("sender pool stopped, exiting");
+        std::process::exit(1);
+    });
 
     if !client.is_authorized().await? {
         sign_in(&client).await?;
@@ -45,7 +51,6 @@ pub async fn connect() -> Result<(Client, UpdateStream)> {
             updates,
             UpdatesConfiguration {
                 catch_up: false,
-                ..Default::default()
             },
         )
         .await
