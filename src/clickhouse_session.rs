@@ -1,3 +1,4 @@
+use std::sync::PoisonError;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -268,11 +269,11 @@ impl Session for ClickhouseSession {
     type Error = clickhouse::error::Error;
 
     fn home_dc_id(&self) -> Result<i32, Self::Error> {
-        Ok(self.cache.lock().unwrap().home_dc)
+        Ok(self.cache.lock().unwrap_or_else(PoisonError::into_inner).home_dc)
     }
 
     fn set_home_dc_id(&self, dc_id: i32) -> BoxFuture<'_, Result<(), Self::Error>> {
-        self.cache.lock().unwrap().home_dc = dc_id;
+        self.cache.lock().unwrap_or_else(PoisonError::into_inner).home_dc = dc_id;
         Box::pin(async move {
             if let Ok(mut ins) = clickhouse().insert::<DcHomeRow>("session_dc_home").await {
                 if let Err(e) = ins.write(&DcHomeRow { dc_id }).await {
@@ -286,13 +287,13 @@ impl Session for ClickhouseSession {
     }
 
     fn dc_option(&self, dc_id: i32) -> Result<Option<DcOption>, Self::Error> {
-        Ok(self.cache.lock().unwrap().dc_options.get(&dc_id).cloned())
+        Ok(self.cache.lock().unwrap_or_else(PoisonError::into_inner).dc_options.get(&dc_id).cloned())
     }
 
     fn set_dc_option(&self, dc_option: &DcOption) -> BoxFuture<'_, Result<(), Self::Error>> {
         self.cache
             .lock()
-            .unwrap()
+            .unwrap_or_else(PoisonError::into_inner)
             .dc_options
             .insert(dc_option.id, dc_option.clone());
 
@@ -435,14 +436,14 @@ impl Session for ClickhouseSession {
     }
 
     fn updates_state(&self) -> BoxFuture<'_, Result<UpdatesState, Self::Error>> {
-        Box::pin(async move { Ok(self.cache.lock().unwrap().updates.clone()) })
+        Box::pin(async move { Ok(self.cache.lock().unwrap_or_else(PoisonError::into_inner).updates.clone()) })
     }
 
     fn set_update_state(&self, update: UpdateState) -> BoxFuture<'_, Result<(), Self::Error>> {
         Box::pin(async move {
             // Update in-memory cache
             {
-                let mut cache = self.cache.lock().unwrap();
+                let mut cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
                 match &update {
                     UpdateState::All(state) => {
                         cache.updates = state.clone();
@@ -512,7 +513,7 @@ impl Session for ClickhouseSession {
                 }
                 UpdateState::Primary { pts, date, seq } => {
                     let row = {
-                        let cache = self.cache.lock().unwrap();
+                        let cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
                         UpdateStateRow {
                             pts: *pts,
                             qts: cache.updates.qts,
@@ -530,7 +531,7 @@ impl Session for ClickhouseSession {
                 }
                 UpdateState::Secondary { qts } => {
                     let row = {
-                        let cache = self.cache.lock().unwrap();
+                        let cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
                         UpdateStateRow {
                             pts: cache.updates.pts,
                             qts: *qts,
