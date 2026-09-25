@@ -435,7 +435,9 @@ fn action_values(action: &tl::enums::ChannelAdminLogEventAction) -> (String, Str
 ///
 /// A `true` flag means the right is taken away, so the same list reads both ways: what was
 /// restricted, and what was handed back.
-const RESTRICTIONS: [(&str, fn(&tl::types::ChatBannedRights) -> bool); 23] = [
+type RightCheck = fn(&tl::types::ChatBannedRights) -> bool;
+
+const RESTRICTIONS: [(&str, RightCheck); 23] = [
     ("view messages", |r| r.view_messages),
     ("send messages", |r| r.send_messages),
     ("send media", |r| r.send_media),
@@ -767,9 +769,9 @@ async fn log_admin_actions(
             info!(
                 "admin    {:>12} {:<25} {:<20} {:<20}\n{}",
                 log.event_id,
-                &log.chat_title.chars().take(25).collect::<String>(),
-                &log.action_type.chars().take(20).collect::<String>(),
-                &log.user_title.chars().take(20).collect::<String>(),
+                log.chat_title.chars().take(25).collect::<String>(),
+                log.action_type.chars().take(20).collect::<String>(),
+                log.user_title.chars().take(20).collect::<String>(),
                 console_output,
             );
 

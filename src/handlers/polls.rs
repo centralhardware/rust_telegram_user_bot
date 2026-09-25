@@ -16,6 +16,8 @@
 use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;
 use log::info;
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
 
 use crate::db::{log_event, Event};
 use crate::utils::log_ignore::is_log_ignored;
@@ -73,8 +75,8 @@ pub async fn save_poll(update: &tl::types::UpdateMessagePoll) {
     // was voted on rather than leaving the reader an id and a row of indexes.
     let mut chat_title = String::new();
     let mut message_id = update.msg_id.unwrap_or(0) as i64;
-    if question.is_empty() || peer.is_none() || message_id == 0 {
-        if let Some(info) = poll_info::load(update.poll_id).await {
+    if (question.is_empty() || peer.is_none() || message_id == 0)
+        && let Some(info) = poll_info::load(update.poll_id).await {
             if question.is_empty() {
                 question = info.question;
                 options = info.options;
@@ -87,7 +89,6 @@ pub async fn save_poll(update: &tl::types::UpdateMessagePoll) {
             }
             chat_title = info.chat_title;
         }
-    }
 
     if !is_log_ignored(chat_id) {
         let title = match &peer {
@@ -99,21 +100,27 @@ pub async fn save_poll(update: &tl::types::UpdateMessagePoll) {
             _ if !chat_title.is_empty() => chat_title.clone(),
             _ => update.poll_id.to_string(),
         };
-        let chat_short: String = title.chars().take(25).collect();
-        let rendered = render_counts(&counts, &options);
-        let rendered = if question.is_empty() {
-            rendered
-        } else {
-            let q: String = question.replace('\n', " ").chars().take(40).collect();
-            format!("{q} \x1b[90m—\x1b[96m {rendered}")
+        let chat_short = clip(&title, CHAT_WIDTH);
+        let question = match clip(&question, QUESTION_WIDTH) {
+            q if q.is_empty() => "(unknown question)".to_string(),
+            q => q,
         };
-        info!(
-            "\x1b[96m{:<8} {:>8} {:<25} \x1b[90m│\x1b[96m {}\x1b[0m",
-            "poll",
-            message_id,
-            chat_short,
-            rendered,
+        let total = results.total_voters.unwrap_or(0).max(0) as u32;
+        let changed = changed_options(update.poll_id, &counts);
+        let mut text = format!(
+            "\x1b[96m{:<KIND_WIDTH$} {:>ID_WIDTH$} {:<CHAT_WIDTH$} \x1b[90m│\x1b[96m {question} \x1b[90m({total} voters)",
+            "poll", message_id, chat_short,
         );
+        // One record, so nothing else lands between a poll's lines; the
+        // continuation lines are indented past the logger's timestamp.
+        for line in render_counts(&counts, &options, total, &changed) {
+            text.push_str(&format!(
+                "\n{:<width$}\x1b[90m│\x1b[96m   {line}",
+                "",
+                width = TIMESTAMP_WIDTH + KIND_WIDTH + ID_WIDTH + CHAT_WIDTH + 3,
+            ));
+        }
+        info!("{text}\x1b[0m");
     }
 
     log_event(Event {
@@ -131,19 +138,75 @@ pub async fn save_poll(update: &tl::types::UpdateMessagePoll) {
     .await;
 }
 
-/// The counts as "wording×voters". The results come in the poll's own answer
-/// order, so the wording lines up by position; an option whose wording is not
-/// known — a poll whose message was never seen — keeps its key.
-fn render_counts(counts: &[(String, u32)], options: &[String]) -> String {
+const TIMESTAMP_WIDTH: usize = "[00:00:00] ".len();
+const KIND_WIDTH: usize = 8;
+const ID_WIDTH: usize = 8;
+const CHAT_WIDTH: usize = 25;
+const QUESTION_WIDTH: usize = 40;
+const OPTION_WIDTH: usize = 30;
+
+/// Last counts seen per poll, so a busy poll prints only what moved.
+type Counts = Vec<(String, u32)>;
+
+static LAST_COUNTS: LazyLock<Mutex<HashMap<i64, Counts>>> =
+    LazyLock::new(Default::default);
+
+/// Which positions changed since this poll was last seen — all of them the
+/// first time.
+fn changed_options(poll_id: i64, counts: &[(String, u32)]) -> Vec<bool> {
+    let mut last = LAST_COUNTS.lock().unwrap_or_else(|e| e.into_inner());
+    // Bounded by starting over: a forgotten poll just prints in full once.
+    if last.len() >= 10_000 && !last.contains_key(&poll_id) {
+        last.clear();
+    }
+    let previous = last.insert(poll_id, counts.to_vec());
     counts
         .iter()
+        .map(|c| previous.as_ref().is_none_or(|p| !p.contains(c)))
+        .collect()
+}
+
+/// One line, at most `width` characters, with an ellipsis when cut.
+fn clip(text: &str, width: usize) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= width {
+        flat
+    } else {
+        flat.chars().take(width - 1).chain(['…']).collect()
+    }
+}
+
+/// One "wording × voters (share)" line per changed option, the × column
+/// aligned and the leader starred. The results come in the poll's own answer
+/// order, so the wording lines up by position; an option whose wording is not
+/// known — a poll whose message was never seen — keeps its key.
+fn render_counts(
+    counts: &[(String, u32)],
+    options: &[String],
+    total: u32,
+    changed: &[bool],
+) -> Vec<String> {
+    let labels: Vec<String> = counts
+        .iter()
         .enumerate()
-        .map(|(i, (option, voters))| {
-            let label = options.get(i).filter(|o| !o.is_empty()).unwrap_or(option);
-            format!("{label}×{voters}")
+        .map(|(i, (key, _))| {
+            let label = options.get(i).filter(|o| !o.trim().is_empty()).unwrap_or(key);
+            clip(label, OPTION_WIDTH)
         })
-        .collect::<Vec<_>>()
-        .join(" ")
+        .collect();
+    let pad = labels.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+    let top = counts.iter().map(|(_, v)| *v).max().unwrap_or(0);
+    counts
+        .iter()
+        .zip(&labels)
+        .enumerate()
+        .filter(|(i, _)| changed.get(*i).copied().unwrap_or(true))
+        .map(|(_, ((_, voters), label))| {
+            let share = (voters * 100).checked_div(total).unwrap_or(0);
+            let star = if top > 0 && *voters == top { " ★" } else { "" };
+            format!("{label:<pad$} × {voters} ({share}%){star}")
+        })
+        .collect()
 }
 
 /// The option's own bytes when they are readable text — which is what a client
@@ -157,7 +220,7 @@ fn option_key(option: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{option_key, render_counts};
+    use super::{changed_options, clip, option_key, render_counts};
 
     #[test]
     fn an_option_is_keyed_by_its_bytes_as_text_when_they_are_text() {
@@ -177,13 +240,32 @@ mod tests {
     #[test]
     fn a_count_is_shown_under_the_option_in_the_same_position() {
         let options = vec!["Yes".to_string(), "No".to_string()];
-        assert_eq!(render_counts(&counts(), &options), "Yes×8901 No×9144");
+        assert_eq!(
+            render_counts(&counts(), &options, 18045, &[true, true]),
+            ["Yes × 8901 (49%)", "No  × 9144 (50%) ★"]
+        );
     }
 
     #[test]
     fn and_under_its_key_when_the_wording_is_not_known() {
-        assert_eq!(render_counts(&counts(), &[]), "0×8901 1×9144");
         let partial = vec![String::new(), "No".to_string()];
-        assert_eq!(render_counts(&counts(), &partial), "0×8901 No×9144");
+        assert_eq!(
+            render_counts(&counts(), &partial, 0, &[true, true]),
+            ["0  × 8901 (0%)", "No × 9144 (0%) ★"]
+        );
+    }
+
+    #[test]
+    fn only_changed_options_are_shown() {
+        assert_eq!(changed_options(-1, &counts()), [true, true]);
+        let next = vec![("0".into(), 8901), ("1".into(), 9145)];
+        assert_eq!(changed_options(-1, &next), [false, true]);
+        assert_eq!(render_counts(&next, &[], 0, &[false, true]).len(), 1);
+    }
+
+    #[test]
+    fn a_long_or_multiline_text_is_clipped_to_one_line() {
+        assert_eq!(clip("a\nb", 10), "a b");
+        assert_eq!(clip("abcdef", 4), "abc…");
     }
 }

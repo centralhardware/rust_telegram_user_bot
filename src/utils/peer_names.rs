@@ -201,6 +201,8 @@ const PEER_NAMES: &str = "peer_names_buffer";
 static WRITTEN: LazyLock<Mutex<HashMap<i64, PeerNames>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+const WRITTEN_LIMIT: usize = 100_000;
+
 /// Store a peer's names, unless this process has already stored exactly these.
 ///
 /// A name that changes is written again: the check is on the names themselves,
@@ -213,6 +215,11 @@ pub async fn remember(names: &PeerNames) {
             // would make every call a change and the check pointless.
             Some(seen) if same_names(seen, names) => return,
             _ => {
+                // Bounded by starting over: a forgotten peer costs one
+                // repeated write, which the ReplacingMergeTree collapses.
+                if written.len() >= WRITTEN_LIMIT {
+                    written.clear();
+                }
                 written.insert(names.peer_id, names.clone());
             }
         }
