@@ -1,5 +1,4 @@
 mod app;
-mod clickhouse_session;
 mod db;
 mod dispatch;
 mod events;

@@ -6,7 +6,7 @@ use std::env;
 use std::sync::Arc;
 
 use crate::Result;
-use crate::clickhouse_session::ClickhouseSession;
+use crate::db::session::ClickhouseSession;
 
 /// Connect, and hand back the session the client runs on as well, so the rest
 /// of the bot can ask it what it knows about a peer. Resolving a chat the account is not currently reading
