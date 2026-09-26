@@ -7,7 +7,7 @@ impl ClickhouseDb {
     pub(super) async fn log_events(&self, events: &[Event]) {
         let mut delay = std::time::Duration::from_millis(500);
         for attempt in 1..=INSERT_ATTEMPTS {
-            match insert_rows(&self.ch, EVENTS, events).await {
+            match self.insert(EVENTS, events).await {
                 Ok(()) => return,
                 Err(e) if attempt == INSERT_ATTEMPTS => {
                     error!("insert into {EVENTS}: {e}");
@@ -22,7 +22,7 @@ impl ClickhouseDb {
     }
 
     pub(super) async fn write_backfill(&self, events: &[Event]) -> DbResult<()> {
-        Ok(insert_rows(&self.ch, "events_log", events).await?)
+        Ok(self.insert("events_log", events).await?)
     }
 
     pub(super) async fn find_message(&self, chat_id: i64, message_id: i64) -> MessageInfo {

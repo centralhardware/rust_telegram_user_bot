@@ -2,6 +2,8 @@
 //! file per table; the trait impl below only routes to them.
 
 use std::collections::HashSet;
+use std::sync::{Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use clickhouse::{Client, Row};
@@ -17,6 +19,8 @@ use crate::state::poll_info::PollInfo;
 
 pub struct ClickhouseDb {
     ch: Client,
+    /// When inserts started failing, `None` while the last one went through.
+    failing_since: Mutex<Option<Instant>>,
 }
 
 impl ClickhouseDb {
@@ -35,7 +39,27 @@ impl ClickhouseDb {
             // parsing failure comes back as an error.
             .with_setting("async_insert", "1")
             .with_setting("wait_for_async_insert", "0");
-        ClickhouseDb { ch }
+        ClickhouseDb {
+            ch,
+            failing_since: Mutex::new(None),
+        }
+    }
+
+    /// Write rows, and remember whether it worked: see [`Db::writes_failing_for`].
+    async fn insert<T>(&self, table: &str, rows: &[T]) -> Result<(), clickhouse::error::Error>
+    where
+        T: Serialize + Send + 'static,
+        for<'a> T: Row<Value<'a> = T>,
+    {
+        let result = insert_rows(&self.ch, table, rows).await;
+        let mut since = self.failing_since.lock().unwrap_or_else(PoisonError::into_inner);
+        match &result {
+            Ok(()) => *since = None,
+            Err(_) => {
+                since.get_or_insert_with(Instant::now);
+            }
+        }
+        result
     }
 
     /// The raw client, for the session store, which is infrastructure rather
@@ -83,6 +107,13 @@ mod user_sessions;
 
 #[async_trait]
 impl Db for ClickhouseDb {
+    fn writes_failing_for(&self) -> Option<Duration> {
+        self.failing_since
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .map(|since| since.elapsed())
+    }
+
     async fn log_events(&self, events: &[Event]) {
         ClickhouseDb::log_events(self, events).await
     }
@@ -157,5 +188,27 @@ impl Db for ClickhouseDb {
 
     async fn write_user_sessions(&self, sessions: &[TelegramSession]) -> DbResult<()> {
         ClickhouseDb::write_user_sessions(self, sessions).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_failed_insert_starts_the_failure_clock() {
+        // Nothing listens on port 1, so every insert fails at once.
+        let db = ClickhouseDb {
+            ch: Client::default().with_url("http://127.0.0.1:1"),
+            failing_since: Mutex::new(None),
+        };
+        assert_eq!(db.writes_failing_for(), None);
+
+        assert!(db.write_backfill(&[Event::default()]).await.is_err());
+        let first = db.writes_failing_for().expect("failing after a failed insert");
+
+        // A second failure does not restart the clock.
+        assert!(db.write_backfill(&[Event::default()]).await.is_err());
+        assert!(db.writes_failing_for().unwrap() >= first);
     }
 }

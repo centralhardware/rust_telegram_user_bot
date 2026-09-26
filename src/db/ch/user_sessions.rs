@@ -4,6 +4,6 @@ use super::*;
 
 impl ClickhouseDb {
     pub(super) async fn write_user_sessions(&self, sessions: &[TelegramSession]) -> DbResult<()> {
-        Ok(insert_rows(&self.ch, "user_sessions", sessions).await?)
+        Ok(self.insert("user_sessions", sessions).await?)
     }
 }

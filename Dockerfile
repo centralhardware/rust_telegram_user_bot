@@ -27,8 +27,8 @@ COPY --from=builder /app/target/release/telegram_user_bot /app/telegram_user_bot
 
 USER 10001
 
-# Unhealthy as soon as the last successful Telegram round trip is older than
-# two heartbeats; the heartbeat itself is written by schedulers::health.
+# Unhealthy as soon as the last heartbeat is older than two: schedulers::health
+# writes it only while Telegram answers and ClickHouse is taking inserts.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD [ -f /tmp/health ] && [ $(( $(date +%s) - $(stat -c %Y /tmp/health) )) -lt 120 ]
 

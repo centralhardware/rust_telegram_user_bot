@@ -32,6 +32,13 @@ pub const EVENTS: &str = "events_log_buffer";
 /// case it returns a `DbResult`.
 #[async_trait]
 pub trait Db: Send + Sync {
+    /// How long every insert has been failing, `None` while the last one went
+    /// through. The health check reads this: a bot that can reach Telegram
+    /// but not its database is losing every row it handles.
+    fn writes_failing_for(&self) -> Option<std::time::Duration> {
+        None
+    }
+
     /// Log events into the Buffer, which is memory, so this is cheap and the
     /// rows are visible to the next lookup straight away. One insert, retried
     /// a few times as a whole to ride out a short hiccup.

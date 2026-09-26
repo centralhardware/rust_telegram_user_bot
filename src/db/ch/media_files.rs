@@ -20,7 +20,7 @@ impl ClickhouseDb {
     }
 
     pub(super) async fn remember_media_file(&self, file: MediaFile) {
-        if let Err(e) = insert_rows(&self.ch, "media_files", std::slice::from_ref(&file)).await {
+        if let Err(e) = self.insert("media_files", std::slice::from_ref(&file)).await {
             warn!("media_files insert for {} {}: {e}", file.kind, file.tg_id);
         }
     }

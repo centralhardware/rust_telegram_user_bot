@@ -13,6 +13,6 @@ impl ClickhouseDb {
     }
 
     pub(super) async fn write_admin_actions(&self, actions: &[AdminAction]) -> DbResult<()> {
-        Ok(insert_rows(&self.ch, "admin_actions2", actions).await?)
+        Ok(self.insert("admin_actions2", actions).await?)
     }
 }

@@ -36,7 +36,7 @@ impl ClickhouseDb {
     pub(super) async fn write_peer_names(&self, names: &PeerNames) {
         // The Buffer table in front of `peer_names` (migration 041).
         if let Err(e) =
-            insert_rows(&self.ch, "peer_names_buffer", std::slice::from_ref(names)).await
+            self.insert("peer_names_buffer", std::slice::from_ref(names)).await
         {
             error!("insert into peer_names_buffer: {e}");
         }
