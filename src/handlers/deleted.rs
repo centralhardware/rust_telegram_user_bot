@@ -1,5 +1,6 @@
 use grammers_client::update::MessageDeletion;
 use log::info;
+use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::db::Event;
@@ -11,29 +12,37 @@ pub async fn save_deleted(
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)?
         .as_secs() as u32;
+    let ids: Vec<i64> = deletion.messages().iter().map(|&id| id as i64).collect();
+    let channel = deletion.channel_id();
 
-    for &msg_id in deletion.messages() {
-        // Telegram only names the chat for a channel or a supergroup; for a
-        // private chat or a basic group the log has to say where it was.
-        let chat_id = match deletion.channel_id() {
-            Some(id) => id,
-            None => match crate::db::find_private_chat(msg_id as i64).await {
-                Some(id) => id,
-                None => continue,
-            },
+    // One read for the whole deletion. Telegram only names the chat for a
+    // channel or a supergroup; for a private chat or a basic group the log has
+    // to say where each message was.
+    // A channel that is log-ignored needs no lookup: its rows are written
+    // anyway, and nothing is printed.
+    let found: HashMap<i64, _> = match channel {
+        Some(chat_id) if is_log_ignored(chat_id) => HashMap::new(),
+        _ => crate::db::find_deleted(channel, &ids)
+            .await
+            .into_iter()
+            .map(|m| (m.message_id, m))
+            .collect(),
+    };
+
+    let mut rows = Vec::with_capacity(ids.len());
+    for msg_id in ids {
+        let m = found.get(&msg_id);
+        let Some(chat_id) = channel.or(m.map(|m| m.chat_id)) else {
+            continue;
         };
-        let info = crate::db::find_message(chat_id, msg_id as i64).await;
-        let chat_title = if info.chat_title.is_empty() {
-            chat_id.to_string()
-        } else {
-            info.chat_title
-        };
-        let sender_name = info.first_name;
-        let message = info.message;
-        let sender_short: String = sender_name.chars().take(10).collect();
 
         if !is_log_ignored(chat_id) {
-            let title_short: String = chat_title.chars().take(25).collect();
+            let (message, sender, title) = m.map_or(("", "", ""), |m| {
+                (m.message.as_str(), m.first_name.as_str(), m.chat_title.as_str())
+            });
+            let title = if title.is_empty() { chat_id.to_string() } else { title.to_string() };
+            let title_short: String = title.chars().take(25).collect();
+            let sender_short: String = sender.chars().take(10).collect();
             info!(
                 "\x1b[91m{:<8} {:>8} {:<25} \x1b[90m│\x1b[91m {:<10} \x1b[90m│\x1b[91m {}\x1b[0m",
                 "deleted",
@@ -46,12 +55,17 @@ pub async fn save_deleted(
 
         // Telegram names nothing but the chat and the id, and that is all the
         // row keeps: what the message was is already on its send row.
-        crate::db::log_event(Event {
+        rows.push(Event {
             date_time: now,
             chat_id,
-            message_id: msg_id as i64,
+            message_id: msg_id,
             ..Event::delete()
-        }).await;
+        });
+    }
+
+    // One insert for the whole deletion.
+    if !rows.is_empty() {
+        crate::db::log_events(&rows).await;
     }
 
     Ok(())
