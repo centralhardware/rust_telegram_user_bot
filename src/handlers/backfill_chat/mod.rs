@@ -54,13 +54,14 @@ use grammers_client::message::Message;
 use grammers_session::Session;
 use grammers_session::types::{PeerId, PeerInfo, PeerRef};
 use grammers_tl_types as tl;
-use log::{debug, info, warn};
+use log::{debug, warn};
 use std::collections::HashSet;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 
 use crate::app::App;
+use crate::utils::console::{LogLine, Tone};
 use crate::db::Event;
 use std::sync::Arc;
 
@@ -237,10 +238,7 @@ pub async fn handle_command(app: &Arc<App>, message: &Message) -> bool {
         if let Some(status) = &status {
             let _ = status.edit(outcome.line.as_str()).await;
         }
-        info!(
-            "\x1b[96m{:<8} {:>8} {}\x1b[0m",
-            "backfill", chat_id, outcome
-        );
+        LogLine::new(Tone::Info, "backfill", chat_id).body(&outcome.to_string()).print();
         app.backfills.0.lock().await.remove(&chat_id);
     });
 

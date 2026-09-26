@@ -1,4 +1,5 @@
 pub mod admin_chats;
+pub mod console;
 pub mod diff;
 pub mod dialogs;
 pub mod entities;

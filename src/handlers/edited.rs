@@ -1,5 +1,5 @@
 use grammers_client::update::Message;
-use log::info;
+use crate::utils::console::{LogLine, Tone};
 
 use crate::db::Event;
 use crate::app::App;
@@ -52,19 +52,13 @@ pub async fn save_edited(app: &App, message: &Message) -> Result<(), Box<dyn std
     } else {
         format!("{} {}", sender.first_name, sender.second_name)
     };
-    let sender_short: String = sender_name.chars().take(10).collect();
-
     if !app.is_log_ignored(chat_id) {
-        let chat_name_short: String = chat_name.chars().take(25).collect();
         let colored = crate::utils::diff::inline_diff(&original, &message_content);
-        info!(
-            "\x1b[93m{:<8} {:>8} {:<25} \x1b[90m│\x1b[93m {:<10}\x1b[0m\n{}",
-            "edited",
-            message.id(),
-            chat_name_short,
-            sender_short,
-            colored,
-        );
+        LogLine::new(Tone::Edited, "edited", message.id())
+            .chat(&chat_name)
+            .sender(&sender_name)
+            .body(&colored)
+            .print();
     }
 
     // Telegram's own edit time, not the moment this process got round to it: the

@@ -1,6 +1,7 @@
 use grammers_client::message::Message;
 use grammers_tl_types as tl;
 use crate::app::App;
+use crate::utils::console::{emphasize, LogLine, Tone};
 
 /// A logged message, as the preview above a reply needs it.
 #[derive(Default)]
@@ -55,43 +56,27 @@ pub async fn format_reply_line(app: &App, message: &Message) -> String {
 /// One preview line: the id in the message-id column, the chat it is in, who
 /// sent it, and its text.
 async fn render(app: &App, id: i32, target: &Target, quote_text: Option<&str>) -> String {
-    // Place the id in the same {:>8} column as the message id in incoming log
-    // lines. Layout: {:<8}(8) + ' '(1) + {:>8}(8) + ' '(1) + {:<25}(25) + ' '(1)
-    // = 44 before first │. Text column starts at
-    // 44 + │(1) + ' '(1) + {:<10}(10) + ' '(1) + │(1) + ' '(1) + '> '(2) = 61
-    let chat_short: String = source_title(app, target).await.chars().take(25).collect();
-    let id_col = format!("{:<8} \x1b[90m{:>8}\x1b[0m {:<25} ", "", id, chat_short);
-    let pad_text = " ".repeat(60);
-
-    let sender_short: String = if target.is_post() {
-        "post".to_string()
-    } else {
-        target.sender.chars().take(10).collect()
-    };
+    let chat = source_title(app, target).await;
+    let sender = if target.is_post() { "post" } else { target.sender.as_str() };
     let marker = if target.is_post() { "»" } else { ">" };
 
-    if target.text.is_empty() {
-        return format!("{id_col}\x1b[90m│ {sender_short:<10} │ {marker} [{id}]\x1b[0m");
-    }
-
-    // If there's a quote, highlight that portion within the full text
-    let highlighted = match quote_text {
-        Some(qt) => highlight_quote(&target.text, qt),
-        None => target.text.clone(),
+    let body = if target.text.is_empty() {
+        format!("{marker} [{id}]")
+    } else {
+        // If there's a quote, highlight that portion within the full text.
+        let text = match quote_text {
+            Some(qt) => highlight_quote(&target.text, qt),
+            None => target.text.clone(),
+        };
+        format!("{marker} {text}")
     };
-    let formatted = highlighted
-        .lines()
-        .enumerate()
-        .map(|(i, line)| {
-            if i == 0 {
-                format!("{id_col}\x1b[90m│ {sender_short:<10} │ {marker} {line}")
-            } else {
-                format!("{pad_text}\x1b[90m    {line}")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!("{formatted}\x1b[0m")
+
+    // No kind: the id sits in the message-id column of the line below it.
+    LogLine::new(Tone::Muted, "", id)
+        .chat(&chat)
+        .sender(sender)
+        .body(&body)
+        .render()
 }
 
 /// What to call the chat a previewed message came from: for a copied channel
@@ -147,7 +132,7 @@ fn highlight_quote(text: &str, quote: &str) -> String {
         Some(pos) => {
             let before = &text[..pos];
             let after = &text[pos + quote.len()..];
-            format!("{before}\x1b[96m{quote}\x1b[90m{after}")
+            format!("{before}{}{after}", emphasize(quote, Tone::Muted))
         }
         None => text.to_string(),
     }

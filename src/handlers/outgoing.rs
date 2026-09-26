@@ -30,7 +30,7 @@ pub async fn save_outgoing(app: &App, message: &Message) -> Result<Event, Box<dy
     });
     let body = Body::of(app, message, sender_id, sender_name.as_deref()).await;
 
-    super::send::print(app, message, &body, ("outgoing", "95"), &title, "").await;
+    super::send::print(app, message, &body, ("outgoing", crate::utils::console::Tone::Outgoing), &title, "").await;
 
     let chat = ChatInfo {
         chat_title: title,

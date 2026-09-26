@@ -10,7 +10,7 @@
 
 use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;
-use log::info;
+use crate::utils::console::{LogLine, Tone};
 
 use crate::db::Event;
 use crate::events::ReactionEvent;
@@ -38,16 +38,15 @@ pub async fn save_reactions(app: &App, update: &tl::types::UpdateMessageReaction
         .unwrap_or_default();
 
     if !app.is_log_ignored(chat_id) {
-        let chat_short: String = chat_title.chars().take(25).collect();
         let rendered = counts
             .iter()
             .map(|(name, count)| format!("{name}×{count}"))
             .collect::<Vec<_>>()
             .join(" ");
-        info!(
-            "\x1b[95m{:<8} {:>8} {:<25} \x1b[90m│\x1b[95m {}\x1b[0m",
-            "reaction", update.msg_id, chat_short, rendered,
-        );
+        LogLine::new(Tone::Action, "reaction", update.msg_id)
+            .chat(&chat_title)
+            .body(&rendered)
+            .print();
     }
 
     app.db.log_event(Event::from(ReactionEvent {

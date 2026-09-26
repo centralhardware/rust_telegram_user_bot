@@ -9,7 +9,7 @@
 //! grammers has no friendly variant for the update, so it arrives as
 //! `Update::Raw`, like the ephemeral ones.
 
-use log::info;
+use crate::utils::console::{LogLine, Tone};
 
 use crate::db::Event;
 use crate::events::PinEvent;
@@ -21,9 +21,9 @@ pub async fn save_pinned(app: &App, chat_id: i64, dialog_id: i64, messages: &[i3
     let name = if pinned { "pin" } else { "unpin" };
 
     if !app.is_log_ignored(chat_id) {
-        let chat_short: String = title_of(app, dialog_id).await.chars().take(25).collect();
+        let chat = title_of(app, dialog_id).await;
         for id in messages {
-            info!("\x1b[96m{:<8} {:>8} {:<25}\x1b[0m", name, id, chat_short);
+            LogLine::new(Tone::Info, name, id).chat(&chat).print();
         }
     }
 

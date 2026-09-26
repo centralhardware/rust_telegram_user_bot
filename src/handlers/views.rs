@@ -6,7 +6,7 @@
 //! not carry stays 0: read a post's latest `views` row for views and its latest
 //! `forwards` row for forwards rather than expecting one row to hold both.
 
-use log::info;
+use crate::utils::console::{LogLine, Tone};
 
 use crate::db::Event;
 use crate::events::ViewsEvent;
@@ -24,7 +24,6 @@ pub async fn save_views(app: &App, channel_id: i64, message_id: i32, views: u32,
             _ if !post.chat_title.is_empty() => post.chat_title,
             _ => channel_id.to_string(),
         };
-        let chat_short: String = title.chars().take(25).collect();
         let counter = if forwards > 0 {
             format!("{forwards} forwards")
         } else {
@@ -34,12 +33,12 @@ pub async fn save_views(app: &App, channel_id: i64, message_id: i32, views: u32,
         let rendered = if text.is_empty() {
             counter
         } else {
-            format!("{counter} \x1b[90m—\x1b[96m {text}")
+            format!("{counter} — {text}")
         };
-        info!(
-            "\x1b[96m{:<8} {:>8} {:<25} \x1b[90m│\x1b[96m {}\x1b[0m",
-            "views", message_id, chat_short, rendered,
-        );
+        LogLine::new(Tone::Info, "views", message_id)
+            .chat(&title)
+            .body(&rendered)
+            .print();
     }
 
     app.db.log_event(Event::from(ViewsEvent {

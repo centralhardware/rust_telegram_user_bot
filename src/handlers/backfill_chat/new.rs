@@ -40,7 +40,7 @@ pub(super) async fn start_new(app: &Arc<App>, message: &Message, mine_only: bool
         if let Some(status) = &status {
             let _ = status.edit(outcome.as_str()).await;
         }
-        info!("\x1b[96m{:<8} {:>8} {}\x1b[0m", "backfill", "new", outcome);
+        LogLine::new(Tone::Info, "backfill", "new").body(&outcome).print();
         app.backfills.0.lock().await.remove(&NEW_SCAN);
     });
 }
@@ -82,7 +82,7 @@ pub(super) async fn run_new(
         scan.unreadable,
         scan.peerless
     );
-    info!("\x1b[96m{:<8} {:>8} {census}\x1b[0m", "backfill", "new");
+    LogLine::new(Tone::Info, "backfill", "new").body(&census).print();
 
     if missing.is_empty() {
         return format!("backfill new: nothing to do — {census}");
@@ -104,10 +104,9 @@ pub(super) async fn run_new(
             ));
         }
         for dialog in &missing {
-            info!(
-                "\x1b[96m{:<8} {:>8} would walk {}\x1b[0m",
-                "backfill", dialog.chat_id, dialog.title
-            );
+            LogLine::new(Tone::Info, "backfill", dialog.chat_id)
+                .body(&format!("would walk {}", dialog.title))
+                .print();
         }
         return lines.join("\n");
     }
@@ -144,10 +143,7 @@ pub(super) async fn run_new(
             status,
         )
         .await;
-        info!(
-            "\x1b[96m{:<8} {:>8} {}\x1b[0m",
-            "backfill", dialog.chat_id, outcome
-        );
+        LogLine::new(Tone::Info, "backfill", dialog.chat_id).body(&outcome.to_string()).print();
         written += outcome.written;
         refused += usize::from(outcome.refused);
         done += 1;
