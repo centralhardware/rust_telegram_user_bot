@@ -48,7 +48,7 @@ pub async fn start(app: Arc<App>) {
 
             for chat in &chats {
                 if let Err(e) = log_admin_actions(&app, chat).await {
-                    error!("Failed to fetch admin actions for {}: {:?}", chat.title, e);
+                    error!("Failed to fetch admin actions for {}: {e:#}", chat.title);
                 }
             }
         }
@@ -72,7 +72,7 @@ async fn discover(app: &App) -> Option<Vec<AdminChat>> {
             Some(found)
         }
         Err(e) => {
-            error!("Failed to discover admin chats: {:?}", e);
+            error!("Failed to discover admin chats: {e:#}");
             None
         }
     }
@@ -86,7 +86,7 @@ async fn discover(app: &App) -> Option<Vec<AdminChat>> {
 /// the `Chat` objects of each page, whatever kind of dialog pointed at them.
 async fn discover_admin_chats(
     client: &Client,
-) -> Result<Vec<AdminChat>, Box<dyn std::error::Error>> {
+) -> anyhow::Result<Vec<AdminChat>> {
     let mut chats = Vec::new();
     let mut seen: HashSet<i64> = HashSet::new();
 
@@ -151,7 +151,7 @@ async fn discover_admin_chats(
 async fn fetch_admin_ids(
     client: &Client,
     peer: PeerRef,
-) -> Result<HashSet<i64>, Box<dyn std::error::Error>> {
+) -> anyhow::Result<HashSet<i64>> {
     let channel: tl::enums::InputChannel = peer.into();
     let result = client
         .invoke(&tl::functions::channels::GetParticipants {
@@ -631,7 +631,7 @@ fn extract_user_info(
 async fn log_admin_actions(
     app: &App,
     chat: &AdminChat,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> anyhow::Result<()> {
     let min_id = app.db.last_admin_event_id(chat.chat_id).await as i64;
     let mut max_id: i64 = 0;
     let mut total_inserted: usize = 0;
@@ -703,7 +703,7 @@ async fn log_admin_actions(
             actions.push(log);
         }
 
-        app.db.write_admin_actions(&actions).await.map_err(|e| e.to_string())?;
+        app.db.write_admin_actions(&actions).await?;
 
         let (batch_min, batch_max) = result.events.iter().fold((i64::MAX, 0u64), |(min, max), e| {
             let tl::enums::ChannelAdminLogEvent::Event(ev) = e;

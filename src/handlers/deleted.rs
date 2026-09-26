@@ -10,7 +10,7 @@ use crate::app::App;
 pub async fn save_deleted(
     app: &App,
     deletion: &MessageDeletion,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> anyhow::Result<()> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)?
         .as_secs() as u32;

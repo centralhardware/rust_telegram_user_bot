@@ -75,7 +75,7 @@ impl Storage {
         key: &str,
         bytes: Vec<u8>,
         content_type: Option<&str>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> anyhow::Result<()> {
         let mut req = self
             .client
             .put_object()

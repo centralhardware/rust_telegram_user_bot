@@ -1,16 +1,17 @@
 use grammers_client::update::Message;
 use grammers_tl_types as tl;
-use log::{debug, info, warn};
+use anyhow::Context;
+use log::{debug, info};
 use crate::app::App;
 use crate::render::console::{LogLine, Tone};
 
 
 /// If the message is a reply and the replied-to message is not yet in ClickHouse,
 /// fetch it from Telegram and save it.
-pub async fn backfill_reply(app: &App, message: &Message) {
+pub async fn backfill_reply(app: &App, message: &Message) -> anyhow::Result<()> {
     let quoted = crate::telegram::reply_target::reply_info(message);
     let reply_id = match quoted.reply_to {
-        0 => return,
+        0 => return Ok(()),
         id => id as i32,
     };
 
@@ -24,32 +25,33 @@ pub async fn backfill_reply(app: &App, message: &Message) {
             "reply_to {} is quoted from chat {}, not backfilling",
             reply_id, quoted.reply_to_chat_id
         );
-        return;
+        return Ok(());
     }
 
     if app.db.message_exists(chat_id, reply_id as i64).await {
-        return;
+        return Ok(());
     }
 
     if !app.is_log_ignored(chat_id) {
         debug!("backfill reply_to {} in chat {}", reply_id, chat_id);
     }
 
-    let reply = match app.tg.get_reply_to_message(message).await {
-        Ok(Some(msg)) => msg,
-        Ok(None) => {
+    let reply = match app
+        .tg
+        .get_reply_to_message(message)
+        .await
+        .with_context(|| format!("fetching reply_to {reply_id}"))?
+    {
+        Some(msg) => msg,
+        None => {
             debug!("reply_to {} not found on Telegram", reply_id);
-            return;
-        }
-        Err(e) => {
-            warn!("failed to fetch reply_to {}: {}", reply_id, e);
-            return;
+            return Ok(());
         }
     };
 
     if matches!(reply.raw, tl::enums::Message::Empty(_)) {
         info!("reply_to {} is an empty message, skipping backfill", reply_id);
-        return;
+        return Ok(());
     }
 
     // The row a live update would have produced, built where every caller
@@ -61,4 +63,5 @@ pub async fn backfill_reply(app: &App, message: &Message) {
             .body("backfilled reply_to message")
             .print();
     }
+    Ok(())
 }

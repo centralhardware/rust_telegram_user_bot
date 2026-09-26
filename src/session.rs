@@ -49,7 +49,7 @@ pub async fn connect(
             },
         )
         .await
-        .map_err(|e| -> Box<dyn std::error::Error> { e })?;
+        .map_err(|e| anyhow::anyhow!(e))?;
 
     Ok((client, session, updates))
 }
