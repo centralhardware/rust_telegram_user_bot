@@ -3,6 +3,7 @@ use grammers_client::update::Message;
 
 use crate::app::App;
 use crate::db::Event;
+use crate::events::LocationEvent;
 
 pub async fn save_edited(app: &App, message: &Message) -> anyhow::Result<()> {
     let chat_id = message.peer_id().bare_id_unchecked();
@@ -10,6 +11,34 @@ pub async fn save_edited(app: &App, message: &Message) -> anyhow::Result<()> {
     let message_content = crate::render::format_entities::plain_text(message);
     let entities = crate::telegram::entities::of_message(message);
     let keyboard = crate::telegram::entities::keyboard_of_message(message);
+
+    // A live location reports each move as an edit of the same message, with
+    // nothing else changed. Each position is a row of its own; the edit itself
+    // is then judged like any other and, with the text unchanged, skipped.
+    if let Some(meta) = crate::telegram::media_description::media_meta(message)
+        && meta.media_type == "live_location"
+        && (meta.lat, meta.lon) != (0.0, 0.0)
+    {
+        let sender = crate::state::peer_info::sender_info(app, message).await;
+        if !app.is_log_ignored(chat_id) {
+            let chat = crate::state::peer_info::chat_info(app, message).await;
+            LogLine::new(Tone::Info, "location", msg_id)
+                .chat(&chat.chat_title)
+                .sender(&sender.first_name)
+                .body(&format!("{:.5}, {:.5}", meta.lat, meta.lon))
+                .print();
+        }
+        app.db
+            .log_event(Event::from(LocationEvent {
+                date_time: edit_time(message),
+                chat_id,
+                message_id: msg_id,
+                user_id: sender.user_id,
+                lat: meta.lat,
+                lon: meta.lon,
+            }))
+            .await;
+    }
 
     let original = app.db.find_message(chat_id, msg_id).await;
 
@@ -80,12 +109,7 @@ pub async fn save_edited(app: &App, message: &Message) -> anyhow::Result<()> {
     // Telegram's own edit time, not the moment this process got round to it: the
     // row is when the message changed, and a reconnect replaying a backlog of
     // edits must not stamp them all with the time it caught up.
-    let now = match message.edit_date() {
-        Some(date) => date.as_second() as u32,
-        None => std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs() as u32,
-    };
+    let now = edit_time(message);
 
     // An edit row carries only what an edit can change: the message as it now
     // stands, the patch against what stood before -- the words that went and the
@@ -124,4 +148,12 @@ pub async fn save_edited(app: &App, message: &Message) -> anyhow::Result<()> {
         .await;
 
     Ok(())
+}
+
+/// Telegram's own edit time, or now when it gave none.
+fn edit_time(message: &Message) -> u32 {
+    match message.edit_date() {
+        Some(date) => date.as_second() as u32,
+        None => crate::db::now(),
+    }
 }

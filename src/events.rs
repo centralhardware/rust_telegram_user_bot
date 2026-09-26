@@ -39,6 +39,10 @@ pub enum EventKind {
     Poll,
     /// A channel post's view or forward counter, as it stands after the update.
     Views,
+    /// A live location moving: one row per position Telegram reports, so the
+    /// track can be read back in order. The message's first position is on
+    /// its send row.
+    Location,
 }
 
 impl EventKind {
@@ -54,6 +58,7 @@ impl EventKind {
             EventKind::Unpin => "unpin",
             EventKind::Poll => "poll",
             EventKind::Views => "views",
+            EventKind::Location => "location",
         }
     }
 }
@@ -216,6 +221,31 @@ impl From<ViewsEvent> for Event {
     }
 }
 
+/// A new position of a live location.
+pub struct LocationEvent {
+    pub date_time: u32,
+    pub chat_id: i64,
+    pub message_id: i64,
+    pub user_id: u64,
+    pub lat: f64,
+    pub lon: f64,
+}
+
+impl From<LocationEvent> for Event {
+    fn from(e: LocationEvent) -> Self {
+        Event {
+            date_time: e.date_time,
+            chat_id: e.chat_id,
+            message_id: e.message_id,
+            user_id: e.user_id,
+            lat: e.lat,
+            lon: e.lon,
+            media_type: "live_location".to_string(),
+            ..Event::of(EventKind::Location)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,6 +257,24 @@ mod tests {
             "\"file_uploaded\""
         );
         assert_eq!(serde_json::to_string(&EventKind::Send).unwrap(), "\"send\"");
+    }
+
+    #[test]
+    fn a_live_location_move_is_its_own_row() {
+        let row: Event = LocationEvent {
+            date_time: 1,
+            chat_id: 2,
+            message_id: 3,
+            user_id: 4,
+            lat: 18.8,
+            lon: 98.97,
+        }
+        .into();
+        assert_eq!(row.event, EventKind::Location);
+        assert_eq!(serde_json::to_string(&row.event).unwrap(), "\"location\"");
+        assert_eq!((row.lat, row.lon, row.user_id), (18.8, 98.97, 4));
+        assert_eq!(row.media_type, "live_location");
+        assert!(row.message.is_empty());
     }
 
     #[test]
