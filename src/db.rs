@@ -96,6 +96,10 @@ pub const POLL: &str = "poll";
 pub const VIEWS: &str = "views";
 
 pub struct MessageInfo {
+    /// Whether the log has the message at all -- a send or an edit row. When
+    /// it has not, the fields below are empty because nothing is known, not
+    /// because the message was.
+    pub logged: bool,
     pub message: String,
     /// The formatting and the buttons the message carries, as the columns of the
     /// same name hold them — an edit that changes only one of these changes
@@ -140,8 +144,9 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
         .bind(EDIT)
         .bind(EDIT)
         .fetch_one::<BodyRow>()
-        .await
-        .unwrap_or_default();
+        .await;
+    let logged = body.is_ok();
+    let body = body.unwrap_or_default();
 
     let (chat_title, first_name) = {
         let title = clickhouse()
@@ -184,6 +189,7 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
     };
 
     MessageInfo {
+        logged,
         message: body.message,
         entities: body.entities,
         keyboard: body.keyboard,
