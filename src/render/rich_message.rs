@@ -5,7 +5,12 @@ use grammers_tl_types as tl;
 /// Rich messages carry their content as Instant-View `PageBlock`s instead of
 /// `message` + `entities`, so without this the log would only see an empty body.
 pub fn rich_text(message: &Message) -> Option<String> {
-    render(extract_rich(&message.raw)?)
+    rich_text_of(&message.raw)
+}
+
+/// [`rich_text`], for the TL message on its own.
+pub fn rich_text_of(message: &tl::enums::Message) -> Option<String> {
+    render(extract_rich(message)?)
 }
 
 /// The same, for a payload that did not arrive on a `Message` — an ephemeral

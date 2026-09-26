@@ -1,0 +1,28 @@
+{
+ "Service": {
+  "out": false,
+  "mentioned": false,
+  "media_unread": false,
+  "reactions_are_possible": true,
+  "silent": false,
+  "post": true,
+  "legacy": false,
+  "id": 50,
+  "from_id": null,
+  "peer_id": {
+   "Channel": {
+    "channel_id": 1001
+   }
+  },
+  "saved_peer_id": null,
+  "reply_to": null,
+  "date": 1700000000,
+  "action": {
+   "ChatEditTitle": {
+    "title": "New title"
+   }
+  },
+  "reactions": null,
+  "ttl_period": null
+ }
+}

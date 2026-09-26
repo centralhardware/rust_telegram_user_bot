@@ -44,10 +44,18 @@ pub fn entities(entities: Option<&[tl::enums::MessageEntity]>) -> Vec<Entity> {
 /// PageBlocks and its `entities` describe only the plain fallback, so it has
 /// none: what `message` holds there is already the rendered rich text.
 pub fn of_message(message: &grammers_client::message::Message) -> Vec<Entity> {
-    if crate::render::rich_message::rich_text(message).is_some() {
+    of_raw(&message.raw)
+}
+
+/// [`of_message`], for the TL message on its own.
+pub fn of_raw(message: &tl::enums::Message) -> Vec<Entity> {
+    if crate::render::rich_message::rich_text_of(message).is_some() {
         return Vec::new();
     }
-    entities(message.fmt_entities().map(Vec::as_slice))
+    match message {
+        tl::enums::Message::Message(m) => entities(m.entities.as_deref()),
+        _ => Vec::new(),
+    }
 }
 
 fn payload(entity: &tl::enums::MessageEntity) -> String {

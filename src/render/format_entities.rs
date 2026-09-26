@@ -23,10 +23,18 @@ pub fn formatted_text(message: &Message) -> String {
 /// A rich message has no plain form of its own, so it is rendered as it is for the
 /// console.
 pub fn plain_text(message: &Message) -> String {
-    if let Some(rich) = crate::render::rich_message::rich_text(message) {
+    plain_text_of(&message.raw)
+}
+
+/// [`plain_text`], for the TL message on its own.
+pub fn plain_text_of(message: &tl::enums::Message) -> String {
+    if let Some(rich) = crate::render::rich_message::rich_text_of(message) {
         return rich;
     }
-    message.text().to_string()
+    match message {
+        tl::enums::Message::Message(m) => m.message.clone(),
+        _ => String::new(),
+    }
 }
 
 /// Combining marks that draw over the preceding character, so the style survives as
