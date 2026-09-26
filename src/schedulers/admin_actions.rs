@@ -2,9 +2,10 @@ use grammers_client::Client;
 use std::sync::Arc;
 
 use crate::app::App;
+use crate::render::console::{LogLine, Tone};
 use grammers_session::types::PeerRef;
 use grammers_tl_types as tl;
-use log::{error, info};
+use log::error;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
@@ -62,12 +63,13 @@ async fn discover(app: &App) -> Option<Vec<AdminChat>> {
         Ok(found) => {
             // One chat per line: a comma-joined list of a dozen-odd titles is
             // a single unreadable line in the log.
-            let titles = found
-                .iter()
-                .map(|c| format!("  {} ({})", c.title, c.chat_id))
-                .collect::<Vec<_>>()
-                .join("\n");
-            info!("admin log: watching {} chat(s):\n{}", found.len(), titles);
+            let mut body = format!("watching {} chat(s)", found.len());
+            for c in &found {
+                body.push_str(&format!("\n  {} ({})", c.title, c.chat_id));
+            }
+            LogLine::new(Tone::Info, "admin", "chats")
+                .body(&body)
+                .print();
             app.admin_chats
                 .set(found.iter().map(|c| c.chat_id).collect());
             Some(found)
@@ -724,14 +726,11 @@ async fn log_admin_actions(app: &App, chat: &AdminChat) -> anyhow::Result<()> {
                 user_is_admin: chat.admin_ids.contains(&ev.user_id),
             };
 
-            info!(
-                "admin    {:>12} {:<25} {:<20} {:<20}\n{}",
-                log.event_id,
-                log.chat_title.chars().take(25).collect::<String>(),
-                log.action_type.chars().take(20).collect::<String>(),
-                log.user_title.chars().take(20).collect::<String>(),
-                console_output,
-            );
+            LogLine::new(Tone::Action, "admin", log.event_id)
+                .chat(&log.chat_title)
+                .sender(&log.user_title)
+                .body(&format!("{}: {console_output}", log.action_type))
+                .print();
 
             actions.push(log);
         }
@@ -760,10 +759,10 @@ async fn log_admin_actions(app: &App, chat: &AdminChat) -> anyhow::Result<()> {
     }
 
     if total_inserted > 0 {
-        info!(
-            "[{}] Inserted {} entries. Last ID: {}",
-            chat.title, total_inserted, new_last_id
-        );
+        LogLine::new(Tone::Info, "admin", "log")
+            .chat(&chat.title)
+            .body(&format!("{total_inserted} new, up to event {new_last_id}"))
+            .print();
     }
 
     Ok(())
