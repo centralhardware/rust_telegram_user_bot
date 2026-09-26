@@ -11,8 +11,8 @@ use super::{
     AdminAction, DbResult, DeletedMessage, Event, EventKind, EVENTS, MediaFile, MessageInfo,
     ReplyRow, ReplyTarget, TelegramSession, Db,
 };
-use crate::utils::peer_names::PeerNames;
-use crate::utils::poll_info::PollInfo;
+use crate::state::peer_names::PeerNames;
+use crate::state::poll_info::PollInfo;
 
 pub struct ClickhouseDb {
     ch: Client,
@@ -64,8 +64,8 @@ const INSERT_ATTEMPTS: u32 = 3;
 #[derive(Row, Deserialize, Default)]
 struct BodyRow {
     message: String,
-    entities: Vec<crate::utils::entities::Entity>,
-    keyboard: Vec<crate::utils::entities::Button>,
+    entities: Vec<crate::telegram::entities::Entity>,
+    keyboard: Vec<crate::telegram::entities::Button>,
 }
 
 #[derive(Row, Deserialize)]

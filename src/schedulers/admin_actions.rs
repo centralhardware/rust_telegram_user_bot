@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use crate::db::AdminAction;
-use crate::utils::dialogs::{Pages, ARCHIVE_FOLDER, MAIN_FOLDER};
+use crate::telegram::dialogs::{Pages, ARCHIVE_FOLDER, MAIN_FOLDER};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// How often the dialog list is re-scanned for chats where we are an admin.
@@ -243,7 +243,7 @@ fn action_type_name(action: &tl::enums::ChannelAdminLogEventAction) -> &'static 
 fn message_text(msg: &tl::enums::Message) -> String {
     match msg {
         tl::enums::Message::Message(m) => {
-            crate::utils::format_entities::render(&m.message, m.entities.as_deref())
+            crate::render::format_entities::render(&m.message, m.entities.as_deref())
         }
         _ => String::new(),
     }
@@ -533,7 +533,7 @@ fn format_log_output(
                 .missing_newline_hint(false)
                 .to_string();
             if colorize {
-                crate::utils::diff::inline_diff(&prev, &new)
+                crate::render::diff::inline_diff(&prev, &new)
             } else {
                 diff.trim_end().to_string()
             }

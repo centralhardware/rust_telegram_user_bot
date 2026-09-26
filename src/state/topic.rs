@@ -15,7 +15,7 @@ const CACHE_LIMIT: usize = 10_000;
 /// The topic a message was posted in, ready for the `events_log` row: its id and
 /// its title, or `(0, "")` outside a forum topic.
 pub async fn topic_of(app: &App, message: &Message) -> (i32, String) {
-    match crate::utils::reply_target::topic_id(message) {
+    match crate::telegram::reply_target::topic_id(message) {
         Some(id) => (id, topic_name(app, message).await),
         None => (0, String::new()),
     }
@@ -24,7 +24,7 @@ pub async fn topic_of(app: &App, message: &Message) -> (i32, String) {
 /// The topic's title, or an empty string when the message is not in a topic or
 /// the title cannot be fetched.
 pub async fn topic_name(app: &App, message: &Message) -> String {
-    let topic_id = match crate::utils::reply_target::topic_id(message) {
+    let topic_id = match crate::telegram::reply_target::topic_id(message) {
         Some(id) => id,
         None => return String::new(),
     };

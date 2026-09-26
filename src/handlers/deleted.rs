@@ -1,5 +1,5 @@
 use grammers_client::update::MessageDeletion;
-use crate::utils::console::{LogLine, Tone};
+use crate::render::console::{LogLine, Tone};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 

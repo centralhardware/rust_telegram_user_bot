@@ -1,7 +1,7 @@
 use grammers_client::message::Message;
 use grammers_tl_types as tl;
 use crate::app::App;
-use crate::utils::console::{emphasize, LogLine, Tone};
+use crate::render::console::{emphasize, LogLine, Tone};
 
 /// A logged message, as the preview above a reply needs it.
 #[derive(Default)]
@@ -31,7 +31,7 @@ impl Target {
 /// commented on the post instead. Only a top-level comment names the post, and
 /// then the post *is* the target.
 pub async fn format_reply_line(app: &App, message: &Message) -> String {
-    let reply_id = match crate::utils::reply_target::reply_target(message) {
+    let reply_id = match crate::telegram::reply_target::reply_target(message) {
         Some(id) => id,
         None => return String::new(),
     };
@@ -43,7 +43,7 @@ pub async fn format_reply_line(app: &App, message: &Message) -> String {
     // The target lives in the chat the header names when it names one — a
     // comment sent from the Replies pseudo-chat, or a quote of another chat —
     // and in this chat otherwise. Looking it up here would find nothing.
-    let target_chat_id = match crate::utils::reply_target::reply_info(message).reply_to_chat_id {
+    let target_chat_id = match crate::telegram::reply_target::reply_info(message).reply_to_chat_id {
         0 => message.peer_id().bare_id_unchecked(),
         foreign => foreign,
     };
@@ -88,7 +88,7 @@ async fn source_title(app: &App, target: &Target) -> String {
     }
     // peer_names is keyed by Bot API dialog id; the log keeps bare ids.
     let dialog_id = -1_000_000_000_000 - target.post_from_chat_id;
-    match crate::utils::peer_names::load(app, dialog_id).await {
+    match crate::state::peer_names::load(app, dialog_id).await {
         Some(n) if !n.title.is_empty() => n.title,
         _ => target.chat_title.clone(),
     }
@@ -102,7 +102,7 @@ async fn lookup(app: &App, chat_id: i64, message_id: i32) -> Target {
     };
     let crate::db::ReplyRow { message: text, user_id, chat_title, fwd_from_chat_id: fwd_chat, fwd_from_msg_id: fwd_msg } = row;
 
-    let sender = match crate::utils::peer_names::load(app, user_id as i64).await {
+    let sender = match crate::state::peer_names::load(app, user_id as i64).await {
         Some(n) if !n.last_name.is_empty() => format!("{} {}", n.first_name, n.last_name),
         Some(n) => n.first_name,
         None => String::new(),

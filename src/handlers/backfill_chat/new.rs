@@ -1,7 +1,7 @@
 //! `!backfill new`: the dialogs the log has never seen.
 
 use super::*;
-use crate::utils::dialogs::{dialog_offset, Pages, ARCHIVE_FOLDER, MAIN_FOLDER};
+use crate::telegram::dialogs::{dialog_offset, Pages, ARCHIVE_FOLDER, MAIN_FOLDER};
 
 /// The key `RUNNING` holds while a `new` scan is on. A chat id is never 0, so
 /// it can share the set with them and keep the one-at-a-time rule for free.

@@ -15,11 +15,11 @@
 
 use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;
-use crate::utils::console::{LogLine, Tone};
+use crate::render::console::{LogLine, Tone};
 
 use crate::db::{Event, EventKind};
 use crate::events::DeleteEvent;
-use crate::utils::peer_names;
+use crate::state::peer_names;
 use crate::app::App;
 
 /// A new or edited ephemeral message. `event` is the column the two share a
@@ -58,8 +58,8 @@ pub async fn save_ephemeral(app: &App, message: &tl::enums::EphemeralMessage, ev
         chat_title,
         message_id: msg.id as i64,
         message: stored,
-        entities: crate::utils::entities::entities(msg.entities.as_deref()),
-        keyboard: crate::utils::entities::keyboard(msg.reply_markup.as_ref()),
+        entities: crate::telegram::entities::entities(msg.entities.as_deref()),
+        keyboard: crate::telegram::entities::keyboard(msg.reply_markup.as_ref()),
         user_id: sender.bare_id_unchecked() as u64,
         out: msg.out,
         receiver_id: msg.receiver_id as u64,
@@ -104,16 +104,16 @@ pub async fn save_ephemeral_deleted(app: &App, peer: &tl::enums::Peer, ids: &[i3
 /// text with its entities, with the media description and the buttons around it
 /// exactly as an ordinary message gets them.
 fn body(msg: &tl::types::EphemeralMessage) -> String {
-    let rich = msg.rich_message.as_ref().and_then(crate::utils::rich_message::render);
+    let rich = msg.rich_message.as_ref().and_then(crate::render::rich_message::render);
     let text = match rich {
         Some(rich) => rich,
-        None => crate::utils::format_entities::render(&msg.message, msg.entities.as_deref()),
+        None => crate::render::format_entities::render(&msg.message, msg.entities.as_deref()),
     };
 
     let media = msg
         .media
         .as_ref()
-        .map(crate::utils::media_description::describe_media);
+        .map(crate::telegram::media_description::describe_media);
 
     let mut out = match (media, text.is_empty()) {
         (Some(media), false) => format!("{media} {text}"),
@@ -124,7 +124,7 @@ fn body(msg: &tl::types::EphemeralMessage) -> String {
     let buttons = msg
         .reply_markup
         .as_ref()
-        .and_then(crate::utils::inline_buttons::format_markup);
+        .and_then(crate::render::inline_buttons::format_markup);
     if let Some(buttons) = buttons {
         if !out.is_empty() {
             out.push_str("\n\n");
@@ -138,13 +138,13 @@ fn body(msg: &tl::types::EphemeralMessage) -> String {
 /// standing in for it when there is none. The formatting and the buttons `body`
 /// renders in are columns of their own.
 fn stored_body(msg: &tl::types::EphemeralMessage) -> String {
-    let rich = msg.rich_message.as_ref().and_then(crate::utils::rich_message::render);
+    let rich = msg.rich_message.as_ref().and_then(crate::render::rich_message::render);
     let text = rich.unwrap_or_else(|| msg.message.clone());
 
     let media = msg
         .media
         .as_ref()
-        .map(crate::utils::media_description::describe_media);
+        .map(crate::telegram::media_description::describe_media);
 
     match (media, text.is_empty()) {
         (Some(media), false) => format!("{media} {text}"),

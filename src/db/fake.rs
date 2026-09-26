@@ -10,8 +10,8 @@ use super::{
     AdminAction, Db, DbResult, DeletedMessage, Event, EventKind, MediaFile, MessageInfo, ReplyRow,
     ReplyTarget, TelegramSession,
 };
-use crate::utils::peer_names::PeerNames;
-use crate::utils::poll_info::PollInfo;
+use crate::state::peer_names::PeerNames;
+use crate::state::poll_info::PollInfo;
 
 #[derive(Default)]
 pub struct FakeDb {

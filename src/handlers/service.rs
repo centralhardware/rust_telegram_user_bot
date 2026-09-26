@@ -1,6 +1,6 @@
 use grammers_client::peer::Peer;
 use grammers_client::update::Message;
-use crate::utils::console::{LogLine, Tone};
+use crate::render::console::{LogLine, Tone};
 
 use crate::db::Event;
 use crate::events::ServiceEvent;
@@ -25,12 +25,12 @@ pub async fn save_service(app: &App, message: &Message) -> bool {
     let Some(action) = message.action() else {
         return false;
     };
-    let Some(target) = crate::utils::service_action::target(message, action) else {
+    let Some(target) = crate::telegram::service_action::target(message, action) else {
         return false;
     };
 
     let chat_id = message.peer_id().bare_id_unchecked();
-    let kind = crate::utils::service_action::kind(action);
+    let kind = crate::telegram::service_action::kind(action);
 
     app.db.log_event(Event::from(ServiceEvent {
         date_time: message.date().as_second() as u32,
@@ -44,7 +44,7 @@ pub async fn save_service(app: &App, message: &Message) -> bool {
     .await;
 
     if !app.is_log_ignored(chat_id) {
-        let chat = crate::utils::peer_info::chat_info(app, message).await;
+        let chat = crate::state::peer_info::chat_info(app, message).await;
         let sender = message
             .sender()
             .map(|p| match p {

@@ -336,7 +336,7 @@ pub(super) async fn convert(
             continue;
         }
         let app = Arc::clone(app);
-        building.spawn(async move { crate::utils::event_of::event_of(&app, &message).await });
+        building.spawn(async move { crate::telegram::event_of::event_of(&app, &message).await });
         while building.len() >= CONCURRENCY {
             collect(&mut building, batch).await;
         }

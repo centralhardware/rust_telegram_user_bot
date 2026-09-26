@@ -61,7 +61,7 @@ use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 
 use crate::app::App;
-use crate::utils::console::{LogLine, Tone};
+use crate::render::console::{LogLine, Tone};
 use crate::db::Event;
 use std::sync::Arc;
 
@@ -102,7 +102,7 @@ pub struct RunningBackfills(pub(super) Mutex<HashSet<i64>>);
 
 /// Handle `!backfill` if this message is one. Returns whether it was.
 pub async fn handle_command(app: &Arc<App>, message: &Message) -> bool {
-    if !crate::utils::self_id::is_outgoing(app.me, message) {
+    if !crate::telegram::self_id::is_outgoing(app.me, message) {
         return false;
     }
     let text = message.text().trim();

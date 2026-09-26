@@ -44,7 +44,7 @@ pub fn entities(entities: Option<&[tl::enums::MessageEntity]>) -> Vec<Entity> {
 /// PageBlocks and its `entities` describe only the plain fallback, so it has
 /// none: what `message` holds there is already the rendered rich text.
 pub fn of_message(message: &grammers_client::message::Message) -> Vec<Entity> {
-    if crate::utils::rich_message::rich_text(message).is_some() {
+    if crate::render::rich_message::rich_text(message).is_some() {
         return Vec::new();
     }
     entities(message.fmt_entities().map(Vec::as_slice))
@@ -117,7 +117,7 @@ pub fn keyboard(markup: Option<&tl::enums::ReplyMarkup>) -> Vec<Button> {
 
 /// The keyboard of a message that arrived on an update.
 pub fn keyboard_of_message(message: &grammers_client::update::Message) -> Vec<Button> {
-    keyboard(crate::utils::inline_buttons::extract_reply_markup(&message.raw))
+    keyboard(crate::render::inline_buttons::extract_reply_markup(&message.raw))
 }
 
 /// The same, for a message that did not arrive on an update — a backfill fetches

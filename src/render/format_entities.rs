@@ -6,7 +6,7 @@ use grammers_tl_types as tl;
 pub fn formatted_text(message: &Message) -> String {
     // Rich messages (layer 228+) carry their body as PageBlocks; `message`/`entities`
     // only hold a plain fallback, so render the rich payload when it is there.
-    if let Some(rich) = crate::utils::rich_message::rich_text(message) {
+    if let Some(rich) = crate::render::rich_message::rich_text(message) {
         return rich;
     }
 
@@ -23,7 +23,7 @@ pub fn formatted_text(message: &Message) -> String {
 /// A rich message has no plain form of its own, so it is rendered as it is for the
 /// console.
 pub fn plain_text(message: &Message) -> String {
-    if let Some(rich) = crate::utils::rich_message::rich_text(message) {
+    if let Some(rich) = crate::render::rich_message::rich_text(message) {
         return rich;
     }
     message.text().to_string()

@@ -14,10 +14,10 @@ use crate::handlers::backfill_chat::RunningBackfills;
 use crate::handlers::media::MediaQueue;
 use crate::handlers::polls::PollCounts;
 use crate::s3::Storage;
-use crate::utils::admin_chats::AdminChats;
-use crate::utils::log_ignore::LogIgnore;
-use crate::utils::peer_names::WrittenNames;
-use crate::utils::topic::TopicNames;
+use crate::state::admin_chats::AdminChats;
+use crate::state::log_ignore::LogIgnore;
+use crate::state::peer_names::WrittenNames;
+use crate::state::topic::TopicNames;
 
 pub struct App {
     pub tg: Client,
@@ -140,7 +140,7 @@ mod tests {
             ..Event::of(EventKind::Send)
         });
 
-        let mut reply = crate::utils::reply_target::ReplyInfo {
+        let mut reply = crate::telegram::reply_target::ReplyInfo {
             reply_to: 100,
             ..Default::default()
         };
@@ -161,7 +161,7 @@ mod tests {
             ..Event::of(EventKind::Send)
         });
 
-        let mut reply = crate::utils::reply_target::ReplyInfo {
+        let mut reply = crate::telegram::reply_target::ReplyInfo {
             reply_to: 100,
             ..Default::default()
         };

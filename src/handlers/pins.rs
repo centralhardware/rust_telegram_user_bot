@@ -9,11 +9,11 @@
 //! grammers has no friendly variant for the update, so it arrives as
 //! `Update::Raw`, like the ephemeral ones.
 
-use crate::utils::console::{LogLine, Tone};
+use crate::render::console::{LogLine, Tone};
 
 use crate::db::Event;
 use crate::events::PinEvent;
-use crate::utils::peer_names::title_of;
+use crate::state::peer_names::title_of;
 use crate::app::App;
 
 pub async fn save_pinned(app: &App, chat_id: i64, dialog_id: i64, messages: &[i32], pinned: bool) {
