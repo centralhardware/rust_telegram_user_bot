@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use grammers_client::Client;
 
-use crate::clickhouse_session::ClickhouseSession;
+use crate::db::session::ClickhouseSession;
 use crate::db::Db;
 use crate::handlers::backfill_chat::RunningBackfills;
 use crate::handlers::media::MediaQueue;

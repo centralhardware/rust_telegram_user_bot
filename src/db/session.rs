@@ -1,3 +1,8 @@
+//! The grammers session store, kept in the `session_*` and `peer_cache` tables:
+//! the home DC, DC keys, update positions and every peer seen. Infrastructure
+//! for the Telegram client rather than something a handler asks for, so it
+//! uses the ClickHouse client directly instead of going through [`Db`](super::Db).
+
 use std::sync::PoisonError;
 use std::collections::HashMap;
 use std::sync::Mutex;
