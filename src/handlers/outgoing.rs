@@ -9,8 +9,8 @@ use crate::db::Event;
 
 #[derive(Row, Deserialize)]
 struct LastChatRow {
-    chat_title: String,
-    chat_usernames: Vec<String>,
+    title: String,
+    usernames: Vec<String>,
 }
 
 pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Result<Event, Box<dyn std::error::Error>> {
@@ -20,22 +20,26 @@ pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Resul
 
     let chat_id = message.peer_id().bare_id_unchecked();
 
-    // A chat Telegram would not name for us is still recognizable by whatever
-    // name it last went by here.
+    // A chat Telegram would not name for us, and `peer_names` has no name for,
+    // is still recognizable by whatever name it last went by here. Read from
+    // the buffer like every other read, so a title logged a moment ago counts,
+    // and with argMax rather than a sort of the chat's whole history.
     let (title, usernames) = if title.is_empty() {
         match crate::db::clickhouse()
             .query(
-                "SELECT chat_title, chat_usernames FROM events_log \
-                 WHERE chat_id = ? AND event = ? AND chat_title != '' \
-                 ORDER BY date_time DESC LIMIT 1",
+                "SELECT argMax(chat_title, date_time) AS title, \
+                        argMax(chat_usernames, date_time) AS usernames \
+                 FROM events_log_buffer \
+                 WHERE chat_id = ? AND event = ? AND chat_title != ''",
             )
             .bind(chat_id)
             .bind(crate::db::SEND)
             .fetch_one::<LastChatRow>()
             .await
         {
-            Ok(row) => (row.chat_title, row.chat_usernames),
-            Err(_) => (title, usernames),
+            // With no row to aggregate the title comes back empty: no name.
+            Ok(row) if !row.title.is_empty() => (row.title, row.usernames),
+            _ => (title, usernames),
         }
     } else {
         (title, usernames)
