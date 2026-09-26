@@ -304,6 +304,9 @@ pub struct Event {
     /// The peer a guest-chat message actually came from, when `user_id` is only
     /// the relay it arrived through.
     pub guest_from_id: i64,
+    /// The channel the message was sent as, when `user_id` is 0 because no
+    /// user is named -- "send as", an anonymous admin, a channel post.
+    pub sender_chat_id: i64,
     pub post_author: String,
     /// Telegram's own flags. `ttl_period` is the self-destruct timer in seconds.
     pub pinned: bool,

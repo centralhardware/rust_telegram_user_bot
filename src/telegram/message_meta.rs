@@ -19,6 +19,7 @@ pub struct MessageMeta {
     pub grouped_id: u64,
     pub via_bot_id: u64,
     pub guest_from_id: i64,
+    pub sender_chat_id: i64,
     pub post_author: String,
     pub pinned: bool,
     pub silent: bool,
@@ -53,6 +54,16 @@ fn of_message(msg: &tl::types::Message) -> MessageMeta {
             .as_ref()
             .map(|peer| PeerId::from(peer).bot_api_dialog_id_unchecked())
             .unwrap_or(0),
+        // A message sent as a channel -- "send as", an anonymous admin, a
+        // channel's own post -- has a channel for `from_id` and no user behind
+        // it, so `user_id` stays 0. Kept as a dialog id, like the Bot API's
+        // `sender_chat`.
+        sender_chat_id: match msg.from_id.as_ref() {
+            Some(peer @ (tl::enums::Peer::Channel(_) | tl::enums::Peer::Chat(_))) => {
+                PeerId::from(peer).bot_api_dialog_id_unchecked()
+            }
+            _ => 0,
+        },
         post_author: msg.post_author.clone().unwrap_or_default(),
         pinned: msg.pinned,
         silent: msg.silent,
