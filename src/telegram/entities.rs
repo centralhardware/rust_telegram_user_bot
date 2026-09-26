@@ -117,7 +117,12 @@ pub fn keyboard(markup: Option<&tl::enums::ReplyMarkup>) -> Vec<Button> {
             row.buttons.iter().map(move |button| {
                 let tl::enums::KeyboardInlineButton::Button(b) = button;
                 let (kind, payload) = button_kind(&b.r#type);
-                (index.min(u8::MAX as usize) as u8, b.text.clone(), kind.to_string(), payload)
+                (
+                    index.min(u8::MAX as usize) as u8,
+                    b.text.clone(),
+                    kind.to_string(),
+                    payload,
+                )
             })
         })
         .collect()
@@ -125,7 +130,9 @@ pub fn keyboard(markup: Option<&tl::enums::ReplyMarkup>) -> Vec<Button> {
 
 /// The keyboard of a message that arrived on an update.
 pub fn keyboard_of_message(message: &grammers_client::update::Message) -> Vec<Button> {
-    keyboard(crate::render::inline_buttons::extract_reply_markup(&message.raw))
+    keyboard(crate::render::inline_buttons::extract_reply_markup(
+        &message.raw,
+    ))
 }
 
 /// The same, for a message that did not arrive on an update — a backfill fetches
@@ -187,7 +194,12 @@ mod tests {
         .into();
         assert_eq!(
             entities(Some(&[link])),
-            vec![("text_link".to_string(), 0, 2, "https://example.com".to_string())]
+            vec![(
+                "text_link".to_string(),
+                0,
+                2,
+                "https://example.com".to_string()
+            )]
         );
     }
 
@@ -214,12 +226,14 @@ mod tests {
     fn a_keyboard_remembers_which_row_a_button_sits_in() {
         let row = |text: &str, kind: tl::enums::InlineButtonType| {
             tl::enums::KeyboardInlineButtonRow::from(tl::types::KeyboardInlineButtonRow {
-                buttons: vec![tl::types::KeyboardInlineButton {
-                    style: None,
-                    text: text.into(),
-                    r#type: kind,
-                }
-                .into()],
+                buttons: vec![
+                    tl::types::KeyboardInlineButton {
+                        style: None,
+                        text: text.into(),
+                        r#type: kind,
+                    }
+                    .into(),
+                ],
             })
         };
         let markup: tl::enums::ReplyMarkup = tl::types::ReplyInlineMarkup {
@@ -246,7 +260,12 @@ mod tests {
         assert_eq!(
             keyboard(Some(&markup)),
             vec![
-                (0, "Open".to_string(), "url".to_string(), "https://example.com".to_string()),
+                (
+                    0,
+                    "Open".to_string(),
+                    "url".to_string(),
+                    "https://example.com".to_string()
+                ),
                 (1, "Nope".to_string(), "callback".to_string(), String::new()),
             ]
         );

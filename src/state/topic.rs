@@ -1,5 +1,5 @@
-use grammers_client::message::Message;
 use grammers_client::Client;
+use grammers_client::message::Message;
 
 use crate::app::App;
 use grammers_tl_types as tl;

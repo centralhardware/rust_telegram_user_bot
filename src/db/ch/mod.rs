@@ -9,8 +9,8 @@ use log::{debug, error, warn};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AdminAction, DbResult, DeletedMessage, Event, EventKind, EVENTS, MediaFile, MessageInfo,
-    ReplyRow, ReplyTarget, TelegramSession, Db,
+    AdminAction, Db, DbResult, DeletedMessage, EVENTS, Event, EventKind, MediaFile, MessageInfo,
+    ReplyRow, ReplyTarget, TelegramSession,
 };
 use crate::state::peer_names::PeerNames;
 use crate::state::poll_info::PollInfo;
@@ -47,7 +47,11 @@ impl ClickhouseDb {
 
 /// Write rows to a table. Nothing is queued here: `async_insert` on the client
 /// means the server holds the rows and decides when they become a part.
-pub async fn insert_rows<T>(ch: &Client, table: &str, rows: &[T]) -> Result<(), clickhouse::error::Error>
+pub async fn insert_rows<T>(
+    ch: &Client,
+    table: &str,
+    rows: &[T],
+) -> Result<(), clickhouse::error::Error>
 where
     T: Serialize + Send + 'static,
     for<'a> T: Row<Value<'a> = T>,

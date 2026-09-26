@@ -8,13 +8,13 @@
 //! grammers has no friendly variant for the update yet, so it arrives as
 //! `Update::Raw`, like the ephemeral ones.
 
+use crate::render::console::{LogLine, Tone};
 use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;
-use crate::render::console::{LogLine, Tone};
 
+use crate::app::App;
 use crate::db::Event;
 use crate::events::ReactionEvent;
-use crate::app::App;
 
 pub async fn save_reactions(app: &App, update: &tl::types::UpdateMessageReactions) {
     // `chat_id` in `events_log` is the bare id every message path writes; the
@@ -49,13 +49,14 @@ pub async fn save_reactions(app: &App, update: &tl::types::UpdateMessageReaction
             .print();
     }
 
-    app.db.log_event(Event::from(ReactionEvent {
-        date_time: chrono::Utc::now().timestamp() as u32,
-        chat_id,
-        message_id: update.msg_id as i64,
-        reactions: counts,
-    }))
-    .await;
+    app.db
+        .log_event(Event::from(ReactionEvent {
+            date_time: chrono::Utc::now().timestamp() as u32,
+            chat_id,
+            message_id: update.msg_id as i64,
+            reactions: counts,
+        }))
+        .await;
 }
 
 /// How the reaction is keyed. `Empty` is the absence of one and never appears in

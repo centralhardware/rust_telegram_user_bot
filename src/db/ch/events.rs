@@ -65,11 +65,17 @@ impl ClickhouseDb {
         }
     }
 
-    pub(super) async fn find_deleted(&self, channel: Option<i64>, message_ids: &[i64]) -> Vec<DeletedMessage> {
+    pub(super) async fn find_deleted(
+        &self,
+        channel: Option<i64>,
+        message_ids: &[i64],
+    ) -> Vec<DeletedMessage> {
         let chats = match channel {
             Some(_) => "chat_id = ?",
-            None => "chat_id IN (SELECT if(peer_id > 0, peer_id, -peer_id) FROM peer_names_buffer \
-                     WHERE peer_id > -1000000000000)",
+            None => {
+                "chat_id IN (SELECT if(peer_id > 0, peer_id, -peer_id) FROM peer_names_buffer \
+                     WHERE peer_id > -1000000000000)"
+            }
         };
         let sql = format!(
             "WITH m AS ( \
@@ -93,7 +99,11 @@ impl ClickhouseDb {
                  WHERE chat_id IN (SELECT chat_id FROM m) AND event = ? AND chat_title != '' \
                  GROUP BY chat_id) AS t ON t.chat_id = m.chat_id"
         );
-        let mut query = self.ch.query(&sql).bind(EventKind::Edit).bind(EventKind::Send);
+        let mut query = self
+            .ch
+            .query(&sql)
+            .bind(EventKind::Edit)
+            .bind(EventKind::Send);
         if let Some(chat_id) = channel {
             query = query.bind(chat_id);
         }
@@ -191,7 +201,9 @@ impl ClickhouseDb {
     pub(super) async fn logged_chat_ids(&self) -> DbResult<HashSet<i64>> {
         Ok(self
             .ch
-            .query(&format!("SELECT DISTINCT chat_id FROM {EVENTS} WHERE NOT ephemeral"))
+            .query(&format!(
+                "SELECT DISTINCT chat_id FROM {EVENTS} WHERE NOT ephemeral"
+            ))
             .fetch_all::<i64>()
             .await?
             .into_iter()

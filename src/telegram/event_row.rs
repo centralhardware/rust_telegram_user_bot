@@ -43,7 +43,9 @@ pub fn build(message: &tl::enums::Message, cx: Context) -> Event {
         tl::enums::Message::Service(m) => (m.id, m.date, Some(&m.peer_id)),
         tl::enums::Message::Empty(m) => (m.id, 0, m.peer_id.as_ref()),
     };
-    let chat_id = peer.map(|p| PeerId::from(p).bare_id_unchecked()).unwrap_or(0);
+    let chat_id = peer
+        .map(|p| PeerId::from(p).bare_id_unchecked())
+        .unwrap_or(0);
 
     // The text as the sender wrote it — its formatting and its buttons are
     // columns of their own — or, with no text, the action or the media it
@@ -145,7 +147,14 @@ mod tests {
 
     #[test]
     fn a_text_reply_keeps_its_text_entities_and_target() {
-        let e = row("text_reply", Context { chat: chat(), reply_to_user_id: 9, ..Default::default() });
+        let e = row(
+            "text_reply",
+            Context {
+                chat: chat(),
+                reply_to_user_id: 9,
+                ..Default::default()
+            },
+        );
 
         assert_eq!(e.event, EventKind::Send);
         // The bare id, the way every row keeps it — not the -100… dialog form.
@@ -153,15 +162,28 @@ mod tests {
         assert_eq!((e.message_id, e.date_time), (42, 1_700_000_000));
         assert_eq!(e.message, "hello world");
         assert_eq!(e.entities, [("bold".to_string(), 6, 5, String::new())]);
-        assert_eq!((e.reply_to, e.reply_to_user_id, e.reply_to_chat_id), (40, 9, 0));
+        assert_eq!(
+            (e.reply_to, e.reply_to_user_id, e.reply_to_chat_id),
+            (40, 9, 0)
+        );
         assert_eq!(e.quote_text, "hi");
-        assert_eq!((e.chat_title.as_str(), e.chat_usernames.as_slice()), ("Chat", &["chat".to_string()][..]));
+        assert_eq!(
+            (e.chat_title.as_str(), e.chat_usernames.as_slice()),
+            ("Chat", &["chat".to_string()][..])
+        );
         assert!(e.media_type.is_empty() && e.action.is_empty());
     }
 
     #[test]
     fn a_plain_message_in_a_topic_is_not_a_reply_to_the_topic() {
-        let e = row("topic_message", Context { topic_id: 10, topic_name: "Topic".into(), ..Default::default() });
+        let e = row(
+            "topic_message",
+            Context {
+                topic_id: 10,
+                topic_name: "Topic".into(),
+                ..Default::default()
+            },
+        );
 
         assert_eq!(e.reply_to, 0);
         assert_eq!((e.topic_id, e.topic_name.as_str()), (10, "Topic"));
@@ -184,7 +206,10 @@ mod tests {
 
         assert_eq!(e.media_type, "photo");
         assert_eq!((e.width, e.height), (1280, 720));
-        assert!(!e.message.is_empty(), "a captionless photo still says what it is");
+        assert!(
+            !e.message.is_empty(),
+            "a captionless photo still says what it is"
+        );
         assert!(e.entities.is_empty());
     }
 
@@ -192,7 +217,10 @@ mod tests {
     fn a_service_message_carries_its_action() {
         let e = row(
             "service_title",
-            Context { action_desc: Some("[title changed to \"New title\"]".into()), ..Default::default() },
+            Context {
+                action_desc: Some("[title changed to \"New title\"]".into()),
+                ..Default::default()
+            },
         );
 
         assert_eq!(e.chat_id, 1001);
@@ -204,7 +232,13 @@ mod tests {
 
     #[test]
     fn the_raw_column_is_what_the_caller_serialised() {
-        let e = row("text_reply", Context { raw: "{\"NewMessage\":{}}".into(), ..Default::default() });
+        let e = row(
+            "text_reply",
+            Context {
+                raw: "{\"NewMessage\":{}}".into(),
+                ..Default::default()
+            },
+        );
         assert_eq!(e.raw, "{\"NewMessage\":{}}");
     }
 }

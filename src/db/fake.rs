@@ -34,7 +34,9 @@ impl FakeDb {
             .lock()
             .unwrap()
             .iter()
-            .filter(|e| e.chat_id == chat_id && e.message_id == message_id && kinds.contains(&e.event))
+            .filter(|e| {
+                e.chat_id == chat_id && e.message_id == message_id && kinds.contains(&e.event)
+            })
             .max_by_key(|e| (e.event == EventKind::Edit, e.date_time))
             .cloned()
     }
@@ -44,7 +46,9 @@ impl FakeDb {
             .lock()
             .unwrap()
             .iter()
-            .filter(|e| e.chat_id == chat_id && e.event == EventKind::Send && !e.chat_title.is_empty())
+            .filter(|e| {
+                e.chat_id == chat_id && e.event == EventKind::Send && !e.chat_title.is_empty()
+            })
             .max_by_key(|e| e.date_time)
             .map(|e| e.chat_title.clone())
             .unwrap_or_default()
@@ -77,7 +81,9 @@ impl Db for FakeDb {
         let mut found = Vec::new();
         for &id in message_ids {
             let send = self.events().into_iter().find(|e| {
-                e.message_id == id && e.event == EventKind::Send && channel.is_none_or(|c| e.chat_id == c)
+                e.message_id == id
+                    && e.event == EventKind::Send
+                    && channel.is_none_or(|c| e.chat_id == c)
             });
             let Some(send) = send else { continue };
             let info = self.find_message(send.chat_id, id).await;
@@ -109,13 +115,14 @@ impl Db for FakeDb {
     }
 
     async fn find_reply_row(&self, chat_id: i64, message_id: i64) -> Option<ReplyRow> {
-        self.latest(chat_id, message_id, &[EventKind::Send]).map(|e| ReplyRow {
-            message: e.message,
-            user_id: e.user_id,
-            chat_title: e.chat_title,
-            fwd_from_chat_id: e.fwd_from_chat_id,
-            fwd_from_msg_id: e.fwd_from_msg_id,
-        })
+        self.latest(chat_id, message_id, &[EventKind::Send])
+            .map(|e| ReplyRow {
+                message: e.message,
+                user_id: e.user_id,
+                chat_title: e.chat_title,
+                fwd_from_chat_id: e.fwd_from_chat_id,
+                fwd_from_msg_id: e.fwd_from_msg_id,
+            })
     }
 
     async fn message_exists(&self, chat_id: i64, message_id: i64) -> bool {
@@ -150,7 +157,14 @@ impl Db for FakeDb {
     }
 
     async fn logged_chat_ids(&self) -> DbResult<HashSet<i64>> {
-        Ok(self.events.lock().unwrap().iter().filter(|e| !e.ephemeral).map(|e| e.chat_id).collect())
+        Ok(self
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| !e.ephemeral)
+            .map(|e| e.chat_id)
+            .collect())
     }
 
     async fn last_chat_name(&self, chat_id: i64) -> Option<(String, Vec<String>)> {
@@ -158,7 +172,9 @@ impl Db for FakeDb {
             .lock()
             .unwrap()
             .iter()
-            .filter(|e| e.chat_id == chat_id && e.event == EventKind::Send && !e.chat_title.is_empty())
+            .filter(|e| {
+                e.chat_id == chat_id && e.event == EventKind::Send && !e.chat_title.is_empty()
+            })
             .max_by_key(|e| e.date_time)
             .map(|e| (e.chat_title.clone(), e.chat_usernames.clone()))
     }
@@ -202,7 +218,10 @@ impl Db for FakeDb {
     }
 
     async fn write_peer_names(&self, names: &PeerNames) {
-        self.peer_names.lock().unwrap().insert(names.peer_id, names.clone());
+        self.peer_names
+            .lock()
+            .unwrap()
+            .insert(names.peer_id, names.clone());
     }
 
     async fn last_admin_event_id(&self, chat_id: u64) -> u64 {
@@ -217,7 +236,10 @@ impl Db for FakeDb {
     }
 
     async fn write_admin_actions(&self, actions: &[AdminAction]) -> DbResult<()> {
-        self.admin_actions.lock().unwrap().extend_from_slice(actions);
+        self.admin_actions
+            .lock()
+            .unwrap()
+            .extend_from_slice(actions);
         Ok(())
     }
 

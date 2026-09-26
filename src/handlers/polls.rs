@@ -13,9 +13,9 @@
 //! text when they are text and as hex when they are not; the wording lines up
 //! with the counts by position, in the order the poll was created with.
 
+use crate::render::console::{LogLine, Tone};
 use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;
-use crate::render::console::{LogLine, Tone};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -78,19 +78,20 @@ pub async fn save_poll(app: &App, update: &tl::types::UpdateMessagePoll) {
     let mut chat_title = String::new();
     let mut message_id = update.msg_id.unwrap_or(0) as i64;
     if (question.is_empty() || peer.is_none() || message_id == 0)
-        && let Some(info) = poll_info::load(app, update.poll_id).await {
-            if question.is_empty() {
-                question = info.question;
-                options = info.options;
-            }
-            if chat_id == 0 {
-                chat_id = info.chat_id;
-            }
-            if message_id == 0 {
-                message_id = info.message_id;
-            }
-            chat_title = info.chat_title;
+        && let Some(info) = poll_info::load(app, update.poll_id).await
+    {
+        if question.is_empty() {
+            question = info.question;
+            options = info.options;
         }
+        if chat_id == 0 {
+            chat_id = info.chat_id;
+        }
+        if message_id == 0 {
+            message_id = info.message_id;
+        }
+        chat_title = info.chat_title;
+    }
 
     if !app.is_log_ignored(chat_id) {
         let title = match &peer {
@@ -119,18 +120,19 @@ pub async fn save_poll(app: &App, update: &tl::types::UpdateMessagePoll) {
             .print();
     }
 
-    app.db.log_event(Event::from(PollEvent {
-        date_time: chrono::Utc::now().timestamp() as u32,
-        chat_id,
-        message_id,
-        topic_id: update.top_msg_id.unwrap_or(0),
-        poll_id: update.poll_id,
-        poll_question: question,
-        poll_options: options,
-        poll_results: counts,
-        poll_total_voters: results.total_voters.unwrap_or(0).max(0) as u32,
-    }))
-    .await;
+    app.db
+        .log_event(Event::from(PollEvent {
+            date_time: chrono::Utc::now().timestamp() as u32,
+            chat_id,
+            message_id,
+            topic_id: update.top_msg_id.unwrap_or(0),
+            poll_id: update.poll_id,
+            poll_question: question,
+            poll_options: options,
+            poll_results: counts,
+            poll_total_voters: results.total_voters.unwrap_or(0).max(0) as u32,
+        }))
+        .await;
 }
 
 const QUESTION_WIDTH: usize = 40;
@@ -181,7 +183,10 @@ fn render_counts(
         .iter()
         .enumerate()
         .map(|(i, (key, _))| {
-            let label = options.get(i).filter(|o| !o.trim().is_empty()).unwrap_or(key);
+            let label = options
+                .get(i)
+                .filter(|o| !o.trim().is_empty())
+                .unwrap_or(key);
             clip(label, OPTION_WIDTH)
         })
         .collect();
@@ -194,7 +199,11 @@ fn render_counts(
         .filter(|(i, _)| changed.get(*i).copied().unwrap_or(true))
         .map(|(_, ((_, voters), label))| {
             let share = (voters * 100).checked_div(total).unwrap_or(0);
-            let star = if top > 0 && *voters == top { " ★" } else { "" };
+            let star = if top > 0 && *voters == top {
+                " ★"
+            } else {
+                ""
+            };
             format!("{label:<pad$} × {voters} ({share}%){star}")
         })
         .collect()
@@ -211,7 +220,7 @@ fn option_key(option: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{changed_options, clip, option_key, render_counts, PollCounts};
+    use super::{PollCounts, changed_options, clip, option_key, render_counts};
 
     #[test]
     fn an_option_is_keyed_by_its_bytes_as_text_when_they_are_text() {

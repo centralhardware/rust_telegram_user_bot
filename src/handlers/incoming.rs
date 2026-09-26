@@ -1,10 +1,10 @@
 use grammers_client::update::Message;
 
-use crate::db::Event;
 use super::extract::extract_community_tag_from_update;
 use super::send::Body;
-use crate::state::peer_info::{chat_info, sender_info};
 use crate::app::App;
+use crate::db::Event;
+use crate::state::peer_info::{chat_info, sender_info};
 
 pub async fn save_incoming(app: &App, message: &Message) -> anyhow::Result<Event> {
     let sender = sender_info(app, message).await;
@@ -16,10 +16,24 @@ pub async fn save_incoming(app: &App, message: &Message) -> anyhow::Result<Event
     } else {
         format!("{} {}", sender.first_name, sender.second_name)
     };
-    let body = Body::of(app, message, Some(sender.user_id as i64), Some(&sender_display)).await;
+    let body = Body::of(
+        app,
+        message,
+        Some(sender.user_id as i64),
+        Some(&sender_display),
+    )
+    .await;
 
     if !app.is_log_ignored(chat_id) {
-        super::send::print(app, message, &body, ("incoming", crate::render::console::Tone::Incoming), &chat.chat_title, &sender_display).await;
+        super::send::print(
+            app,
+            message,
+            &body,
+            ("incoming", crate::render::console::Tone::Incoming),
+            &chat.chat_title,
+            &sender_display,
+        )
+        .await;
     }
 
     let event = Event {

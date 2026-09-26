@@ -8,10 +8,10 @@
 
 use grammers_client::message::Message;
 
+use crate::app::App;
 use crate::db::Event;
 use crate::handlers::extract::extract_community_tag;
 use crate::state::peer_info::{chat_info, sender_info};
-use crate::app::App;
 
 pub async fn event_of(app: &App, msg: &Message) -> Event {
     let chat_id = msg.peer_id().bare_id_unchecked();

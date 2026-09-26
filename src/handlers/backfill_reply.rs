@@ -1,10 +1,9 @@
-use grammers_client::update::Message;
-use grammers_tl_types as tl;
-use anyhow::Context;
-use log::{debug, info};
 use crate::app::App;
 use crate::render::console::{LogLine, Tone};
-
+use anyhow::Context;
+use grammers_client::update::Message;
+use grammers_tl_types as tl;
+use log::{debug, info};
 
 /// If the message is a reply and the replied-to message is not yet in ClickHouse,
 /// fetch it from Telegram and save it.
@@ -50,13 +49,18 @@ pub async fn backfill_reply(app: &App, message: &Message) -> anyhow::Result<()> 
     };
 
     if matches!(reply.raw, tl::enums::Message::Empty(_)) {
-        info!("reply_to {} is an empty message, skipping backfill", reply_id);
+        info!(
+            "reply_to {} is an empty message, skipping backfill",
+            reply_id
+        );
         return Ok(());
     }
 
     // The row a live update would have produced, built where every caller
     // that logs a fetched message builds it.
-    app.db.log_event(crate::telegram::event_of::event_of(app, &reply).await).await;
+    app.db
+        .log_event(crate::telegram::event_of::event_of(app, &reply).await)
+        .await;
 
     if !app.is_log_ignored(chat_id) {
         LogLine::new(Tone::Info, "backfill", reply_id)

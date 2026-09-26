@@ -87,7 +87,11 @@ impl<'a> Pages<'a> {
             };
 
         self.done = last_page || !self.advance(&dialogs, &messages, &chats, &users);
-        Ok(Some(Page { dialogs, chats, users }))
+        Ok(Some(Page {
+            dialogs,
+            chats,
+            users,
+        }))
     }
 
     /// Move the request on to the page after this one. False when there is
@@ -117,17 +121,15 @@ impl<'a> Pages<'a> {
         chats: &[tl::enums::Chat],
         users: &[tl::enums::User],
     ) -> bool {
-        let Some((offset_id, offset_date, offset_peer)) =
-            dialogs.iter().rev().find_map(|dialog| {
-                let (peer, top_message) = dialog_offset(dialog)?;
-                let peer = address(&peer, chats, users)?;
-                let date = messages
-                    .iter()
-                    .find(|m| m.id() == top_message)
-                    .and_then(message_date)?;
-                Some((top_message, date, peer))
-            })
-        else {
+        let Some((offset_id, offset_date, offset_peer)) = dialogs.iter().rev().find_map(|dialog| {
+            let (peer, top_message) = dialog_offset(dialog)?;
+            let peer = address(&peer, chats, users)?;
+            let date = messages
+                .iter()
+                .find(|m| m.id() == top_message)
+                .and_then(message_date)?;
+            Some((top_message, date, peer))
+        }) else {
             return false;
         };
         // An offset that did not move would ask for the same page forever.

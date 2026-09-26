@@ -13,14 +13,14 @@
 //! two can never collapse onto each other, and they share `events_log` like every
 //! other message event.
 
+use crate::render::console::{LogLine, Tone};
 use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;
-use crate::render::console::{LogLine, Tone};
 
+use crate::app::App;
 use crate::db::{Event, EventKind};
 use crate::events::DeleteEvent;
 use crate::state::peer_names;
-use crate::app::App;
 
 /// A new or edited ephemeral message. `event` is the column the two share a
 /// table under: `"new"` or `"edit"`.
@@ -52,26 +52,31 @@ pub async fn save_ephemeral(app: &App, message: &tl::enums::EphemeralMessage, ev
             .print();
     }
 
-    app.db.log_event(Event {
-        date_time: msg.date as u32,
-        chat_id,
-        chat_title,
-        message_id: msg.id as i64,
-        message: stored,
-        entities: crate::telegram::entities::entities(msg.entities.as_deref()),
-        keyboard: crate::telegram::entities::keyboard(msg.reply_markup.as_ref()),
-        user_id: sender.bare_id_unchecked() as u64,
-        out: msg.out,
-        receiver_id: msg.receiver_id as u64,
-        topic_id: msg.top_msg_id.unwrap_or(0),
-        reply_to,
-        reply_to_ephemeral,
-        welcome: msg.welcome_template,
-        ephemeral: true,
-        // Telegram calls a new one "new"; the log calls a new message a send.
-        ..Event::of(if event == "new" { EventKind::Send } else { EventKind::Edit })
-    })
-    .await;
+    app.db
+        .log_event(Event {
+            date_time: msg.date as u32,
+            chat_id,
+            chat_title,
+            message_id: msg.id as i64,
+            message: stored,
+            entities: crate::telegram::entities::entities(msg.entities.as_deref()),
+            keyboard: crate::telegram::entities::keyboard(msg.reply_markup.as_ref()),
+            user_id: sender.bare_id_unchecked() as u64,
+            out: msg.out,
+            receiver_id: msg.receiver_id as u64,
+            topic_id: msg.top_msg_id.unwrap_or(0),
+            reply_to,
+            reply_to_ephemeral,
+            welcome: msg.welcome_template,
+            ephemeral: true,
+            // Telegram calls a new one "new"; the log calls a new message a send.
+            ..Event::of(if event == "new" {
+                EventKind::Send
+            } else {
+                EventKind::Edit
+            })
+        })
+        .await;
 }
 
 /// Ephemeral messages are deleted by id alone: Telegram names the chat and the
@@ -84,19 +89,22 @@ pub async fn save_ephemeral_deleted(app: &App, peer: &tl::enums::Peer, ids: &[i3
 
     if !app.is_log_ignored(chat_id) {
         for id in ids {
-            LogLine::new(Tone::Ephemeral, "eph del", id).chat(&chat_title).print();
+            LogLine::new(Tone::Ephemeral, "eph del", id)
+                .chat(&chat_title)
+                .print();
         }
     }
 
     for id in ids {
-        app.db.log_event(Event::from(DeleteEvent {
-            date_time,
-            chat_id,
-            chat_title: chat_title.clone(),
-            message_id: *id as i64,
-            ephemeral: true,
-        }))
-        .await;
+        app.db
+            .log_event(Event::from(DeleteEvent {
+                date_time,
+                chat_id,
+                chat_title: chat_title.clone(),
+                message_id: *id as i64,
+                ephemeral: true,
+            }))
+            .await;
     }
 }
 
@@ -104,7 +112,10 @@ pub async fn save_ephemeral_deleted(app: &App, peer: &tl::enums::Peer, ids: &[i3
 /// text with its entities, with the media description and the buttons around it
 /// exactly as an ordinary message gets them.
 fn body(msg: &tl::types::EphemeralMessage) -> String {
-    let rich = msg.rich_message.as_ref().and_then(crate::render::rich_message::render);
+    let rich = msg
+        .rich_message
+        .as_ref()
+        .and_then(crate::render::rich_message::render);
     let text = match rich {
         Some(rich) => rich,
         None => crate::render::format_entities::render(&msg.message, msg.entities.as_deref()),
@@ -138,7 +149,10 @@ fn body(msg: &tl::types::EphemeralMessage) -> String {
 /// standing in for it when there is none. The formatting and the buttons `body`
 /// renders in are columns of their own.
 fn stored_body(msg: &tl::types::EphemeralMessage) -> String {
-    let rich = msg.rich_message.as_ref().and_then(crate::render::rich_message::render);
+    let rich = msg
+        .rich_message
+        .as_ref()
+        .and_then(crate::render::rich_message::render);
     let text = rich.unwrap_or_else(|| msg.message.clone());
 
     let media = msg

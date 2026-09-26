@@ -143,7 +143,11 @@ fn render_block(block: &tl::enums::PageBlock) -> String {
             }
         }
         B::Photo(b) => {
-            let label = if b.spoiler { "[photo, spoiler]" } else { "[photo]" };
+            let label = if b.spoiler {
+                "[photo, spoiler]"
+            } else {
+                "[photo]"
+            };
             let label = match &b.url {
                 Some(url) => format!("{}({})", label, url),
                 None => label.to_string(),
@@ -151,7 +155,11 @@ fn render_block(block: &tl::enums::PageBlock) -> String {
             with_page_caption(label, &b.caption)
         }
         B::Video(b) => {
-            let label = if b.spoiler { "[video, spoiler]" } else { "[video]" };
+            let label = if b.spoiler {
+                "[video, spoiler]"
+            } else {
+                "[video]"
+            };
             with_page_caption(label.to_string(), &b.caption)
         }
         B::Audio(b) => with_page_caption("[audio]".into(), &b.caption),
@@ -201,7 +209,11 @@ fn render_block(block: &tl::enums::PageBlock) -> String {
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            if title.is_empty() { articles } else { format!("{}\n{}", title, articles) }
+            if title.is_empty() {
+                articles
+            } else {
+                format!("{}\n{}", title, articles)
+            }
         }
         B::ButtonRow(b) => b
             .buttons
@@ -373,7 +385,13 @@ fn quote(text: &str) -> String {
         return String::new();
     }
     text.lines()
-        .map(|l| if l.is_empty() { ">".to_string() } else { format!("> {}", l) })
+        .map(|l| {
+            if l.is_empty() {
+                ">".to_string()
+            } else {
+                format!("> {}", l)
+            }
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -404,4 +422,3 @@ fn format_date(ts: i32) -> String {
         .map(|d| d.format("%Y-%m-%d").to_string())
         .unwrap_or_default()
 }
-

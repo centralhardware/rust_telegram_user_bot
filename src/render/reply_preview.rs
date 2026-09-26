@@ -1,7 +1,7 @@
+use crate::app::App;
+use crate::render::console::{LogLine, Tone, emphasize};
 use grammers_client::message::Message;
 use grammers_tl_types as tl;
-use crate::app::App;
-use crate::render::console::{emphasize, LogLine, Tone};
 
 /// A logged message, as the preview above a reply needs it.
 #[derive(Default)]
@@ -57,7 +57,11 @@ pub async fn format_reply_line(app: &App, message: &Message) -> String {
 /// sent it, and its text.
 async fn render(app: &App, id: i32, target: &Target, quote_text: Option<&str>) -> String {
     let chat = source_title(app, target).await;
-    let sender = if target.is_post() { "post" } else { target.sender.as_str() };
+    let sender = if target.is_post() {
+        "post"
+    } else {
+        target.sender.as_str()
+    };
     let marker = if target.is_post() { "»" } else { ">" };
 
     let body = if target.text.is_empty() {
@@ -100,7 +104,13 @@ async fn lookup(app: &App, chat_id: i64, message_id: i32) -> Target {
     let Some(row) = app.db.find_reply_row(chat_id, message_id as i64).await else {
         return Target::default();
     };
-    let crate::db::ReplyRow { message: text, user_id, chat_title, fwd_from_chat_id: fwd_chat, fwd_from_msg_id: fwd_msg } = row;
+    let crate::db::ReplyRow {
+        message: text,
+        user_id,
+        chat_title,
+        fwd_from_chat_id: fwd_chat,
+        fwd_from_msg_id: fwd_msg,
+    } = row;
 
     let sender = match crate::state::peer_names::load(app, user_id as i64).await {
         Some(n) if !n.last_name.is_empty() => format!("{} {}", n.first_name, n.last_name),

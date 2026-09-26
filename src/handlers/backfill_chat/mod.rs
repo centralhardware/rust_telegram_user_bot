@@ -61,8 +61,8 @@ use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 
 use crate::app::App;
-use crate::render::console::{LogLine, Tone};
 use crate::db::Event;
+use crate::render::console::{LogLine, Tone};
 use std::sync::Arc;
 
 mod new;
@@ -238,7 +238,9 @@ pub async fn handle_command(app: &Arc<App>, message: &Message) -> bool {
         if let Some(status) = &status {
             let _ = status.edit(outcome.line.as_str()).await;
         }
-        LogLine::new(Tone::Info, "backfill", chat_id).body(&outcome.to_string()).print();
+        LogLine::new(Tone::Info, "backfill", chat_id)
+            .body(&outcome.to_string())
+            .print();
         app.backfills.0.lock().await.remove(&chat_id);
     });
 

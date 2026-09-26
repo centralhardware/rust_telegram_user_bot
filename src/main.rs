@@ -3,10 +3,10 @@ mod db;
 mod dispatch;
 mod events;
 mod handlers;
+mod render;
 mod s3;
 mod schedulers;
 mod session;
-mod render;
 mod state;
 mod telegram;
 

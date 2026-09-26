@@ -11,10 +11,10 @@
 
 use crate::render::console::{LogLine, Tone};
 
+use crate::app::App;
 use crate::db::Event;
 use crate::events::PinEvent;
 use crate::state::peer_names::title_of;
-use crate::app::App;
 
 pub async fn save_pinned(app: &App, chat_id: i64, dialog_id: i64, messages: &[i32], pinned: bool) {
     let date_time = chrono::Utc::now().timestamp() as u32;
@@ -28,14 +28,15 @@ pub async fn save_pinned(app: &App, chat_id: i64, dialog_id: i64, messages: &[i3
     }
 
     for &id in messages {
-        app.db.log_event(Event::from(PinEvent {
-            date_time,
-            chat_id,
-            message_id: id as i64,
-            // The state the message is in after the update, so a row read on
-            // its own says which way it went.
-            pinned,
-        }))
-        .await;
+        app.db
+            .log_event(Event::from(PinEvent {
+                date_time,
+                chat_id,
+                message_id: id as i64,
+                // The state the message is in after the update, so a row read on
+                // its own says which way it went.
+                pinned,
+            }))
+            .await;
     }
 }

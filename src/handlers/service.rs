@@ -1,10 +1,10 @@
+use crate::render::console::{LogLine, Tone};
 use grammers_client::peer::Peer;
 use grammers_client::update::Message;
-use crate::render::console::{LogLine, Tone};
 
+use crate::app::App;
 use crate::db::Event;
 use crate::events::ServiceEvent;
-use crate::app::App;
 
 /// A service message that is nothing but a mark on another message — a pin — is
 /// logged as an event *of that message*, not as a message of its own.
@@ -32,16 +32,17 @@ pub async fn save_service(app: &App, message: &Message) -> bool {
     let chat_id = message.peer_id().bare_id_unchecked();
     let kind = crate::telegram::service_action::kind(action);
 
-    app.db.log_event(Event::from(ServiceEvent {
-        date_time: message.date().as_second() as u32,
-        chat_id,
-        message_id: target as i64,
-        // The announcement's own id: the row is keyed on the message the
-        // action was performed on, so this is the only place it fits.
-        service_message_id: message.id() as i64,
-        action: kind.clone(),
-    }))
-    .await;
+    app.db
+        .log_event(Event::from(ServiceEvent {
+            date_time: message.date().as_second() as u32,
+            chat_id,
+            message_id: target as i64,
+            // The announcement's own id: the row is keyed on the message the
+            // action was performed on, so this is the only place it fits.
+            service_message_id: message.id() as i64,
+            action: kind.clone(),
+        }))
+        .await;
 
     if !app.is_log_ignored(chat_id) {
         let chat = crate::state::peer_info::chat_info(app, message).await;

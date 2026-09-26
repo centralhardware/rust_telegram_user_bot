@@ -55,9 +55,16 @@ pub async fn run(ch: &Client) -> anyhow::Result<()> {
         let baseline: Vec<Applied> = files
             .iter()
             .filter(|f| f.version <= BASELINE)
-            .map(|f| Applied { version: f.version, name: f.name.to_string(), checksum: f.checksum.clone() })
+            .map(|f| Applied {
+                version: f.version,
+                name: f.name.to_string(),
+                checksum: f.checksum.clone(),
+            })
             .collect();
-        info!("migrations: recording {} applied by hand as the baseline", baseline.len());
+        info!(
+            "migrations: recording {} applied by hand as the baseline",
+            baseline.len()
+        );
         record(ch, &baseline).await?;
         return apply_after(ch, &files, BASELINE).await;
     }
@@ -93,8 +100,16 @@ fn parse_files() -> anyhow::Result<Vec<File>> {
         if files.iter().any(|f: &File| f.version == version) {
             bail!("two migrations numbered {version}");
         }
-        let checksum = Sha256::digest(sql.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
-        files.push(File { version, name, sql, checksum });
+        let checksum = Sha256::digest(sql.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        files.push(File {
+            version,
+            name,
+            sql,
+            checksum,
+        });
     }
     Ok(files)
 }
@@ -121,7 +136,11 @@ async fn apply_after(ch: &Client, files: &[File], last: u32) -> anyhow::Result<(
         }
         record(
             ch,
-            &[Applied { version: file.version, name: file.name.to_string(), checksum: file.checksum.clone() }],
+            &[Applied {
+                version: file.version,
+                name: file.name.to_string(),
+                checksum: file.checksum.clone(),
+            }],
         )
         .await?;
     }
@@ -132,14 +151,22 @@ async fn record(ch: &Client, rows: &[Applied]) -> anyhow::Result<()> {
     if rows.is_empty() {
         return Ok(());
     }
-    super::ch::insert_rows(ch, TABLE, rows).await.context("recording migrations")
+    super::ch::insert_rows(ch, TABLE, rows)
+        .await
+        .context("recording migrations")
 }
 
 /// `SET name = value`, as a setting to carry.
 fn set_statement(statement: &str) -> Option<(String, String)> {
-    let rest = statement.trim().strip_prefix("SET ").or_else(|| statement.trim().strip_prefix("set "))?;
+    let rest = statement
+        .trim()
+        .strip_prefix("SET ")
+        .or_else(|| statement.trim().strip_prefix("set "))?;
     let (name, value) = rest.split_once('=')?;
-    Some((name.trim().to_string(), value.trim().trim_matches('\'').to_string()))
+    Some((
+        name.trim().to_string(),
+        value.trim().trim_matches('\'').to_string(),
+    ))
 }
 
 /// The statements of a file: `--` comments dropped, split on `;` outside
@@ -178,7 +205,10 @@ fn statements(sql: &str) -> Vec<String> {
         }
     }
     out.push(current);
-    out.into_iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+    out.into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 #[cfg(test)]
@@ -213,8 +243,11 @@ mod tests {
             for p in parts {
                 let first = p.split_whitespace().next().unwrap().to_uppercase();
                 assert!(
-                    ["CREATE", "ALTER", "DROP", "INSERT", "RENAME", "SET", "OPTIMIZE", "TRUNCATE", "EXCHANGE", "DETACH", "ATTACH", "SYSTEM"]
-                        .contains(&first.as_str()),
+                    [
+                        "CREATE", "ALTER", "DROP", "INSERT", "RENAME", "SET", "OPTIMIZE",
+                        "TRUNCATE", "EXCHANGE", "DETACH", "ATTACH", "SYSTEM"
+                    ]
+                    .contains(&first.as_str()),
                     "{}: unexpected statement start {first:?}",
                     f.name
                 );

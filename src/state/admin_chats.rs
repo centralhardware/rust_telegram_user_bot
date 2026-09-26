@@ -2,8 +2,8 @@
 //! admin-log scheduler. Kept here so other parts of the bot can ask "do I run this
 //! chat?" without re-walking the dialog list.
 
-use std::sync::PoisonError;
 use std::collections::HashSet;
+use std::sync::PoisonError;
 use std::sync::RwLock;
 
 /// Unknown (`None`) until the first discovery pass finishes, so nothing is

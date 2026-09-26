@@ -3,9 +3,9 @@
 //! for the Telegram client rather than something a handler asks for, so it
 //! uses the ClickHouse client directly instead of going through [`Db`](super::Db).
 
-use std::sync::PoisonError;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::sync::PoisonError;
 use std::time::Duration;
 
 use clickhouse::Row;
@@ -106,7 +106,9 @@ impl ClickhouseSession {
 
         // Load updates state
         let updates = ch
-            .query("SELECT pts, qts, date, seq FROM session_update_state FINAL WHERE key = 1 LIMIT 1")
+            .query(
+                "SELECT pts, qts, date, seq FROM session_update_state FINAL WHERE key = 1 LIMIT 1",
+            )
             .fetch_one::<UpdateStateRow>()
             .await
             .ok()
@@ -277,11 +279,18 @@ impl Session for ClickhouseSession {
     type Error = clickhouse::error::Error;
 
     fn home_dc_id(&self) -> Result<i32, Self::Error> {
-        Ok(self.cache.lock().unwrap_or_else(PoisonError::into_inner).home_dc)
+        Ok(self
+            .cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .home_dc)
     }
 
     fn set_home_dc_id(&self, dc_id: i32) -> BoxFuture<'_, Result<(), Self::Error>> {
-        self.cache.lock().unwrap_or_else(PoisonError::into_inner).home_dc = dc_id;
+        self.cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .home_dc = dc_id;
         Box::pin(async move {
             persist(&self.ch, "session_dc_home", DcHomeRow { dc_id }).await;
             Ok(())
@@ -289,7 +298,13 @@ impl Session for ClickhouseSession {
     }
 
     fn dc_option(&self, dc_id: i32) -> Result<Option<DcOption>, Self::Error> {
-        Ok(self.cache.lock().unwrap_or_else(PoisonError::into_inner).dc_options.get(&dc_id).cloned())
+        Ok(self
+            .cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .dc_options
+            .get(&dc_id)
+            .cloned())
     }
 
     fn set_dc_option(&self, dc_option: &DcOption) -> BoxFuture<'_, Result<(), Self::Error>> {
@@ -432,7 +447,14 @@ impl Session for ClickhouseSession {
     }
 
     fn updates_state(&self) -> BoxFuture<'_, Result<UpdatesState, Self::Error>> {
-        Box::pin(async move { Ok(self.cache.lock().unwrap_or_else(PoisonError::into_inner).updates.clone()) })
+        Box::pin(async move {
+            Ok(self
+                .cache
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .updates
+                .clone())
+        })
     }
 
     fn set_update_state(&self, update: UpdateState) -> BoxFuture<'_, Result<(), Self::Error>> {
@@ -456,10 +478,10 @@ impl Session for ClickhouseSession {
                         if let Some(ch) = cache.updates.channels.iter_mut().find(|c| c.id == *id) {
                             ch.pts = *pts;
                         } else {
-                            cache.updates.channels.push(ChannelState {
-                                id: *id,
-                                pts: *pts,
-                            });
+                            cache
+                                .updates
+                                .channels
+                                .push(ChannelState { id: *id, pts: *pts });
                         }
                     }
                 }
@@ -469,15 +491,21 @@ impl Session for ClickhouseSession {
             match &update {
                 UpdateState::All(state) => {
                     // Write full update_state
-                    persist(&self.ch, "session_update_state", UpdateStateRow {
-                                pts: state.pts,
-                                qts: state.qts,
-                                date: state.date,
-                                seq: state.seq,
-                            }).await;
+                    persist(
+                        &self.ch,
+                        "session_update_state",
+                        UpdateStateRow {
+                            pts: state.pts,
+                            qts: state.qts,
+                            date: state.date,
+                            seq: state.seq,
+                        },
+                    )
+                    .await;
 
                     // Replace all channel states: truncate + re-insert
-                    if let Err(e) = self.ch
+                    if let Err(e) = self
+                        .ch
                         .query("TRUNCATE TABLE session_channel_state")
                         .execute()
                         .await
@@ -489,11 +517,12 @@ impl Session for ClickhouseSession {
                     let rows: Vec<ChannelStateRow> = state
                         .channels
                         .iter()
-                        .map(|ch| ChannelStateRow { peer_id: ch.id, pts: ch.pts })
+                        .map(|ch| ChannelStateRow {
+                            peer_id: ch.id,
+                            pts: ch.pts,
+                        })
                         .collect();
-                    if let Err(e) =
-                        insert_rows(&self.ch, "session_channel_state", &rows).await
-                    {
+                    if let Err(e) = insert_rows(&self.ch, "session_channel_state", &rows).await {
                         error!("failed to write session_channel_state: {e}");
                     }
                 }
@@ -522,10 +551,15 @@ impl Session for ClickhouseSession {
                     persist(&self.ch, "session_update_state", row).await;
                 }
                 UpdateState::Channel { id, pts } => {
-                    persist(&self.ch, "session_channel_state", ChannelStateRow {
-                                peer_id: *id,
-                                pts: *pts,
-                            }).await;
+                    persist(
+                        &self.ch,
+                        "session_channel_state",
+                        ChannelStateRow {
+                            peer_id: *id,
+                            pts: *pts,
+                        },
+                    )
+                    .await;
                 }
             }
             Ok(())

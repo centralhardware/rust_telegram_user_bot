@@ -15,10 +15,11 @@ use crate::state::peer_names::{self, PeerNames};
 /// it. Falls back to whatever the update did have (usually nothing).
 pub async fn chat_info(app: &App, message: &Message) -> ChatInfo {
     if let Some(peer) = message.peer()
-        && let Some(names) = PeerNames::from_peer(peer) {
-            peer_names::remember(app, &names).await;
-            return names.chat_info();
-        }
+        && let Some(names) = PeerNames::from_peer(peer)
+    {
+        peer_names::remember(app, &names).await;
+        return names.chat_info();
+    }
 
     let peer_id = message.peer_id().bot_api_dialog_id_unchecked();
     peer_names::load(app, peer_id)
@@ -34,12 +35,13 @@ pub async fn chat_info(app: &App, message: &Message) -> ChatInfo {
 /// itself, so an unnamed sender is still logged with its author.
 pub async fn sender_info(app: &App, message: &Message) -> SenderInfo {
     if let Some(peer) = message.sender()
-        && let Some(names) = PeerNames::from_peer(peer) {
-            peer_names::remember(app, &names).await;
-            if let Some(sender) = names.sender_info() {
-                return sender;
-            }
+        && let Some(names) = PeerNames::from_peer(peer)
+    {
+        peer_names::remember(app, &names).await;
+        if let Some(sender) = names.sender_info() {
+            return sender;
         }
+    }
 
     let sender_id = match message.sender_id() {
         Some(id) => id.bot_api_dialog_id_unchecked(),
