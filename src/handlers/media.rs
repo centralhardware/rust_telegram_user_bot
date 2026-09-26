@@ -106,6 +106,29 @@ async fn archive(
     };
     let media_type = job.event.media_type.as_str();
 
+    // Telegram's own id for the file is the same on every forward, so a file
+    // stored before is found without downloading it again.
+    let file = known_file_id(&job.media);
+    if let Some((kind, tg_id)) = file
+        && let Some(known) = crate::db::find_media_file(kind, tg_id).await
+        && known.s3_bucket == storage.bucket
+    {
+        info!(
+            "media archive: {} ({} KiB) already stored as {}, download skipped",
+            media_type,
+            known.size / 1024,
+            known.s3_key
+        );
+        crate::db::log_event(job.event.file_uploaded(
+            known.sha256,
+            known.s3_bucket,
+            known.s3_key,
+            known.size,
+        ))
+        .await;
+        return Ok(());
+    }
+
     if let Some(size) = Downloadable::size(&job.media)
         && size as u64 > storage.max_bytes {
             warn!(
@@ -160,10 +183,31 @@ async fn archive(
         }
     };
 
+    if let Some((kind, tg_id)) = file {
+        crate::db::remember_media_file(crate::db::MediaFile {
+            kind: kind.to_string(),
+            tg_id,
+            sha256: sha256.clone(),
+            s3_bucket: storage.bucket.clone(),
+            s3_key: key.clone(),
+            size,
+        })
+        .await;
+    }
     crate::db::log_event(job.event.file_uploaded(sha256, storage.bucket.clone(), key, size))
         .await;
 
     Ok(())
+}
+
+/// The kind and Telegram id of an archivable file. Photo and document ids are
+/// separate sequences, so the kind is part of the key.
+fn known_file_id(media: &Media) -> Option<(&'static str, i64)> {
+    match media {
+        Media::Photo(photo) => Some(("photo", photo.id())),
+        Media::Document(doc) => Some(("document", doc.id())),
+        _ => None,
+    }
 }
 
 /// `<aa>/<bb>/<sha256>.<ext>` — content-addressed, so the same file posted in
