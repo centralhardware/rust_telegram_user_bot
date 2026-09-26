@@ -11,6 +11,7 @@ mod outgoing;
 mod pins;
 mod polls;
 mod reactions;
+mod send;
 mod service;
 mod views;
 
