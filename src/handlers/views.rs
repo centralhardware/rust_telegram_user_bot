@@ -6,11 +6,11 @@
 //! not carry stays 0: read a post's latest `views` row for views and its latest
 //! `forwards` row for forwards rather than expecting one row to hold both.
 
-use crate::utils::console::{LogLine, Tone};
+use crate::render::console::{LogLine, Tone};
 
 use crate::db::Event;
 use crate::events::ViewsEvent;
-use crate::utils::peer_names::title_of;
+use crate::state::peer_names::title_of;
 use crate::app::App;
 
 pub async fn save_views(app: &App, channel_id: i64, message_id: i32, views: u32, forwards: u32) {

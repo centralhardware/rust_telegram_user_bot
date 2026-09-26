@@ -131,7 +131,7 @@ struct Save;
 impl Handler<NewMessage> for Save {
     fn handle<'a>(&'a self, m: &'a mut NewMessage) -> Step<'a, Flow> {
         Box::pin(async move {
-            let saved = if crate::utils::self_id::is_outgoing(m.app.me, &m.message) {
+            let saved = if crate::telegram::self_id::is_outgoing(m.app.me, &m.message) {
                 handlers::save_outgoing(&m.app, &m.message).await
             } else {
                 handlers::save_incoming(&m.app, &m.message).await

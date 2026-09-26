@@ -10,7 +10,7 @@ use grammers_client::message::Message;
 
 use crate::db::Event;
 use crate::handlers::extract::extract_community_tag;
-use crate::utils::peer_info::{chat_info, sender_info};
+use crate::state::peer_info::{chat_info, sender_info};
 use crate::app::App;
 
 pub async fn event_of(app: &App, msg: &Message) -> Event {
@@ -19,7 +19,7 @@ pub async fn event_of(app: &App, msg: &Message) -> Event {
     let sender = sender_info(app, msg).await;
     let chat = chat_info(app, msg).await;
 
-    let text = crate::utils::format_entities::plain_text(msg);
+    let text = crate::render::format_entities::plain_text(msg);
     let sender_bare_id = sender.user_id as i64;
     let message = if !text.is_empty() {
         text
@@ -29,14 +29,14 @@ pub async fn event_of(app: &App, msg: &Message) -> Event {
         } else {
             format!("{} {}", sender.first_name, sender.second_name)
         };
-        let game_title = crate::utils::service_action::game_title(&app.tg, msg).await;
-        crate::utils::service_action::format(
+        let game_title = crate::telegram::service_action::game_title(&app.tg, msg).await;
+        crate::telegram::service_action::format(
             action,
             Some(sender_bare_id),
             Some(&sender_display),
             game_title.as_deref(),
         )
-    } else if let Some(media) = crate::utils::media_description::describe_of(&msg.raw) {
+    } else if let Some(media) = crate::telegram::media_description::describe_of(&msg.raw) {
         // What the live path writes for a message that is a photo, a voice note,
         // a sticker: the description, not the message's wire form. The raw JSON
         // below is a last resort for a message that is none of the three, and
@@ -46,18 +46,18 @@ pub async fn event_of(app: &App, msg: &Message) -> Event {
         serde_json::to_string(&msg.raw).unwrap_or_default()
     };
 
-    let mut reply = crate::utils::reply_target::reply_info(msg);
+    let mut reply = crate::telegram::reply_target::reply_info(msg);
     let reply_to_user_id = crate::db::resolve_reply(&*app.db, chat_id, &mut reply).await;
-    let (topic_id, topic_name) = crate::utils::topic::topic_of(app, msg).await;
+    let (topic_id, topic_name) = crate::state::topic::topic_of(app, msg).await;
 
-    let meta = crate::utils::media_description::media_meta_of(&msg.raw).unwrap_or_default();
-    let meta_msg = crate::utils::message_meta::of(&msg.raw);
+    let meta = crate::telegram::media_description::media_meta_of(&msg.raw).unwrap_or_default();
+    let meta_msg = crate::telegram::message_meta::of(&msg.raw);
 
     Event {
         date_time: msg.date().as_second() as u32,
         message,
-        entities: crate::utils::entities::of_message(msg),
-        keyboard: crate::utils::entities::keyboard_of_raw(&msg.raw),
+        entities: crate::telegram::entities::of_message(msg),
+        keyboard: crate::telegram::entities::keyboard_of_raw(&msg.raw),
         chat_title: chat.chat_title,
         chat_id,
         username: sender.username,
@@ -70,7 +70,7 @@ pub async fn event_of(app: &App, msg: &Message) -> Event {
         chat_usernames: chat.chat_usernames,
         // A fetched message can be one this account sent: `Event::send()` defaults
         // to incoming, which would be wrong for half of them.
-        out: crate::utils::self_id::is_outgoing(app.me, msg),
+        out: crate::telegram::self_id::is_outgoing(app.me, msg),
         reply_to: reply.reply_to,
         reply_to_user_id,
         reply_to_chat_id: reply.reply_to_chat_id,

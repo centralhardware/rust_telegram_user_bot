@@ -30,7 +30,7 @@ pub fn of(message: &tl::enums::Message) -> MessageMeta {
     match message {
         tl::enums::Message::Message(msg) => of_message(msg),
         tl::enums::Message::Service(msg) => MessageMeta {
-            action: crate::utils::service_action::kind(&msg.action),
+            action: crate::telegram::service_action::kind(&msg.action),
             pinned: false,
             silent: msg.silent,
             ttl_period: msg.ttl_period.unwrap_or(0).max(0) as u32,

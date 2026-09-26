@@ -6,7 +6,7 @@
 use grammers_client::update::Message;
 use log::info;
 
-use crate::utils::console::{LogLine, Tone};
+use crate::render::console::{LogLine, Tone};
 
 use super::extract::ChatInfo;
 use crate::db::Event;
@@ -32,11 +32,11 @@ impl Body {
         sender_id: Option<i64>,
         sender_name: Option<&str>,
     ) -> Self {
-        let text = crate::utils::format_entities::formatted_text(message);
+        let text = crate::render::format_entities::formatted_text(message);
         let game_title =
-            crate::utils::service_action::game_title(&app.tg, std::ops::Deref::deref(message)).await;
+            crate::telegram::service_action::game_title(&app.tg, std::ops::Deref::deref(message)).await;
         let action_desc = match message.action() {
-            Some(a) if text.is_empty() => Some(crate::utils::service_action::format(
+            Some(a) if text.is_empty() => Some(crate::telegram::service_action::format(
                 a,
                 sender_id,
                 sender_name,
@@ -46,9 +46,9 @@ impl Body {
         };
         Body {
             text,
-            media_desc: crate::utils::media_description::describe(message),
+            media_desc: crate::telegram::media_description::describe(message),
             action_desc,
-            buttons: crate::utils::inline_buttons::format_buttons(message),
+            buttons: crate::render::inline_buttons::format_buttons(message),
         }
     }
 
@@ -79,7 +79,7 @@ impl Body {
     /// line is where they are rendered back onto it -- or, with no text, the
     /// action or the media it carries.
     fn content(&self, message: &Message) -> String {
-        let plain = crate::utils::format_entities::plain_text(message);
+        let plain = crate::render::format_entities::plain_text(message);
         if !plain.is_empty() {
             plain
         } else if let Some(desc) = &self.action_desc {
@@ -100,14 +100,14 @@ pub(super) async fn print(
     chat_title: &str,
     sender_name: &str,
 ) {
-    let topic_name = crate::utils::topic::topic_name(app, message).await;
+    let topic_name = crate::state::topic::topic_name(app, message).await;
     let title = if topic_name.is_empty() {
         chat_title.to_string()
     } else {
         format!("{chat_title} / {topic_name}")
     };
 
-    let reply_line = crate::utils::reply_preview::format_reply_line(app, message).await;
+    let reply_line = crate::render::reply_preview::format_reply_line(app, message).await;
     if !reply_line.is_empty() {
         info!("{}", reply_line);
     }
@@ -127,18 +127,18 @@ pub(super) async fn print(
 /// what someone wrote.
 pub(super) async fn event(app: &App, message: &Message, body: &Body, chat: ChatInfo) -> Event {
     let chat_id = message.peer_id().bare_id_unchecked();
-    let mut reply = crate::utils::reply_target::reply_info(message);
+    let mut reply = crate::telegram::reply_target::reply_info(message);
     let reply_to_user_id = crate::db::resolve_reply(&*app.db, chat_id, &mut reply).await;
-    let (topic_id, topic_name) = crate::utils::topic::topic_of(app, message).await;
+    let (topic_id, topic_name) = crate::state::topic::topic_of(app, message).await;
 
-    let meta = crate::utils::media_description::media_meta(message).unwrap_or_default();
-    let meta_msg = crate::utils::message_meta::of(&std::ops::Deref::deref(message).raw);
+    let meta = crate::telegram::media_description::media_meta(message).unwrap_or_default();
+    let meta_msg = crate::telegram::message_meta::of(&std::ops::Deref::deref(message).raw);
 
     Event {
         date_time: message.date().as_second() as u32,
         message: body.content(message),
-        entities: crate::utils::entities::of_message(message),
-        keyboard: crate::utils::entities::keyboard_of_message(message),
+        entities: crate::telegram::entities::of_message(message),
+        keyboard: crate::telegram::entities::keyboard_of_message(message),
         chat_title: chat.chat_title,
         chat_id,
         chat_usernames: chat.chat_usernames,

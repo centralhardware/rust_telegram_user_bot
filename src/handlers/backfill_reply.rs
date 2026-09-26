@@ -2,13 +2,13 @@ use grammers_client::update::Message;
 use grammers_tl_types as tl;
 use log::{debug, info, warn};
 use crate::app::App;
-use crate::utils::console::{LogLine, Tone};
+use crate::render::console::{LogLine, Tone};
 
 
 /// If the message is a reply and the replied-to message is not yet in ClickHouse,
 /// fetch it from Telegram and save it.
 pub async fn backfill_reply(app: &App, message: &Message) {
-    let quoted = crate::utils::reply_target::reply_info(message);
+    let quoted = crate::telegram::reply_target::reply_info(message);
     let reply_id = match quoted.reply_to {
         0 => return,
         id => id as i32,
@@ -54,7 +54,7 @@ pub async fn backfill_reply(app: &App, message: &Message) {
 
     // The row a live update would have produced, built where every caller
     // that logs a fetched message builds it.
-    app.db.log_event(crate::utils::event_of::event_of(app, &reply).await).await;
+    app.db.log_event(crate::telegram::event_of::event_of(app, &reply).await).await;
 
     if !app.is_log_ignored(chat_id) {
         LogLine::new(Tone::Info, "backfill", reply_id)

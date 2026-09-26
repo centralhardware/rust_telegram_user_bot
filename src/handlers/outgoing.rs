@@ -7,7 +7,7 @@ use super::send::Body;
 use crate::app::App;
 
 pub async fn save_outgoing(app: &App, message: &Message) -> Result<Event, Box<dyn std::error::Error>> {
-    let chat = crate::utils::peer_info::chat_info(app, message).await;
+    let chat = crate::state::peer_info::chat_info(app, message).await;
     let community_id = chat.community_id;
     let (title, usernames) = (chat.chat_title, chat.chat_usernames);
 
@@ -30,7 +30,7 @@ pub async fn save_outgoing(app: &App, message: &Message) -> Result<Event, Box<dy
     });
     let body = Body::of(app, message, sender_id, sender_name.as_deref()).await;
 
-    super::send::print(app, message, &body, ("outgoing", crate::utils::console::Tone::Outgoing), &title, "").await;
+    super::send::print(app, message, &body, ("outgoing", crate::render::console::Tone::Outgoing), &title, "").await;
 
     let chat = ChatInfo {
         chat_title: title,

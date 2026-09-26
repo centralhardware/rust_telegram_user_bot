@@ -1,5 +1,5 @@
 use grammers_client::update::Message;
-use crate::utils::console::{LogLine, Tone};
+use crate::render::console::{LogLine, Tone};
 
 use crate::db::Event;
 use crate::app::App;
@@ -7,16 +7,16 @@ use crate::app::App;
 pub async fn save_edited(app: &App, message: &Message) -> Result<(), Box<dyn std::error::Error>> {
     let chat_id = message.peer_id().bare_id_unchecked();
     let msg_id = message.id() as i64;
-    let message_content = crate::utils::format_entities::plain_text(message);
-    let entities = crate::utils::entities::of_message(message);
-    let keyboard = crate::utils::entities::keyboard_of_message(message);
+    let message_content = crate::render::format_entities::plain_text(message);
+    let entities = crate::telegram::entities::of_message(message);
+    let keyboard = crate::telegram::entities::keyboard_of_message(message);
 
     let original = app.db.find_message(chat_id, msg_id).await;
 
     // What the message said before, as far as the log knows. A photo or a file
     // sent without a caption is logged as its media description, which is not
     // text the sender wrote: a caption added later replaces nothing.
-    let media_desc = crate::utils::media_description::describe(message);
+    let media_desc = crate::telegram::media_description::describe(message);
     let before = if !original.logged {
         None
     } else if media_desc.as_deref() == Some(original.message.as_str()) {
@@ -39,13 +39,13 @@ pub async fn save_edited(app: &App, message: &Message) -> Result<(), Box<dyn std
     // patch, rather than one claiming every word is new.
     let original = before.unwrap_or_default().to_string();
     let diff = match before {
-        Some(before) => crate::utils::diff::word_patch(before, &message_content),
+        Some(before) => crate::render::diff::word_patch(before, &message_content),
         None => String::new(),
     };
 
-    let sender = crate::utils::peer_info::sender_info(app, message).await;
+    let sender = crate::state::peer_info::sender_info(app, message).await;
 
-    let chat = crate::utils::peer_info::chat_info(app, message).await;
+    let chat = crate::state::peer_info::chat_info(app, message).await;
     let chat_name = chat.chat_title.clone();
     let sender_name = if sender.second_name.is_empty() {
         sender.first_name.clone()
@@ -53,7 +53,7 @@ pub async fn save_edited(app: &App, message: &Message) -> Result<(), Box<dyn std
         format!("{} {}", sender.first_name, sender.second_name)
     };
     if !app.is_log_ignored(chat_id) {
-        let colored = crate::utils::diff::inline_diff(&original, &message_content);
+        let colored = crate::render::diff::inline_diff(&original, &message_content);
         LogLine::new(Tone::Edited, "edited", message.id())
             .chat(&chat_name)
             .sender(&sender_name)
@@ -79,7 +79,7 @@ pub async fn save_edited(app: &App, message: &Message) -> Result<(), Box<dyn std
     // that too, so the send row's copy is stale for an edited message.
     // Everything else is fixed when the message is sent and already on its send
     // row.
-    let meta = crate::utils::media_description::media_meta(message).unwrap_or_default();
+    let meta = crate::telegram::media_description::media_meta(message).unwrap_or_default();
 
     app.db.log_event(Event {
         date_time: now,

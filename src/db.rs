@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use clickhouse::Row;
 use serde::{Deserialize, Serialize};
 
-use crate::utils::peer_names::PeerNames;
-use crate::utils::poll_info::PollInfo;
+use crate::state::peer_names::PeerNames;
+use crate::state::poll_info::PollInfo;
 
 pub mod ch;
 #[cfg(test)]
@@ -121,8 +121,8 @@ pub struct MessageInfo {
     /// The formatting and the buttons the message carries, as the columns of the
     /// same name hold them — an edit that changes only one of these changes
     /// nothing in `message`, and would otherwise pass for no edit at all.
-    pub entities: Vec<crate::utils::entities::Entity>,
-    pub keyboard: Vec<crate::utils::entities::Button>,
+    pub entities: Vec<crate::telegram::entities::Entity>,
+    pub keyboard: Vec<crate::telegram::entities::Button>,
     pub chat_title: String,
 }
 
@@ -185,7 +185,7 @@ pub struct ReplyTarget {
 pub async fn resolve_reply(
     db: &dyn Db,
     chat_id: i64,
-    reply: &mut crate::utils::reply_target::ReplyInfo,
+    reply: &mut crate::telegram::reply_target::ReplyInfo,
 ) -> u64 {
     let id = match reply.reply_to {
         0 => return 0,
@@ -235,10 +235,10 @@ pub struct Event {
     /// covers in UTF-16 code units, and the one thing it carries besides. Kept
     /// beside the text rather than baked into it, so a reader can render it, or
     /// ignore it and read the text.
-    pub entities: Vec<crate::utils::entities::Entity>,
+    pub entities: Vec<crate::telegram::entities::Entity>,
     /// The inline keyboard under the message, its rows flattened: each button
     /// names the row it sits in.
-    pub keyboard: Vec<crate::utils::entities::Button>,
+    pub keyboard: Vec<crate::telegram::entities::Button>,
     pub user_id: u64,
     pub username: Vec<String>,
     pub first_name: String,

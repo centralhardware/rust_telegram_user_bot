@@ -15,7 +15,7 @@
 
 use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;
-use crate::utils::console::{LogLine, Tone};
+use crate::render::console::{LogLine, Tone};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -23,8 +23,8 @@ use crate::app::App;
 
 use crate::db::Event;
 use crate::events::PollEvent;
-use crate::utils::peer_names::title_of;
-use crate::utils::poll_info;
+use crate::state::peer_names::title_of;
+use crate::state::poll_info;
 
 pub async fn save_poll(app: &App, update: &tl::types::UpdateMessagePoll) {
     let tl::enums::PollResults::Results(results) = &update.results;

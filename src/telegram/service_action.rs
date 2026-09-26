@@ -3,7 +3,7 @@ use grammers_client::Client;
 use grammers_tl_types as tl;
 use grammers_tl_types::enums::MessageAction;
 
-use super::media_description::{format_duration_secs, format_human_duration};
+use crate::telegram::media_description::{format_duration_secs, format_human_duration};
 
 /// The message an action was performed *on*, for the actions that are nothing
 /// but a mark on another message.
@@ -15,7 +15,7 @@ use super::media_description::{format_duration_secs, format_human_duration};
 /// user list, a call duration -- and stays an ordinary message row.
 pub fn target(message: &Message, action: &MessageAction) -> Option<i32> {
     match action {
-        MessageAction::PinMessage => crate::utils::reply_target::reply_target(message),
+        MessageAction::PinMessage => crate::telegram::reply_target::reply_target(message),
         _ => None,
     }
 }

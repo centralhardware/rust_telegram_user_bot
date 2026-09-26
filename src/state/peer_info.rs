@@ -2,7 +2,7 @@ use grammers_client::message::Message;
 
 use crate::app::App;
 use crate::handlers::extract::{ChatInfo, SenderInfo};
-use crate::utils::peer_names::{self, PeerNames};
+use crate::state::peer_names::{self, PeerNames};
 
 // Updates only carry the peers Telegram bothered to attach, so a message can
 // arrive with neither its chat nor its sender in the in-memory peer map. Names

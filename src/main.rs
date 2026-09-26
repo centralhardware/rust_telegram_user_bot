@@ -7,7 +7,9 @@ mod handlers;
 mod s3;
 mod schedulers;
 mod session;
-mod utils;
+mod render;
+mod state;
+mod telegram;
 
 use grammers_client::update::Update;
 use log::error;
@@ -24,7 +26,7 @@ async fn main() -> Result<()> {
         .parse()
         .expect("TZ invalid");
 
-    let ignored = Arc::new(utils::log_ignore::LogIgnore::from_env());
+    let ignored = Arc::new(state::log_ignore::LogIgnore::from_env());
     let log_ignored = Arc::clone(&ignored);
     env_logger::Builder::from_default_env()
         .write_style(env_logger::WriteStyle::Always)

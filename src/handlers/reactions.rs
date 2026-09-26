@@ -10,7 +10,7 @@
 
 use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;
-use crate::utils::console::{LogLine, Tone};
+use crate::render::console::{LogLine, Tone};
 
 use crate::db::Event;
 use crate::events::ReactionEvent;
@@ -32,7 +32,7 @@ pub async fn save_reactions(app: &App, update: &tl::types::UpdateMessageReaction
         })
         .collect();
 
-    let chat_title = crate::utils::peer_names::load(app, peer.bot_api_dialog_id_unchecked())
+    let chat_title = crate::state::peer_names::load(app, peer.bot_api_dialog_id_unchecked())
         .await
         .map(|names| names.title)
         .unwrap_or_default();

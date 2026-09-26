@@ -3,7 +3,7 @@ use grammers_client::update::Message;
 use crate::db::Event;
 use super::extract::extract_community_tag_from_update;
 use super::send::Body;
-use crate::utils::peer_info::{chat_info, sender_info};
+use crate::state::peer_info::{chat_info, sender_info};
 use crate::app::App;
 
 pub async fn save_incoming(app: &App, message: &Message) -> Result<Event, Box<dyn std::error::Error>> {
@@ -19,7 +19,7 @@ pub async fn save_incoming(app: &App, message: &Message) -> Result<Event, Box<dy
     let body = Body::of(app, message, Some(sender.user_id as i64), Some(&sender_display)).await;
 
     if !app.is_log_ignored(chat_id) {
-        super::send::print(app, message, &body, ("incoming", crate::utils::console::Tone::Incoming), &chat.chat_title, &sender_display).await;
+        super::send::print(app, message, &body, ("incoming", crate::render::console::Tone::Incoming), &chat.chat_title, &sender_display).await;
     }
 
     let event = Event {
