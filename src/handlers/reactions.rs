@@ -13,6 +13,7 @@ use grammers_tl_types as tl;
 use log::info;
 
 use crate::db::{log_event, Event};
+use crate::events::ReactionEvent;
 use crate::utils::log_ignore::is_log_ignored;
 
 pub async fn save_reactions(update: &tl::types::UpdateMessageReactions) {
@@ -49,13 +50,12 @@ pub async fn save_reactions(update: &tl::types::UpdateMessageReactions) {
         );
     }
 
-    log_event(Event {
+    log_event(Event::from(ReactionEvent {
         date_time: chrono::Utc::now().timestamp() as u32,
         chat_id,
         message_id: update.msg_id as i64,
         reactions: counts,
-        ..Event::reaction()
-    })
+    }))
     .await;
 }
 

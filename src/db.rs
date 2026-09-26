@@ -79,26 +79,7 @@ pub async fn log_events(events: &[Event]) {
 
 const INSERT_ATTEMPTS: u32 = 3;
 
-pub const SEND: &str = "send";
-pub const EDIT: &str = "edit";
-pub const DELETE: &str = "delete";
-pub const REACTION: &str = "reaction";
-/// A service action performed on another message — a pin. The row belongs to the
-/// message the action names, and carries the action rather than a text.
-pub const SERVICE: &str = "service";
-/// The archiver stored a message's file in S3. Its own row, naming the message it
-/// belongs to — never the send row written a second time, which would be a
-/// duplicate the counters cannot tell from a real message.
-pub const FILE_UPLOADED: &str = "file_uploaded";
-/// A message pinned, and its undoing. A pin in a group is also announced as a
-/// service message; an unpin, and anything outside a group, is announced by
-/// nothing at all, so these rows are the only record of either.
-pub const PIN: &str = "pin";
-pub const UNPIN: &str = "unpin";
-/// A poll's results as they stand after a vote — a snapshot, like a reaction.
-pub const POLL: &str = "poll";
-/// A channel post's view or forward counter, as it stands after the update.
-pub const VIEWS: &str = "views";
+pub use crate::events::EventKind;
 
 pub struct MessageInfo {
     /// Whether the log has the message at all -- a send or an edit row. When
@@ -137,9 +118,9 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
         )
         .bind(chat_id)
         .bind(message_id)
-        .bind(SEND)
-        .bind(EDIT)
-        .bind(EDIT)
+        .bind(EventKind::Send)
+        .bind(EventKind::Edit)
+        .bind(EventKind::Edit)
         .fetch_one::<BodyRow>()
         .await;
     let logged = body.is_ok();
@@ -152,7 +133,7 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
              ORDER BY date_time DESC LIMIT 1",
         )
         .bind(chat_id)
-        .bind(SEND)
+        .bind(EventKind::Send)
         .fetch_one::<String>()
         .await
         .unwrap_or_default();
@@ -215,15 +196,15 @@ pub async fn find_deleted(channel: Option<i64>, message_ids: &[i64]) -> Vec<Dele
              WHERE chat_id IN (SELECT chat_id FROM m) AND event = ? AND chat_title != '' \
              GROUP BY chat_id) AS t ON t.chat_id = m.chat_id"
     );
-    let mut query = clickhouse().query(&sql).bind(EDIT).bind(SEND);
+    let mut query = clickhouse().query(&sql).bind(EventKind::Edit).bind(EventKind::Send);
     if let Some(chat_id) = channel {
         query = query.bind(chat_id);
     }
     query
         .bind(message_ids)
-        .bind(SEND)
-        .bind(EDIT)
-        .bind(SEND)
+        .bind(EventKind::Send)
+        .bind(EventKind::Edit)
+        .bind(EventKind::Send)
         .fetch_all::<DeletedMessage>()
         .await
         .unwrap_or_else(|e| {
@@ -294,7 +275,7 @@ pub async fn find_target(chat_id: i64, message_id: i64) -> ReplyTarget {
         )
         .bind(chat_id)
         .bind(message_id)
-        .bind(SEND)
+        .bind(EventKind::Send)
         .fetch_one::<(u64, bool)>()
         .await
         .map(|(user_id, post_copy)| ReplyTarget { user_id, post_copy })
@@ -337,8 +318,9 @@ pub async fn resolve_reply(chat_id: i64, reply: &mut crate::utils::reply_target:
     target.user_id
 }
 
-/// One `events_log` row. Built through `Event::send()` / `edit()` / `delete()`,
-/// which name the event and leave every column the event does not use empty.
+/// One `events_log` row. Built through `Event::of(kind)`, which names the
+/// event and leaves every column the event does not use empty, or from one of
+/// the typed rows in `events` for the kinds that fill only a few columns.
 ///
 /// A message is one row whatever it carries: the text representation in
 /// `message`, the message object itself in `raw`, and — when it carries media —
@@ -348,7 +330,7 @@ pub async fn resolve_reply(chat_id: i64, reply: &mut crate::utils::reply_target:
 #[derive(Row, Serialize, Default, Clone)]
 pub struct Event {
     pub date_time: u32,
-    pub event: String,
+    pub event: EventKind,
     pub chat_id: i64,
     pub chat_title: String,
     pub message_id: i64,
@@ -469,57 +451,16 @@ pub struct Event {
 }
 
 impl Event {
-    fn of(event: &str) -> Self {
+    /// A row of this kind with every column empty, for the caller to fill.
+    pub fn of(event: EventKind) -> Self {
         // No version column any more (migration 039): nothing rewrites a row, so
         // the only thing ReplacingMergeTree still collapses is a redelivery of
         // the same event after a reconnect — the same row on the same key, where
         // it does not matter which copy survives.
         Self {
-            event: event.to_string(),
+            event,
             ..Self::default()
         }
-    }
-
-    pub fn send() -> Self {
-        Self::of(SEND)
-    }
-
-    pub fn edit() -> Self {
-        Self::of(EDIT)
-    }
-
-    pub fn delete() -> Self {
-        Self::of(DELETE)
-    }
-
-    pub fn reaction() -> Self {
-        Self::of(REACTION)
-    }
-
-    pub fn service() -> Self {
-        Self::of(SERVICE)
-    }
-
-    pub fn pin() -> Self {
-        Self::of(PIN)
-    }
-
-    pub fn unpin() -> Self {
-        Self::of(UNPIN)
-    }
-
-    pub fn poll() -> Self {
-        Self::of(POLL)
-    }
-
-    pub fn views() -> Self {
-        Self::of(VIEWS)
-    }
-
-    /// An ephemeral message's own event name: Telegram calls a new one "new", the
-    /// log calls a new message "send".
-    pub fn of_ephemeral(event: &str) -> Self {
-        Self::of(if event == "new" { SEND } else { event })
     }
 
     /// What the archiver learned about a message's file, as an event of its own.
@@ -532,7 +473,7 @@ impl Event {
     pub fn file_uploaded(&self, sha256: String, bucket: String, key: String, size: u64) -> Self {
         Self {
             date_time: now(),
-            event: FILE_UPLOADED.to_string(),
+            event: EventKind::FileUploaded,
             chat_id: self.chat_id,
             message_id: self.message_id,
             topic_id: self.topic_id,
@@ -614,7 +555,7 @@ mod tests {
             topic_name: "topic".to_string(),
             media_type: "photo".to_string(),
             size: 1024,
-            ..Event::send()
+            ..Event::of(EventKind::Send)
         }
     }
 
@@ -627,7 +568,7 @@ mod tests {
             2048,
         );
 
-        assert_eq!(uploaded.event, FILE_UPLOADED);
+        assert_eq!(uploaded.event, EventKind::FileUploaded);
         // The message it belongs to, so the row can be joined back onto its send.
         assert_eq!(uploaded.chat_id, -100);
         assert_eq!(uploaded.message_id, 7);

@@ -3,6 +3,7 @@ use grammers_client::update::Message;
 use log::info;
 
 use crate::db::Event;
+use crate::events::ServiceEvent;
 use crate::utils::log_ignore::is_log_ignored;
 
 /// A service message that is nothing but a mark on another message — a pin — is
@@ -31,7 +32,7 @@ pub async fn save_service(message: &Message) -> bool {
     let chat_id = message.peer_id().bare_id_unchecked();
     let kind = crate::utils::service_action::kind(action);
 
-    crate::db::log_event(Event {
+    crate::db::log_event(Event::from(ServiceEvent {
         date_time: message.date().as_second() as u32,
         chat_id,
         message_id: target as i64,
@@ -39,8 +40,7 @@ pub async fn save_service(message: &Message) -> bool {
         // action was performed on, so this is the only place it fits.
         service_message_id: message.id() as i64,
         action: kind.clone(),
-        ..Event::service()
-    })
+    }))
     .await;
 
     if !is_log_ignored(chat_id) {

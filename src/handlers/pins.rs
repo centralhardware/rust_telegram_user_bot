@@ -12,12 +12,12 @@
 use log::info;
 
 use crate::db::{log_event, Event};
+use crate::events::PinEvent;
 use crate::utils::log_ignore::is_log_ignored;
 use crate::utils::peer_names::title_of;
 
 pub async fn save_pinned(chat_id: i64, dialog_id: i64, messages: &[i32], pinned: bool) {
     let date_time = chrono::Utc::now().timestamp() as u32;
-    let event = if pinned { Event::pin() } else { Event::unpin() };
     let name = if pinned { "pin" } else { "unpin" };
 
     if !is_log_ignored(chat_id) {
@@ -28,15 +28,14 @@ pub async fn save_pinned(chat_id: i64, dialog_id: i64, messages: &[i32], pinned:
     }
 
     for &id in messages {
-        log_event(Event {
+        log_event(Event::from(PinEvent {
             date_time,
             chat_id,
             message_id: id as i64,
             // The state the message is in after the update, so a row read on
             // its own says which way it went.
             pinned,
-            ..event.clone()
-        })
+        }))
         .await;
     }
 }

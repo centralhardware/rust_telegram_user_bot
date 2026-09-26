@@ -1,6 +1,7 @@
 mod clickhouse_session;
 mod db;
 mod dispatch;
+mod events;
 mod handlers;
 mod s3;
 mod schedulers;

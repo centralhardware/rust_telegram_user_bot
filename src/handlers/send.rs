@@ -180,6 +180,6 @@ pub(super) async fn event(client: &Client, message: &Message, body: &Body, chat:
         poll_question: meta.poll_question,
         poll_options: meta.poll_options,
         poll_id: meta.poll_id,
-        ..Event::send()
+        ..Event::of(crate::db::EventKind::Send)
     }
 }

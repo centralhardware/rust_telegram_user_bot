@@ -120,7 +120,7 @@ async fn lookup(chat_id: i64, message_id: i32) -> Target {
         )
         .bind(chat_id)
         .bind(message_id as i64)
-        .bind(crate::db::SEND)
+        .bind(crate::db::EventKind::Send)
         .fetch_one::<(String, u64, String, i64, i64)>()
         .await
     else {

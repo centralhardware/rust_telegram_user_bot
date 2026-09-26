@@ -9,6 +9,7 @@
 use log::info;
 
 use crate::db::{log_event, Event};
+use crate::events::ViewsEvent;
 use crate::utils::log_ignore::is_log_ignored;
 use crate::utils::peer_names::title_of;
 
@@ -41,13 +42,12 @@ pub async fn save_views(channel_id: i64, message_id: i32, views: u32, forwards: 
         );
     }
 
-    log_event(Event {
+    log_event(Event::from(ViewsEvent {
         date_time: chrono::Utc::now().timestamp() as u32,
         chat_id: channel_id,
         message_id: message_id as i64,
         views,
         forwards,
-        ..Event::views()
-    })
+    }))
     .await;
 }
