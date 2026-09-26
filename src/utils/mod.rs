@@ -1,5 +1,6 @@
 pub mod admin_chats;
 pub mod diff;
+pub mod dialogs;
 pub mod entities;
 pub mod event_of;
 pub mod format_entities;

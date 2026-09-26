@@ -93,9 +93,6 @@ pub(super) const REQUEST_GAP: Duration = Duration::from_millis(500);
 /// read is one round trip made, and one gap owed.
 pub(super) const SEARCH_PAGE: usize = 100;
 
-/// How many dialogs a page of `messages.getDialogs` asks for. Telegram's limit.
-pub(super) const DIALOG_PAGE: i32 = 100;
-
 /// Chats a backfill is running for. One at a time per chat: two walks of the
 /// same history would only write each other's rows again.
 pub(super) static RUNNING: LazyLock<Mutex<HashSet<i64>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
