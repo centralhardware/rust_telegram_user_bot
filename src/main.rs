@@ -52,6 +52,9 @@ async fn main() -> Result<()> {
     // Built now, so a missing setting stops the bot at startup rather than at
     // the first write.
     let db = db::ch::ClickhouseDb::from_env();
+    // Before the session store reads its tables and before any row is
+    // written: the schema has to be the one this build expects.
+    db::migrate::run(db.client()).await?;
 
     let (client, session, mut updates) = session::connect(db.client().clone()).await?;
 
