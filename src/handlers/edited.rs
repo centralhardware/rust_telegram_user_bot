@@ -37,7 +37,10 @@ pub async fn save_edited(app: &App, message: &Message) -> anyhow::Result<()> {
     // A message sent before the bot saw the chat has no send row to diff
     // against: the edit is logged with the text as it now stands and an empty
     // patch, rather than one claiming every word is new.
-    let original = before.unwrap_or_default().to_string();
+    let keyboard_changed = original.keyboard != keyboard;
+    let entities_changed = original.entities != entities;
+    let original_keyboard = original.keyboard;
+    let original_text = before.unwrap_or_default().to_string();
     let diff = match before {
         Some(before) => crate::render::diff::word_patch(before, &message_content),
         None => String::new(),
@@ -53,7 +56,20 @@ pub async fn save_edited(app: &App, message: &Message) -> anyhow::Result<()> {
         format!("{} {}", sender.first_name, sender.second_name)
     };
     if !app.is_log_ignored(chat_id) {
-        let colored = crate::render::diff::inline_diff(&original, &message_content);
+        let mut colored = crate::render::diff::inline_diff(&original_text, &message_content);
+        // An edit that touches only the buttons or the formatting leaves the
+        // text diff empty; say what did change instead of printing nothing.
+        if keyboard_changed {
+            let before = crate::render::inline_buttons::format_stored(&original_keyboard);
+            let after = crate::render::inline_buttons::format_stored(&keyboard);
+            let buttons = crate::render::diff::inline_diff(&before, &after);
+            if !colored.is_empty() {
+                colored.push('\n');
+            }
+            colored.push_str(&format!("buttons: {buttons}"));
+        } else if entities_changed && original_text == message_content {
+            colored = format!("{colored} [formatting changed]").trim().to_string();
+        }
         LogLine::new(Tone::Edited, "edited", message.id())
             .chat(&chat_name)
             .sender(&sender_name)
