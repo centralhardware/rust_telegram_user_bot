@@ -15,7 +15,7 @@
 
 use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;
-use log::info;
+use crate::utils::console::{LogLine, Tone};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -102,27 +102,21 @@ pub async fn save_poll(app: &App, update: &tl::types::UpdateMessagePoll) {
             _ if !chat_title.is_empty() => chat_title.clone(),
             _ => update.poll_id.to_string(),
         };
-        let chat_short = clip(&title, CHAT_WIDTH);
         let question = match clip(&question, QUESTION_WIDTH) {
             q if q.is_empty() => "(unknown question)".to_string(),
             q => q,
         };
         let total = results.total_voters.unwrap_or(0).max(0) as u32;
         let changed = changed_options(&app.polls, update.poll_id, &counts);
-        let mut text = format!(
-            "\x1b[96m{:<KIND_WIDTH$} {:>ID_WIDTH$} {:<CHAT_WIDTH$} \x1b[90m│\x1b[96m {question} \x1b[90m({total} voters)",
-            "poll", message_id, chat_short,
-        );
-        // One record, so nothing else lands between a poll's lines; the
-        // continuation lines are indented past the logger's timestamp.
+        // One record, so nothing else lands between a poll's lines.
+        let mut body = format!("{question} ({total} voters)");
         for line in render_counts(&counts, &options, total, &changed) {
-            text.push_str(&format!(
-                "\n{:<width$}\x1b[90m│\x1b[96m   {line}",
-                "",
-                width = TIMESTAMP_WIDTH + KIND_WIDTH + ID_WIDTH + CHAT_WIDTH + 3,
-            ));
+            body.push_str(&format!("\n  {line}"));
         }
-        info!("{text}\x1b[0m");
+        LogLine::new(Tone::Info, "poll", message_id)
+            .chat(&title)
+            .body(&body)
+            .print();
     }
 
     app.db.log_event(Event::from(PollEvent {
@@ -139,10 +133,6 @@ pub async fn save_poll(app: &App, update: &tl::types::UpdateMessagePoll) {
     .await;
 }
 
-const TIMESTAMP_WIDTH: usize = "[00:00:00] ".len();
-const KIND_WIDTH: usize = 8;
-const ID_WIDTH: usize = 8;
-const CHAT_WIDTH: usize = 25;
 const QUESTION_WIDTH: usize = 40;
 const OPTION_WIDTH: usize = 30;
 

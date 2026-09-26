@@ -1,6 +1,6 @@
 use grammers_client::peer::Peer;
 use grammers_client::update::Message;
-use log::info;
+use crate::utils::console::{LogLine, Tone};
 
 use crate::db::Event;
 use crate::events::ServiceEvent;
@@ -45,21 +45,18 @@ pub async fn save_service(app: &App, message: &Message) -> bool {
 
     if !app.is_log_ignored(chat_id) {
         let chat = crate::utils::peer_info::chat_info(app, message).await;
-        let chat_short: String = chat.chat_title.chars().take(25).collect();
-        let sender_short: String = message
+        let sender = message
             .sender()
             .map(|p| match p {
                 Peer::User(u) => u.full_name(),
                 _ => p.name().unwrap_or_default().to_string(),
             })
-            .unwrap_or_default()
-            .chars()
-            .take(10)
-            .collect();
-        info!(
-            "\x1b[95m{:<8} {:>8} {:<25} \x1b[90m│\x1b[95m {:<10} \x1b[90m│\x1b[95m {}\x1b[0m",
-            "service", target, chat_short, sender_short, kind
-        );
+            .unwrap_or_default();
+        LogLine::new(Tone::Action, "service", target)
+            .chat(&chat.chat_title)
+            .sender(&sender)
+            .body(&kind)
+            .print();
     }
 
     true

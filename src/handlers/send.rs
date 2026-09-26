@@ -6,6 +6,8 @@
 use grammers_client::update::Message;
 use log::info;
 
+use crate::utils::console::{LogLine, Tone};
+
 use super::extract::ChatInfo;
 use crate::db::Event;
 use crate::app::App;
@@ -94,30 +96,26 @@ pub(super) async fn print(
     app: &App,
     message: &Message,
     body: &Body,
-    (label, color): (&str, &str),
+    (label, tone): (&str, Tone),
     chat_title: &str,
     sender_name: &str,
 ) {
     let topic_name = crate::utils::topic::topic_name(app, message).await;
-    let title_short: String = if topic_name.is_empty() {
-        chat_title.chars().take(25).collect()
+    let title = if topic_name.is_empty() {
+        chat_title.to_string()
     } else {
-        format!("{} / {}", chat_title, topic_name).chars().take(25).collect()
+        format!("{chat_title} / {topic_name}")
     };
-    let sender_short: String = sender_name.chars().take(10).collect();
 
     let reply_line = crate::utils::reply_preview::format_reply_line(app, message).await;
     if !reply_line.is_empty() {
         info!("{}", reply_line);
     }
-    info!(
-        "\x1b[{color}m{:<8} {:>8} {:<25} \x1b[90m│\x1b[{color}m {:<10} \x1b[90m│\x1b[{color}m {}\x1b[0m",
-        label,
-        message.id(),
-        title_short,
-        sender_short,
-        body.preview(),
-    );
+    LogLine::new(tone, label, message.id())
+        .chat(&title)
+        .sender(sender_name)
+        .body(&body.preview())
+        .print();
 }
 
 /// The send row for a message, with everything but its sender filled in: the

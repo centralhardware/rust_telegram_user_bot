@@ -19,7 +19,7 @@ pub async fn save_incoming(app: &App, message: &Message) -> Result<Event, Box<dy
     let body = Body::of(app, message, Some(sender.user_id as i64), Some(&sender_display)).await;
 
     if !app.is_log_ignored(chat_id) {
-        super::send::print(app, message, &body, ("incoming", "92"), &chat.chat_title, &sender_display).await;
+        super::send::print(app, message, &body, ("incoming", crate::utils::console::Tone::Incoming), &chat.chat_title, &sender_display).await;
     }
 
     let event = Event {

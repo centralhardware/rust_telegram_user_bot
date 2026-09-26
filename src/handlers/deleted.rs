@@ -1,5 +1,5 @@
 use grammers_client::update::MessageDeletion;
-use log::info;
+use crate::utils::console::{LogLine, Tone};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -43,16 +43,11 @@ pub async fn save_deleted(
                 (m.message.as_str(), m.first_name.as_str(), m.chat_title.as_str())
             });
             let title = if title.is_empty() { chat_id.to_string() } else { title.to_string() };
-            let title_short: String = title.chars().take(25).collect();
-            let sender_short: String = sender.chars().take(10).collect();
-            info!(
-                "\x1b[91m{:<8} {:>8} {:<25} \x1b[90m│\x1b[91m {:<10} \x1b[90m│\x1b[91m {}\x1b[0m",
-                "deleted",
-                msg_id,
-                title_short,
-                sender_short,
-                message,
-            );
+            LogLine::new(Tone::Deleted, "deleted", msg_id)
+                .chat(&title)
+                .sender(sender)
+                .body(message)
+                .print();
         }
 
         // Telegram names nothing but the chat and the id, and that is all the

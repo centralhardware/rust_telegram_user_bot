@@ -15,7 +15,7 @@
 
 use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;
-use log::info;
+use crate::utils::console::{LogLine, Tone};
 
 use crate::db::{Event, EventKind};
 use crate::events::DeleteEvent;
@@ -44,16 +44,12 @@ pub async fn save_ephemeral(app: &App, message: &tl::enums::EphemeralMessage, ev
     let (reply_to, reply_to_ephemeral) = reply(msg);
 
     if !app.is_log_ignored(chat_id) {
-        let sender_short: String = sender_title.chars().take(10).collect();
-        let chat_short: String = chat_title.chars().take(25).collect();
-        info!(
-            "\x1b[94m{:<8} {:>8} {:<25} \x1b[90m│\x1b[94m {:<10} \x1b[90m│\x1b[94m {}\x1b[0m",
-            format!("eph {event}"),
-            msg.id,
-            chat_short,
-            sender_short,
-            text
-        );
+        let kind = format!("eph {event}");
+        LogLine::new(Tone::Ephemeral, &kind, msg.id)
+            .chat(&chat_title)
+            .sender(&sender_title)
+            .body(&text)
+            .print();
     }
 
     app.db.log_event(Event {
@@ -87,12 +83,8 @@ pub async fn save_ephemeral_deleted(app: &App, peer: &tl::enums::Peer, ids: &[i3
     let date_time = chrono::Utc::now().timestamp() as u32;
 
     if !app.is_log_ignored(chat_id) {
-        let chat_short: String = chat_title.chars().take(25).collect();
         for id in ids {
-            info!(
-                "\x1b[94m{:<8} {:>8} {:<25}\x1b[0m",
-                "eph del", id, chat_short
-            );
+            LogLine::new(Tone::Ephemeral, "eph del", id).chat(&chat_title).print();
         }
     }
 

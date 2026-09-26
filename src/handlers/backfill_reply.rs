@@ -2,6 +2,7 @@ use grammers_client::update::Message;
 use grammers_tl_types as tl;
 use log::{debug, info, warn};
 use crate::app::App;
+use crate::utils::console::{LogLine, Tone};
 
 
 /// If the message is a reply and the replied-to message is not yet in ClickHouse,
@@ -56,9 +57,8 @@ pub async fn backfill_reply(app: &App, message: &Message) {
     app.db.log_event(crate::utils::event_of::event_of(app, &reply).await).await;
 
     if !app.is_log_ignored(chat_id) {
-        info!(
-            "\x1b[96m{:<8} {:>8} backfilled reply_to message\x1b[0m",
-            "backfill", reply_id
-        );
+        LogLine::new(Tone::Info, "backfill", reply_id)
+            .body("backfilled reply_to message")
+            .print();
     }
 }
