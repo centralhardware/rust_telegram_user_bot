@@ -6,16 +6,8 @@
 //! it: in a chat with itself the sender is the account, flag or no flag.
 
 use grammers_client::message::Message;
-use std::sync::OnceLock;
-
-static SELF_ID: OnceLock<u64> = OnceLock::new();
-
-/// Called once, as soon as `get_me` has answered.
-pub fn set(id: u64) {
-    let _ = SELF_ID.set(id);
-}
-
-pub fn is_outgoing(message: &Message) -> bool {
+/// `me` is the account's own id.
+pub fn is_outgoing(me: u64, message: &Message) -> bool {
     if message.outgoing() {
         return true;
     }
@@ -24,7 +16,7 @@ pub fn is_outgoing(message: &Message) -> bool {
         // account itself and so already the answer.
         Some(sender) => match sender.bare_id() {
             None => true,
-            Some(id) => SELF_ID.get().is_some_and(|me| id == *me as i64),
+            Some(id) => id == me as i64,
         },
         None => false,
     }

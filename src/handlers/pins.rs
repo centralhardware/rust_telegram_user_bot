@@ -11,24 +11,24 @@
 
 use log::info;
 
-use crate::db::{log_event, Event};
+use crate::db::Event;
 use crate::events::PinEvent;
-use crate::utils::log_ignore::is_log_ignored;
 use crate::utils::peer_names::title_of;
+use crate::app::App;
 
-pub async fn save_pinned(chat_id: i64, dialog_id: i64, messages: &[i32], pinned: bool) {
+pub async fn save_pinned(app: &App, chat_id: i64, dialog_id: i64, messages: &[i32], pinned: bool) {
     let date_time = chrono::Utc::now().timestamp() as u32;
     let name = if pinned { "pin" } else { "unpin" };
 
-    if !is_log_ignored(chat_id) {
-        let chat_short: String = title_of(dialog_id).await.chars().take(25).collect();
+    if !app.is_log_ignored(chat_id) {
+        let chat_short: String = title_of(app, dialog_id).await.chars().take(25).collect();
         for id in messages {
             info!("\x1b[96m{:<8} {:>8} {:<25}\x1b[0m", name, id, chat_short);
         }
     }
 
     for &id in messages {
-        log_event(Event::from(PinEvent {
+        app.db.log_event(Event::from(PinEvent {
             date_time,
             chat_id,
             message_id: id as i64,

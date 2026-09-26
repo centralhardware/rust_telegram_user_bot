@@ -4,7 +4,7 @@ use log::info;
 
 use crate::db::Event;
 use crate::events::ServiceEvent;
-use crate::utils::log_ignore::is_log_ignored;
+use crate::app::App;
 
 /// A service message that is nothing but a mark on another message — a pin — is
 /// logged as an event *of that message*, not as a message of its own.
@@ -21,7 +21,7 @@ use crate::utils::log_ignore::is_log_ignored;
 ///
 /// Returns whether it took the message. A service message that carries its own
 /// meaning — a title change, a join, a call — is left to the ordinary save.
-pub async fn save_service(message: &Message) -> bool {
+pub async fn save_service(app: &App, message: &Message) -> bool {
     let Some(action) = message.action() else {
         return false;
     };
@@ -32,7 +32,7 @@ pub async fn save_service(message: &Message) -> bool {
     let chat_id = message.peer_id().bare_id_unchecked();
     let kind = crate::utils::service_action::kind(action);
 
-    crate::db::log_event(Event::from(ServiceEvent {
+    app.db.log_event(Event::from(ServiceEvent {
         date_time: message.date().as_second() as u32,
         chat_id,
         message_id: target as i64,
@@ -43,8 +43,8 @@ pub async fn save_service(message: &Message) -> bool {
     }))
     .await;
 
-    if !is_log_ignored(chat_id) {
-        let chat = crate::utils::peer_info::chat_info(message).await;
+    if !app.is_log_ignored(chat_id) {
+        let chat = crate::utils::peer_info::chat_info(app, message).await;
         let chat_short: String = chat.chat_title.chars().take(25).collect();
         let sender_short: String = message
             .sender()

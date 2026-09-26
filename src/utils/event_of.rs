@@ -6,18 +6,18 @@
 //! columns a live one gets, or the row is quietly the thinner of the two. Both
 //! callers build it here so there is one answer to what a row holds.
 
-use grammers_client::Client;
 use grammers_client::message::Message;
 
 use crate::db::Event;
 use crate::handlers::extract::extract_community_tag;
 use crate::utils::peer_info::{chat_info, sender_info};
+use crate::app::App;
 
-pub async fn event_of(client: &Client, msg: &Message) -> Event {
+pub async fn event_of(app: &App, msg: &Message) -> Event {
     let chat_id = msg.peer_id().bare_id_unchecked();
 
-    let sender = sender_info(msg).await;
-    let chat = chat_info(msg).await;
+    let sender = sender_info(app, msg).await;
+    let chat = chat_info(app, msg).await;
 
     let text = crate::utils::format_entities::plain_text(msg);
     let sender_bare_id = sender.user_id as i64;
@@ -29,7 +29,7 @@ pub async fn event_of(client: &Client, msg: &Message) -> Event {
         } else {
             format!("{} {}", sender.first_name, sender.second_name)
         };
-        let game_title = crate::utils::service_action::game_title(client, msg).await;
+        let game_title = crate::utils::service_action::game_title(&app.tg, msg).await;
         crate::utils::service_action::format(
             action,
             Some(sender_bare_id),
@@ -47,8 +47,8 @@ pub async fn event_of(client: &Client, msg: &Message) -> Event {
     };
 
     let mut reply = crate::utils::reply_target::reply_info(msg);
-    let reply_to_user_id = crate::db::resolve_reply(chat_id, &mut reply).await;
-    let (topic_id, topic_name) = crate::utils::topic::topic_of(client, msg).await;
+    let reply_to_user_id = crate::db::resolve_reply(&*app.db, chat_id, &mut reply).await;
+    let (topic_id, topic_name) = crate::utils::topic::topic_of(app, msg).await;
 
     let meta = crate::utils::media_description::media_meta_of(&msg.raw).unwrap_or_default();
     let meta_msg = crate::utils::message_meta::of(&msg.raw);
@@ -70,7 +70,7 @@ pub async fn event_of(client: &Client, msg: &Message) -> Event {
         chat_usernames: chat.chat_usernames,
         // A fetched message can be one this account sent: `Event::send()` defaults
         // to incoming, which would be wrong for half of them.
-        out: crate::utils::self_id::is_outgoing(msg),
+        out: crate::utils::self_id::is_outgoing(app.me, msg),
         reply_to: reply.reply_to,
         reply_to_user_id,
         reply_to_chat_id: reply.reply_to_chat_id,

@@ -24,8 +24,8 @@ pub(super) struct Read {
 ///
 /// It is not filtered to this account for a `mine` walk: what comes back is used
 /// as a place to re-anchor the search, and the search does its own filtering.
-pub(super) async fn next_id_below(client: &Client, peer: PeerRef, anchor: i64) -> Option<i64> {
-    let mut history = client.iter_messages(peer).offset_id(anchor as i32).limit(1);
+pub(super) async fn next_id_below(app: &Arc<App>, peer: PeerRef, anchor: i64) -> Option<i64> {
+    let mut history = app.tg.iter_messages(peer).offset_id(anchor as i32).limit(1);
     match history.next().await {
         Ok(Some(message)) => Some(message.id() as i64),
         Ok(None) => None,
@@ -52,7 +52,7 @@ pub(super) async fn next_id_below(client: &Client, peer: PeerRef, anchor: i64) -
 /// `next_id_below` finds under the offset it started at.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn walk(
-    client: &Client,
+    app: &Arc<App>,
     peer: PeerRef,
     chat_id: i64,
     mine_only: bool,
@@ -64,7 +64,7 @@ pub(super) async fn walk(
     status: Option<&Message>,
 ) -> Read {
     let anchored = |at: i64| {
-        let mut search = client.search_messages(peer);
+        let mut search = app.tg.search_messages(peer);
         if mine_only {
             search = search.sent_by_self();
         }
@@ -115,7 +115,7 @@ pub(super) async fn walk(
                     search = anchored(anchor);
                     continue;
                 }
-                match next_id_below(client, peer, anchor).await {
+                match next_id_below(app, peer, anchor).await {
                     // `offset_id` is exclusive, so the search is anchored one
                     // above the id it must read first.
                     Some(next) if floor == 0 || next > floor => {
@@ -155,8 +155,8 @@ pub(super) async fn walk(
         pending.push(message);
 
         if pending.len() >= BATCH {
-            convert(client, chat_id, &mut pending, &mut batch).await;
-            flush(&mut batch, written).await;
+            convert(app, chat_id, &mut pending, &mut batch).await;
+            flush(app, &mut batch, written).await;
         }
         // A page's worth read is a page's worth fetched: the next message asks
         // Telegram for the next one.
@@ -174,10 +174,10 @@ pub(super) async fn walk(
             }
     }
 
-    convert(client, chat_id, &mut pending, &mut batch).await;
+    convert(app, chat_id, &mut pending, &mut batch).await;
     // Whatever is already in hand is worth keeping even when the segment ended
     // on a refusal.
-    flush(&mut batch, written).await;
+    flush(app, &mut batch, written).await;
     read
 }
 
@@ -190,7 +190,7 @@ pub(super) async fn walk(
 /// to), or just under an exact message id (`from <id>`).
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn walk_chat(
-    client: &Client,
+    app: &Arc<App>,
     peer: PeerRef,
     chat_id: i64,
     mine_only: bool,
@@ -200,11 +200,11 @@ pub(super) async fn walk_chat(
 ) -> Outcome {
     let offset = match start {
         Start::Newest => 0,
-        Start::Last => oldest_logged_id(chat_id).await,
+        Start::Last => oldest_logged_id(app, chat_id).await,
         Start::From(id) => id,
     };
 
-    let mut counter = client.search_messages(peer);
+    let mut counter = app.tg.search_messages(peer);
     if mine_only {
         counter = counter.sent_by_self();
     }
@@ -212,7 +212,7 @@ pub(super) async fn walk_chat(
 
     let mut written = 0usize;
     let read = walk(
-        client,
+        app,
         peer,
         chat_id,
         mine_only,
@@ -283,8 +283,8 @@ pub(super) fn is_health_check(text: &str) -> bool {
 /// Read off the session's peer cache, which keeps the flag Telegram sent with
 /// the user. A peer it does not know is taken as not a bot: leaving a real
 /// message out of the log is the worse mistake of the two.
-pub(super) async fn is_bot_chat(peer: PeerRef) -> bool {
-    let Some(session) = crate::session::session() else {
+pub(super) async fn is_bot_chat(app: &App, peer: PeerRef) -> bool {
+    let Some(session) = &app.session else {
         return false;
     };
     match session.peer(peer.id).await {
@@ -315,7 +315,7 @@ impl std::fmt::Display for Outcome {
 
 /// Turn the messages the log does not have yet into rows.
 pub(super) async fn convert(
-    client: &Client,
+    app: &Arc<App>,
     chat_id: i64,
     pending: &mut Vec<Message>,
     batch: &mut Vec<Event>,
@@ -324,6 +324,7 @@ pub(super) async fn convert(
         return;
     }
     let known = known_ids(
+        app,
         chat_id,
         &pending.iter().map(|m| m.id() as i64).collect::<Vec<_>>(),
     )
@@ -334,8 +335,8 @@ pub(super) async fn convert(
         if known.contains(&(message.id() as i64)) {
             continue;
         }
-        let client = client.clone();
-        building.spawn(async move { crate::utils::event_of::event_of(&client, &message).await });
+        let app = Arc::clone(app);
+        building.spawn(async move { crate::utils::event_of::event_of(&app, &message).await });
         while building.len() >= CONCURRENCY {
             collect(&mut building, batch).await;
         }
@@ -357,28 +358,9 @@ pub(super) async fn collect(building: &mut JoinSet<Event>, batch: &mut Vec<Event
 
 /// Which of these message ids the log already holds, asked a batch at a time.
 /// Read through the Buffer, so a message logged a moment ago counts.
-pub(super) async fn known_ids(chat_id: i64, ids: &[i64]) -> HashSet<i64> {
-    // The ids come from Telegram as integers, so the list is built rather than
-    // bound: `clickhouse`'s `?` has no array form for an `IN`.
-    let list = ids
-        .iter()
-        .map(|id| id.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    match crate::db::clickhouse()
-        .query(&format!(
-            "SELECT message_id FROM {} \
-             WHERE chat_id = ? AND event IN (?, ?) AND NOT ephemeral \
-             AND message_id IN ({list})",
-            crate::db::EVENTS
-        ))
-        .bind(chat_id)
-        .bind(crate::db::EventKind::Send)
-        .bind(crate::db::EventKind::Service)
-        .fetch_all::<i64>()
-        .await
-    {
-        Ok(found) => found.into_iter().collect(),
+pub(super) async fn known_ids(app: &App, chat_id: i64, ids: &[i64]) -> HashSet<i64> {
+    match app.db.known_ids(chat_id, ids).await {
+        Ok(found) => found,
         // Writing a row the log already has is harmless — `events_log` replaces
         // on merge — so a failed check is worth carrying on past.
         Err(e) => {
@@ -388,11 +370,11 @@ pub(super) async fn known_ids(chat_id: i64, ids: &[i64]) -> HashSet<i64> {
     }
 }
 
-pub(super) async fn flush(batch: &mut Vec<Event>, written: &mut usize) {
+pub(super) async fn flush(app: &App, batch: &mut Vec<Event>, written: &mut usize) {
     if batch.is_empty() {
         return;
     }
-    match crate::db::insert_rows("events_log", batch).await {
+    match app.db.write_backfill(batch).await {
         Ok(()) => *written += batch.len(),
         Err(e) => warn!("backfill: insert: {e}"),
     }
@@ -401,20 +383,11 @@ pub(super) async fn flush(batch: &mut Vec<Event>, written: &mut usize) {
 
 /// The oldest message id the log holds for a chat, 0 (the newest message
 /// there is) when it holds none.
-async fn oldest_logged_id(chat_id: i64) -> i64 {
-    crate::db::clickhouse()
-        .query(&format!(
-            "SELECT min(message_id) FROM {} WHERE chat_id = ? AND event = ?",
-            crate::db::EVENTS
-        ))
-        .bind(chat_id)
-        .bind(crate::db::EventKind::Send)
-        .fetch_one::<i64>()
-        .await
-        .unwrap_or_else(|e| {
-            warn!("backfill: reading the oldest logged id of {chat_id}: {e}");
-            0
-        })
+async fn oldest_logged_id(app: &App, chat_id: i64) -> i64 {
+    app.db.oldest_logged_id(chat_id).await.unwrap_or_else(|e| {
+        warn!("backfill: reading the oldest logged id of {chat_id}: {e}");
+        0
+    })
 }
 
 /// Where a walk begins; it always runs down to the start of the history.

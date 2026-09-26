@@ -9,9 +9,9 @@ pub(super) const NEW_SCAN: i64 = 0;
 
 /// Handle `!backfill new`: find the dialogs `events_log` has no row for and
 /// walk each of them, one after another.
-pub(super) async fn start_new(client: &Client, message: &Message, mine_only: bool, dry_run: bool) {
+pub(super) async fn start_new(app: &Arc<App>, message: &Message, mine_only: bool, dry_run: bool) {
     {
-        let mut running = RUNNING.lock().await;
+        let mut running = app.backfills.0.lock().await;
         if !running.insert(NEW_SCAN) {
             reply(message, "backfill: a `new` scan is already running").await;
             return;
@@ -34,29 +34,29 @@ pub(super) async fn start_new(client: &Client, message: &Message, mine_only: boo
         }
     };
 
-    let client = client.clone();
+    let app = Arc::clone(app);
     tokio::spawn(async move {
-        let outcome = run_new(&client, mine_only, dry_run, status.as_ref()).await;
+        let outcome = run_new(&app, mine_only, dry_run, status.as_ref()).await;
         if let Some(status) = &status {
             let _ = status.edit(outcome.as_str()).await;
         }
         info!("\x1b[96m{:<8} {:>8} {}\x1b[0m", "backfill", "new", outcome);
-        RUNNING.lock().await.remove(&NEW_SCAN);
+        app.backfills.0.lock().await.remove(&NEW_SCAN);
     });
 }
 
 /// The body of a `new` scan. Returns the line to leave in the status message.
 pub(super) async fn run_new(
-    client: &Client,
+    app: &Arc<App>,
     mine_only: bool,
     dry_run: bool,
     status: Option<&Message>,
 ) -> String {
-    let scan = match list_dialogs(client).await {
+    let scan = match list_dialogs(&app.tg).await {
         Ok(scan) => scan,
         Err(e) => return format!("backfill new: cannot read the dialog list — {e}"),
     };
-    let logged = match logged_chat_ids().await {
+    let logged = match app.db.logged_chat_ids().await {
         Ok(ids) => ids,
         // Without the log's side of it every dialog would look new, and the
         // scan would walk the whole account's history for nothing.
@@ -68,7 +68,7 @@ pub(super) async fn run_new(
         .dialogs
         .into_iter()
         .filter(|d| {
-            !logged.contains(&d.chat_id) && !crate::utils::log_ignore::is_log_ignored(d.chat_id)
+            !logged.contains(&d.chat_id) && !app.is_log_ignored(d.chat_id)
         })
         .collect();
 
@@ -119,7 +119,7 @@ pub(super) async fn run_new(
     let mut refused = 0usize;
     for dialog in missing {
         // A chat the `<chat_id>` form is walking right now is left to it.
-        if !RUNNING.lock().await.insert(dialog.chat_id) {
+        if !app.backfills.0.lock().await.insert(dialog.chat_id) {
             skipped += 1;
             continue;
         }
@@ -134,7 +134,7 @@ pub(super) async fn run_new(
                 .await;
         }
         let outcome = walk_chat(
-            client,
+            app,
             dialog.peer,
             dialog.chat_id,
             mine_only,
@@ -151,7 +151,7 @@ pub(super) async fn run_new(
         written += outcome.written;
         refused += usize::from(outcome.refused);
         done += 1;
-        RUNNING.lock().await.remove(&dialog.chat_id);
+        app.backfills.0.lock().await.remove(&dialog.chat_id);
         tokio::time::sleep(REQUEST_GAP).await;
     }
 
@@ -290,18 +290,4 @@ pub(super) fn describe_chat(id: i64, chats: &[tl::enums::Chat]) -> Option<Dialog
         title,
         bot: false,
     })
-}
-
-/// Every chat id `events_log` holds a message for. Read through the Buffer, so a
-/// chat logged a moment ago counts as seen.
-pub(super) async fn logged_chat_ids() -> Result<HashSet<i64>, clickhouse::error::Error> {
-    Ok(crate::db::clickhouse()
-        .query(&format!(
-            "SELECT DISTINCT chat_id FROM {} WHERE NOT ephemeral",
-            crate::db::EVENTS
-        ))
-        .fetch_all::<i64>()
-        .await?
-        .into_iter()
-        .collect())
 }

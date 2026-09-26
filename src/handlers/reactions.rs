@@ -12,11 +12,11 @@ use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;
 use log::info;
 
-use crate::db::{log_event, Event};
+use crate::db::Event;
 use crate::events::ReactionEvent;
-use crate::utils::log_ignore::is_log_ignored;
+use crate::app::App;
 
-pub async fn save_reactions(update: &tl::types::UpdateMessageReactions) {
+pub async fn save_reactions(app: &App, update: &tl::types::UpdateMessageReactions) {
     // `chat_id` in `events_log` is the bare id every message path writes; the
     // dialog id is only what `peer_names` is keyed by.
     let peer = PeerId::from(&update.peer);
@@ -32,12 +32,12 @@ pub async fn save_reactions(update: &tl::types::UpdateMessageReactions) {
         })
         .collect();
 
-    let chat_title = crate::utils::peer_names::load(peer.bot_api_dialog_id_unchecked())
+    let chat_title = crate::utils::peer_names::load(app, peer.bot_api_dialog_id_unchecked())
         .await
         .map(|names| names.title)
         .unwrap_or_default();
 
-    if !is_log_ignored(chat_id) {
+    if !app.is_log_ignored(chat_id) {
         let chat_short: String = chat_title.chars().take(25).collect();
         let rendered = counts
             .iter()
@@ -50,7 +50,7 @@ pub async fn save_reactions(update: &tl::types::UpdateMessageReactions) {
         );
     }
 
-    log_event(Event::from(ReactionEvent {
+    app.db.log_event(Event::from(ReactionEvent {
         date_time: chrono::Utc::now().timestamp() as u32,
         chat_id,
         message_id: update.msg_id as i64,

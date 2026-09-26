@@ -3,30 +3,25 @@ use grammers_client::sender::UpdatesConfiguration;
 use grammers_client::{Client, SenderPool, SignInError};
 use log::info;
 use std::env;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use crate::Result;
 use crate::clickhouse_session::ClickhouseSession;
 
-/// The session the client runs on, kept so the rest of the bot can ask it what
-/// it knows about a peer. Resolving a chat the account is not currently reading
+/// Connect, and hand back the session the client runs on as well, so the rest
+/// of the bot can ask it what it knows about a peer. Resolving a chat the account is not currently reading
 /// a message from has no other answer: the peer map only holds what an update
 /// carried, and listing dialogs cannot be done safely (grammers panics on a
 /// dialog whose peer the same response did not name).
-static SESSION: OnceLock<Arc<ClickhouseSession>> = OnceLock::new();
-
-pub fn session() -> Option<&'static Arc<ClickhouseSession>> {
-    SESSION.get()
-}
-
-pub async fn connect() -> Result<(Client, UpdateStream)> {
+pub async fn connect(
+    ch: clickhouse::Client,
+) -> Result<(Client, Arc<ClickhouseSession>, UpdateStream)> {
     let api_id = env::var("TG_ID")
         .expect("TG_ID not set")
         .parse()
         .expect("TG_ID invalid");
 
-    let session = Arc::new(ClickhouseSession::open().await?);
-    let _ = SESSION.set(Arc::clone(&session));
+    let session = Arc::new(ClickhouseSession::open(ch).await?);
 
     let SenderPool {
         runner,
@@ -56,7 +51,7 @@ pub async fn connect() -> Result<(Client, UpdateStream)> {
         .await
         .map_err(|e| -> Box<dyn std::error::Error> { e })?;
 
-    Ok((client, updates))
+    Ok((client, session, updates))
 }
 
 async fn sign_in(client: &Client) -> Result<()> {

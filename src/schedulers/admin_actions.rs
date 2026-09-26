@@ -1,4 +1,7 @@
 use grammers_client::Client;
+use std::sync::Arc;
+
+use crate::app::App;
 use grammers_session::types::PeerRef;
 use grammers_tl_types as tl;
 use log::{error, info};
@@ -24,8 +27,8 @@ struct AdminChat {
 /// Discover the admin chats before returning, so the media archiver knows
 /// them from the first update on, then poll their admin logs in the
 /// background.
-pub async fn start(client: Client, _client_id: u64) {
-    let first = discover(&client).await;
+pub async fn start(app: Arc<App>) {
+    let first = discover(&app).await;
     // A failed first walk is tried again on the next tick, not an hour later.
     let mut discovered_at = first.is_some().then(Instant::now);
     let mut chats = first.unwrap_or_default();
@@ -37,14 +40,14 @@ pub async fn start(client: Client, _client_id: u64) {
             interval.tick().await;
 
             if discovered_at.is_none_or(|at| at.elapsed() >= DISCOVERY_INTERVAL)
-                && let Some(found) = discover(&client).await
+                && let Some(found) = discover(&app).await
             {
                 chats = found;
                 discovered_at = Some(Instant::now());
             }
 
             for chat in &chats {
-                if let Err(e) = log_admin_actions(&client, chat).await {
+                if let Err(e) = log_admin_actions(&app, chat).await {
                     error!("Failed to fetch admin actions for {}: {:?}", chat.title, e);
                 }
             }
@@ -54,8 +57,8 @@ pub async fn start(client: Client, _client_id: u64) {
 
 /// Walk the dialog list for the chats this account administers and publish
 /// them to `admin_chats`. `None` when the walk failed.
-async fn discover(client: &Client) -> Option<Vec<AdminChat>> {
-    match discover_admin_chats(client).await {
+async fn discover(app: &App) -> Option<Vec<AdminChat>> {
+    match discover_admin_chats(&app.tg).await {
         Ok(found) => {
             // One chat per line: a comma-joined list of a dozen-odd titles is
             // a single unreadable line in the log.
@@ -65,7 +68,7 @@ async fn discover(client: &Client) -> Option<Vec<AdminChat>> {
                 .collect::<Vec<_>>()
                 .join("\n");
             info!("admin log: watching {} chat(s):\n{}", found.len(), titles);
-            crate::utils::admin_chats::set(found.iter().map(|c| c.chat_id).collect());
+            app.admin_chats.set(found.iter().map(|c| c.chat_id).collect());
             Some(found)
         }
         Err(e) => {
@@ -625,23 +628,11 @@ fn extract_user_info(
 }
 
 
-async fn get_last_event_id(chat_id: u64) -> Result<u64, Box<dyn std::error::Error>> {
-    let max_id: u64 = crate::db::clickhouse()
-        .query("SELECT max(event_id) FROM admin_actions2 WHERE chat_id = ?")
-        .bind(chat_id)
-        .fetch_one()
-        .await
-        .unwrap_or(0);
-    Ok(max_id)
-}
-
 async fn log_admin_actions(
-    client: &Client,
+    app: &App,
     chat: &AdminChat,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let ch = crate::db::clickhouse();
-
-    let min_id = get_last_event_id(chat.chat_id).await? as i64;
+    let min_id = app.db.last_admin_event_id(chat.chat_id).await as i64;
     let mut max_id: i64 = 0;
     let mut total_inserted: usize = 0;
     let mut new_last_id: u64 = 0;
@@ -649,7 +640,8 @@ async fn log_admin_actions(
     loop {
         let input_channel: tl::enums::InputChannel = chat.peer.into();
 
-        let tl::enums::channels::AdminLogResults::Results(result) = client
+        let tl::enums::channels::AdminLogResults::Results(result) = app
+            .tg
             .invoke(&tl::functions::channels::GetAdminLog {
                 channel: input_channel,
                 q: String::new(),
@@ -665,7 +657,7 @@ async fn log_admin_actions(
             break;
         }
 
-        let mut insert = ch.insert::<AdminAction>("admin_actions2").await?;
+        let mut actions = Vec::with_capacity(result.events.len());
 
         for event in &result.events {
             let tl::enums::ChannelAdminLogEvent::Event(ev) = event;
@@ -678,7 +670,7 @@ async fn log_admin_actions(
                 .map(|id| extract_user_info(&result.users, id).0)
                 .unwrap_or_default();
 
-            let log = &AdminAction {
+            let log = AdminAction {
                 date: ev.date as u32,
                 event_id: ev.id as u64,
                 chat_id: chat.chat_id,
@@ -708,10 +700,10 @@ async fn log_admin_actions(
                 console_output,
             );
 
-            insert.write(log).await?;
+            actions.push(log);
         }
 
-        insert.end().await?;
+        app.db.write_admin_actions(&actions).await.map_err(|e| e.to_string())?;
 
         let (batch_min, batch_max) = result.events.iter().fold((i64::MAX, 0u64), |(min, max), e| {
             let tl::enums::ChannelAdminLogEvent::Event(ev) = e;

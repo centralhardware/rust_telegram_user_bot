@@ -1,28 +1,31 @@
-use grammers_client::Client;
+use std::sync::Arc;
+
+use crate::app::App;
 use grammers_tl_types as tl;
 use log::error;
 use std::time::Duration;
 
 use crate::db::TelegramSession;
 
-pub fn start(client: Client, client_id: u64) {
+pub fn start(app: Arc<App>) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
         loop {
             interval.tick().await;
-            if let Err(e) = log_sessions(&client, client_id).await {
+            if let Err(e) = log_sessions(&app).await {
                 error!("Failed to fetch sessions: {:?}", e);
             }
         }
     });
 }
 
-async fn log_sessions(client: &Client, client_id: u64) -> Result<(), Box<dyn std::error::Error>> {
-    let tl::enums::account::Authorizations::Authorizations(result) = client
+async fn log_sessions(app: &App) -> Result<(), Box<dyn std::error::Error>> {
+    let tl::enums::account::Authorizations::Authorizations(result) = app
+        .tg
         .invoke(&tl::functions::account::GetAuthorizations {})
         .await?;
 
-    let mut insert = crate::db::clickhouse().insert::<TelegramSession>("user_sessions").await?;
+    let mut sessions = Vec::new();
     for auth in &result.authorizations {
         let tl::enums::Authorization::Authorization(session) = auth;
 
@@ -30,7 +33,7 @@ async fn log_sessions(client: &Client, client_id: u64) -> Result<(), Box<dyn std
             continue;
         }
 
-        insert.write(&TelegramSession {
+        sessions.push(TelegramSession {
             hash: session.hash,
             device_model: session.device_model.clone(),
             platform: session.platform.clone(),
@@ -46,11 +49,10 @@ async fn log_sessions(client: &Client, client_id: u64) -> Result<(), Box<dyn std
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs() as u32,
-            client_id,
-        }).await?;
-
+            client_id: app.me,
+        });
     }
-    insert.end().await?;
+    app.db.write_user_sessions(&sessions).await.map_err(|e| e.to_string())?;
 
     Ok(())
 }

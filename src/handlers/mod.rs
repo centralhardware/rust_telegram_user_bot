@@ -1,15 +1,15 @@
 mod auto_cat;
-mod backfill_chat;
+pub mod backfill_chat;
 mod backfill_reply;
 mod deleted;
 mod edited;
 mod ephemeral;
 pub(crate) mod extract;
 mod incoming;
-mod media;
+pub mod media;
 mod outgoing;
 mod pins;
-mod polls;
+pub mod polls;
 mod reactions;
 mod send;
 mod service;

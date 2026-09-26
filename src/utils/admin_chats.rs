@@ -6,18 +6,21 @@ use std::sync::PoisonError;
 use std::collections::HashSet;
 use std::sync::RwLock;
 
-static ADMIN_CHATS: RwLock<Option<HashSet<u64>>> = RwLock::new(None);
+/// Unknown (`None`) until the first discovery pass finishes, so nothing is
+/// archived from a chat before we know we administer it.
+#[derive(Default)]
+pub struct AdminChats(RwLock<Option<HashSet<u64>>>);
 
-pub fn set(ids: HashSet<u64>) {
-    *ADMIN_CHATS.write().unwrap_or_else(PoisonError::into_inner) = Some(ids);
-}
+impl AdminChats {
+    pub fn set(&self, ids: HashSet<u64>) {
+        *self.0.write().unwrap_or_else(PoisonError::into_inner) = Some(ids);
+    }
 
-/// False until the first discovery pass finishes, so nothing is archived from a
-/// chat before we know we administer it.
-pub fn contains(chat_id: u64) -> bool {
-    ADMIN_CHATS
-        .read()
-        .unwrap_or_else(PoisonError::into_inner)
-        .as_ref()
-        .is_some_and(|ids| ids.contains(&chat_id))
+    pub fn contains(&self, chat_id: u64) -> bool {
+        self.0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(|ids| ids.contains(&chat_id))
+    }
 }

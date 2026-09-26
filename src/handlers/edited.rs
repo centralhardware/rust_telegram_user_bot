@@ -2,16 +2,16 @@ use grammers_client::update::Message;
 use log::info;
 
 use crate::db::Event;
-use crate::utils::log_ignore::is_log_ignored;
+use crate::app::App;
 
-pub async fn save_edited(message: &Message) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn save_edited(app: &App, message: &Message) -> Result<(), Box<dyn std::error::Error>> {
     let chat_id = message.peer_id().bare_id_unchecked();
     let msg_id = message.id() as i64;
     let message_content = crate::utils::format_entities::plain_text(message);
     let entities = crate::utils::entities::of_message(message);
     let keyboard = crate::utils::entities::keyboard_of_message(message);
 
-    let original = crate::db::find_message(chat_id, msg_id).await;
+    let original = app.db.find_message(chat_id, msg_id).await;
 
     // What the message said before, as far as the log knows. A photo or a file
     // sent without a caption is logged as its media description, which is not
@@ -43,9 +43,9 @@ pub async fn save_edited(message: &Message) -> Result<(), Box<dyn std::error::Er
         None => String::new(),
     };
 
-    let sender = crate::utils::peer_info::sender_info(message).await;
+    let sender = crate::utils::peer_info::sender_info(app, message).await;
 
-    let chat = crate::utils::peer_info::chat_info(message).await;
+    let chat = crate::utils::peer_info::chat_info(app, message).await;
     let chat_name = chat.chat_title.clone();
     let sender_name = if sender.second_name.is_empty() {
         sender.first_name.clone()
@@ -54,7 +54,7 @@ pub async fn save_edited(message: &Message) -> Result<(), Box<dyn std::error::Er
     };
     let sender_short: String = sender_name.chars().take(10).collect();
 
-    if !is_log_ignored(chat_id) {
+    if !app.is_log_ignored(chat_id) {
         let chat_name_short: String = chat_name.chars().take(25).collect();
         let colored = crate::utils::diff::inline_diff(&original, &message_content);
         info!(
@@ -87,7 +87,7 @@ pub async fn save_edited(message: &Message) -> Result<(), Box<dyn std::error::Er
     // row.
     let meta = crate::utils::media_description::media_meta(message).unwrap_or_default();
 
-    crate::db::log_event(Event {
+    app.db.log_event(Event {
         date_time: now,
         chat_id,
         message_id: msg_id,

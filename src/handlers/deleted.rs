@@ -5,9 +5,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::db::Event;
 use crate::events::DeleteEvent;
-use crate::utils::log_ignore::is_log_ignored;
+use crate::app::App;
 
 pub async fn save_deleted(
+    app: &App,
     deletion: &MessageDeletion,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let now = SystemTime::now()
@@ -22,8 +23,8 @@ pub async fn save_deleted(
     // A channel that is log-ignored needs no lookup: its rows are written
     // anyway, and nothing is printed.
     let found: HashMap<i64, _> = match channel {
-        Some(chat_id) if is_log_ignored(chat_id) => HashMap::new(),
-        _ => crate::db::find_deleted(channel, &ids)
+        Some(chat_id) if app.is_log_ignored(chat_id) => HashMap::new(),
+        _ => app.db.find_deleted(channel, &ids)
             .await
             .into_iter()
             .map(|m| (m.message_id, m))
@@ -37,7 +38,7 @@ pub async fn save_deleted(
             continue;
         };
 
-        if !is_log_ignored(chat_id) {
+        if !app.is_log_ignored(chat_id) {
             let (message, sender, title) = m.map_or(("", "", ""), |m| {
                 (m.message.as_str(), m.first_name.as_str(), m.chat_title.as_str())
             });
@@ -67,7 +68,7 @@ pub async fn save_deleted(
 
     // One insert for the whole deletion.
     if !rows.is_empty() {
-        crate::db::log_events(&rows).await;
+        app.db.log_events(&rows).await;
     }
 
     Ok(())

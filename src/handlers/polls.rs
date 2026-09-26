@@ -17,15 +17,16 @@ use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;
 use log::info;
 use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
+use std::sync::Mutex;
 
-use crate::db::{log_event, Event};
+use crate::app::App;
+
+use crate::db::Event;
 use crate::events::PollEvent;
-use crate::utils::log_ignore::is_log_ignored;
 use crate::utils::peer_names::title_of;
 use crate::utils::poll_info;
 
-pub async fn save_poll(update: &tl::types::UpdateMessagePoll) {
+pub async fn save_poll(app: &App, update: &tl::types::UpdateMessagePoll) {
     let tl::enums::PollResults::Results(results) = &update.results;
 
     // A "min" result set is the poll as seen without the account's own vote
@@ -77,7 +78,7 @@ pub async fn save_poll(update: &tl::types::UpdateMessagePoll) {
     let mut chat_title = String::new();
     let mut message_id = update.msg_id.unwrap_or(0) as i64;
     if (question.is_empty() || peer.is_none() || message_id == 0)
-        && let Some(info) = poll_info::load(update.poll_id).await {
+        && let Some(info) = poll_info::load(app, update.poll_id).await {
             if question.is_empty() {
                 question = info.question;
                 options = info.options;
@@ -91,9 +92,9 @@ pub async fn save_poll(update: &tl::types::UpdateMessagePoll) {
             chat_title = info.chat_title;
         }
 
-    if !is_log_ignored(chat_id) {
+    if !app.is_log_ignored(chat_id) {
         let title = match &peer {
-            Some(p) => title_of(p.bot_api_dialog_id_unchecked()).await,
+            Some(p) => title_of(app, p.bot_api_dialog_id_unchecked()).await,
             None => String::new(),
         };
         let title = match title {
@@ -107,7 +108,7 @@ pub async fn save_poll(update: &tl::types::UpdateMessagePoll) {
             q => q,
         };
         let total = results.total_voters.unwrap_or(0).max(0) as u32;
-        let changed = changed_options(update.poll_id, &counts);
+        let changed = changed_options(&app.polls, update.poll_id, &counts);
         let mut text = format!(
             "\x1b[96m{:<KIND_WIDTH$} {:>ID_WIDTH$} {:<CHAT_WIDTH$} \x1b[90m│\x1b[96m {question} \x1b[90m({total} voters)",
             "poll", message_id, chat_short,
@@ -124,7 +125,7 @@ pub async fn save_poll(update: &tl::types::UpdateMessagePoll) {
         info!("{text}\x1b[0m");
     }
 
-    log_event(Event::from(PollEvent {
+    app.db.log_event(Event::from(PollEvent {
         date_time: chrono::Utc::now().timestamp() as u32,
         chat_id,
         message_id,
@@ -148,13 +149,13 @@ const OPTION_WIDTH: usize = 30;
 /// Last counts seen per poll, so a busy poll prints only what moved.
 type Counts = Vec<(String, u32)>;
 
-static LAST_COUNTS: LazyLock<Mutex<HashMap<i64, Counts>>> =
-    LazyLock::new(Default::default);
+#[derive(Default)]
+pub struct PollCounts(Mutex<HashMap<i64, Counts>>);
 
 /// Which positions changed since this poll was last seen — all of them the
 /// first time.
-fn changed_options(poll_id: i64, counts: &[(String, u32)]) -> Vec<bool> {
-    let mut last = LAST_COUNTS.lock().unwrap_or_else(|e| e.into_inner());
+fn changed_options(polls: &PollCounts, poll_id: i64, counts: &[(String, u32)]) -> Vec<bool> {
+    let mut last = polls.0.lock().unwrap_or_else(|e| e.into_inner());
     // Bounded by starting over: a forgotten poll just prints in full once.
     if last.len() >= 10_000 && !last.contains_key(&poll_id) {
         last.clear();
@@ -220,7 +221,7 @@ fn option_key(option: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{changed_options, clip, option_key, render_counts};
+    use super::{changed_options, clip, option_key, render_counts, PollCounts};
 
     #[test]
     fn an_option_is_keyed_by_its_bytes_as_text_when_they_are_text() {
@@ -257,9 +258,10 @@ mod tests {
 
     #[test]
     fn only_changed_options_are_shown() {
-        assert_eq!(changed_options(-1, &counts()), [true, true]);
+        let polls = PollCounts::default();
+        assert_eq!(changed_options(&polls, -1, &counts()), [true, true]);
         let next = vec![("0".into(), 8901), ("1".into(), 9145)];
-        assert_eq!(changed_options(-1, &next), [false, true]);
+        assert_eq!(changed_options(&polls, -1, &next), [false, true]);
         assert_eq!(render_counts(&next, &[], 0, &[false, true]).len(), 1);
     }
 

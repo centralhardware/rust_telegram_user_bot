@@ -4,11 +4,11 @@
 //! is added in one place.
 
 use grammers_client::update::Message;
-use grammers_client::Client;
 use log::info;
 
 use super::extract::ChatInfo;
 use crate::db::Event;
+use crate::app::App;
 
 /// The body of a message, described once for the console line and the row
 /// alike.
@@ -25,14 +25,14 @@ impl Body {
     /// `sender_id` and `sender_name` are who a service action is said to be
     /// performed by.
     pub(super) async fn of(
-        client: &Client,
+        app: &App,
         message: &Message,
         sender_id: Option<i64>,
         sender_name: Option<&str>,
     ) -> Self {
         let text = crate::utils::format_entities::formatted_text(message);
         let game_title =
-            crate::utils::service_action::game_title(client, std::ops::Deref::deref(message)).await;
+            crate::utils::service_action::game_title(&app.tg, std::ops::Deref::deref(message)).await;
         let action_desc = match message.action() {
             Some(a) if text.is_empty() => Some(crate::utils::service_action::format(
                 a,
@@ -91,14 +91,14 @@ impl Body {
 /// Print the console line for a new message, and the line for what it
 /// replies to above it.
 pub(super) async fn print(
-    client: &Client,
+    app: &App,
     message: &Message,
     body: &Body,
     (label, color): (&str, &str),
     chat_title: &str,
     sender_name: &str,
 ) {
-    let topic_name = crate::utils::topic::topic_name(client, message).await;
+    let topic_name = crate::utils::topic::topic_name(app, message).await;
     let title_short: String = if topic_name.is_empty() {
         chat_title.chars().take(25).collect()
     } else {
@@ -106,7 +106,7 @@ pub(super) async fn print(
     };
     let sender_short: String = sender_name.chars().take(10).collect();
 
-    let reply_line = crate::utils::reply_preview::format_reply_line(message).await;
+    let reply_line = crate::utils::reply_preview::format_reply_line(app, message).await;
     if !reply_line.is_empty() {
         info!("{}", reply_line);
     }
@@ -127,11 +127,11 @@ pub(super) async fn print(
 /// other: an id, a sender, a date and a place in the history. It is logged as
 /// one, and `action` is what says it announces something rather than carrying
 /// what someone wrote.
-pub(super) async fn event(client: &Client, message: &Message, body: &Body, chat: ChatInfo) -> Event {
+pub(super) async fn event(app: &App, message: &Message, body: &Body, chat: ChatInfo) -> Event {
     let chat_id = message.peer_id().bare_id_unchecked();
     let mut reply = crate::utils::reply_target::reply_info(message);
-    let reply_to_user_id = crate::db::resolve_reply(chat_id, &mut reply).await;
-    let (topic_id, topic_name) = crate::utils::topic::topic_of(client, message).await;
+    let reply_to_user_id = crate::db::resolve_reply(&*app.db, chat_id, &mut reply).await;
+    let (topic_id, topic_name) = crate::utils::topic::topic_of(app, message).await;
 
     let meta = crate::utils::media_description::media_meta(message).unwrap_or_default();
     let meta_msg = crate::utils::message_meta::of(&std::ops::Deref::deref(message).raw);
