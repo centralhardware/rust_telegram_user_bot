@@ -11,10 +11,6 @@ pub async fn save_edited(message: &Message) -> Result<(), Box<dyn std::error::Er
     let entities = crate::utils::entities::of_message(message);
     let keyboard = crate::utils::entities::keyboard_of_message(message);
 
-    if message_content.is_empty() && entities.is_empty() && keyboard.is_empty() {
-        return Ok(());
-    }
-
     let original = crate::db::find_message(chat_id, msg_id).await;
 
     // What the message said before, as far as the log knows. A photo or a file
