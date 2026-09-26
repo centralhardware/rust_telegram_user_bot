@@ -1,5 +1,6 @@
 use grammers_client::message::Message;
 use grammers_tl_types as tl;
+use crate::app::App;
 
 /// A logged message, as the preview above a reply needs it.
 #[derive(Default)]
@@ -28,7 +29,7 @@ impl Target {
 /// an ordinary reply, and printing the post above it as well reads as if it
 /// commented on the post instead. Only a top-level comment names the post, and
 /// then the post *is* the target.
-pub async fn format_reply_line(message: &Message) -> String {
+pub async fn format_reply_line(app: &App, message: &Message) -> String {
     let reply_id = match crate::utils::reply_target::reply_target(message) {
         Some(id) => id,
         None => return String::new(),
@@ -46,19 +47,19 @@ pub async fn format_reply_line(message: &Message) -> String {
         foreign => foreign,
     };
 
-    let target = lookup(target_chat_id, reply_id).await;
+    let target = lookup(app, target_chat_id, reply_id).await;
 
-    render(reply_id, &target, header.quote_text.as_deref()).await
+    render(app, reply_id, &target, header.quote_text.as_deref()).await
 }
 
 /// One preview line: the id in the message-id column, the chat it is in, who
 /// sent it, and its text.
-async fn render(id: i32, target: &Target, quote_text: Option<&str>) -> String {
+async fn render(app: &App, id: i32, target: &Target, quote_text: Option<&str>) -> String {
     // Place the id in the same {:>8} column as the message id in incoming log
     // lines. Layout: {:<8}(8) + ' '(1) + {:>8}(8) + ' '(1) + {:<25}(25) + ' '(1)
     // = 44 before first │. Text column starts at
     // 44 + │(1) + ' '(1) + {:<10}(10) + ' '(1) + │(1) + ' '(1) + '> '(2) = 61
-    let chat_short: String = source_title(target).await.chars().take(25).collect();
+    let chat_short: String = source_title(app, target).await.chars().take(25).collect();
     let id_col = format!("{:<8} \x1b[90m{:>8}\x1b[0m {:<25} ", "", id, chat_short);
     let pad_text = " ".repeat(60);
 
@@ -96,38 +97,27 @@ async fn render(id: i32, target: &Target, quote_text: Option<&str>) -> String {
 /// What to call the chat a previewed message came from: for a copied channel
 /// post that is the channel that published it, not the discussion group the
 /// copy sits in.
-async fn source_title(target: &Target) -> String {
+async fn source_title(app: &App, target: &Target) -> String {
     if !target.is_post() {
         return target.chat_title.clone();
     }
     // peer_names is keyed by Bot API dialog id; the log keeps bare ids.
     let dialog_id = -1_000_000_000_000 - target.post_from_chat_id;
-    match crate::utils::peer_names::load(dialog_id).await {
+    match crate::utils::peer_names::load(app, dialog_id).await {
         Some(n) if !n.title.is_empty() => n.title,
         _ => target.chat_title.clone(),
     }
 }
 
-async fn lookup(chat_id: i64, message_id: i32) -> Target {
+async fn lookup(app: &App, chat_id: i64, message_id: i32) -> Target {
     // Incoming and outgoing now share one table, so one query covers both. The row
     // says who sent it, `peer_names` says what they are called.
-    let Ok((text, user_id, chat_title, fwd_chat, fwd_msg)) = crate::db::clickhouse()
-        .query(
-            "SELECT message, user_id, chat_title, fwd_from_chat_id, fwd_from_msg_id \
-             FROM events_log_buffer \
-             WHERE chat_id = ? AND message_id = ? AND event = ? \
-             ORDER BY date_time DESC LIMIT 1",
-        )
-        .bind(chat_id)
-        .bind(message_id as i64)
-        .bind(crate::db::EventKind::Send)
-        .fetch_one::<(String, u64, String, i64, i64)>()
-        .await
-    else {
+    let Some(row) = app.db.find_reply_row(chat_id, message_id as i64).await else {
         return Target::default();
     };
+    let crate::db::ReplyRow { message: text, user_id, chat_title, fwd_from_chat_id: fwd_chat, fwd_from_msg_id: fwd_msg } = row;
 
-    let sender = match crate::utils::peer_names::load(user_id as i64).await {
+    let sender = match crate::utils::peer_names::load(app, user_id as i64).await {
         Some(n) if !n.last_name.is_empty() => format!("{} {}", n.first_name, n.last_name),
         Some(n) => n.first_name,
         None => String::new(),

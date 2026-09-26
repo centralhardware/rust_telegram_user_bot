@@ -7,10 +7,9 @@
 //! than as a bare id and a row of indexes.
 
 use clickhouse::Row;
-use log::{debug, error};
 use serde::Deserialize;
 
-use crate::db::EventKind;
+use crate::app::App;
 
 #[derive(Row, Deserialize, Clone, Default, Debug)]
 pub struct PollInfo {
@@ -28,32 +27,9 @@ pub struct PollInfo {
 ///
 /// Unmemoised, like the peer names: the send row is the only place a poll's
 /// wording lives, and an edit that rewrites it is picked up on the next vote.
-pub async fn load(poll_id: i64) -> Option<PollInfo> {
+pub async fn load(app: &App, poll_id: i64) -> Option<PollInfo> {
     if poll_id == 0 {
         return None;
     }
-
-    match crate::db::clickhouse()
-        .query(
-            "SELECT chat_id, chat_title, message_id, poll_question, poll_options \
-             FROM events_log_buffer \
-             WHERE poll_id = ? AND event IN (?, ?) AND poll_question != '' \
-             ORDER BY date_time DESC LIMIT 1",
-        )
-        .bind(poll_id)
-        .bind(EventKind::Send)
-        .bind(EventKind::Edit)
-        .fetch_one::<PollInfo>()
-        .await
-    {
-        Ok(row) => Some(row),
-        Err(clickhouse::error::Error::RowNotFound) => {
-            debug!("poll {poll_id} has no stored message");
-            None
-        }
-        Err(e) => {
-            error!("looking up poll {poll_id}: {e}");
-            None
-        }
-    }
+    app.db.find_poll(poll_id).await
 }

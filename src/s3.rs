@@ -8,7 +8,6 @@ use aws_sdk_s3::config::retry::RetryConfig;
 use aws_sdk_s3::config::timeout::TimeoutConfig;
 use aws_sdk_s3::config::{Credentials, Region};
 use aws_sdk_s3::primitives::ByteStream;
-use std::sync::LazyLock;
 use std::time::Duration;
 
 /// Largest file we are willing to pull. Media above this is logged and skipped:
@@ -22,7 +21,10 @@ pub struct Storage {
     pub max_bytes: u64,
 }
 
-static STORAGE: LazyLock<Option<Storage>> = LazyLock::new(|| {
+impl Storage {
+    /// `None` when S3 is not configured, which leaves media archiving off
+    /// instead of failing the whole process.
+    pub fn from_env() -> Option<Storage> {
     let endpoint = std::env::var("S3_ENDPOINT").ok()?;
     let bucket = std::env::var("S3_BUCKET").ok()?;
     let access_key = std::env::var("S3_ACCESS_KEY").ok()?;
@@ -64,12 +66,7 @@ static STORAGE: LazyLock<Option<Storage>> = LazyLock::new(|| {
         bucket,
         max_bytes,
     })
-});
-
-/// `None` when S3 is not configured, which leaves media archiving off
-/// instead of failing the whole process.
-pub fn storage() -> Option<&'static Storage> {
-    STORAGE.as_ref()
+    }
 }
 
 impl Storage {

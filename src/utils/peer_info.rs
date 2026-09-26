@@ -1,5 +1,6 @@
 use grammers_client::message::Message;
 
+use crate::app::App;
 use crate::handlers::extract::{ChatInfo, SenderInfo};
 use crate::utils::peer_names::{self, PeerNames};
 
@@ -12,15 +13,15 @@ use crate::utils::peer_names::{self, PeerNames};
 
 /// The message's chat, named from `peer_names` when the update did not carry
 /// it. Falls back to whatever the update did have (usually nothing).
-pub async fn chat_info(message: &Message) -> ChatInfo {
+pub async fn chat_info(app: &App, message: &Message) -> ChatInfo {
     if let Some(peer) = message.peer()
         && let Some(names) = PeerNames::from_peer(peer) {
-            peer_names::remember(&names).await;
+            peer_names::remember(app, &names).await;
             return names.chat_info();
         }
 
     let peer_id = message.peer_id().bot_api_dialog_id_unchecked();
-    peer_names::load(peer_id)
+    peer_names::load(app, peer_id)
         .await
         .map(|names| names.chat_info())
         .unwrap_or_default()
@@ -31,10 +32,10 @@ pub async fn chat_info(message: &Message) -> ChatInfo {
 ///
 /// Only the three name columns are ever missing — the id comes off the message
 /// itself, so an unnamed sender is still logged with its author.
-pub async fn sender_info(message: &Message) -> SenderInfo {
+pub async fn sender_info(app: &App, message: &Message) -> SenderInfo {
     if let Some(peer) = message.sender()
         && let Some(names) = PeerNames::from_peer(peer) {
-            peer_names::remember(&names).await;
+            peer_names::remember(app, &names).await;
             if let Some(sender) = names.sender_info() {
                 return sender;
             }
@@ -49,7 +50,7 @@ pub async fn sender_info(message: &Message) -> SenderInfo {
         return SenderInfo::default();
     }
 
-    peer_names::load(sender_id)
+    peer_names::load(app, sender_id)
         .await
         .and_then(|names| names.sender_info())
         .unwrap_or(SenderInfo {

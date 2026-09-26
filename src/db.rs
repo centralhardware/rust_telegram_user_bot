@@ -1,44 +1,20 @@
-use clickhouse::{Client, Row};
+//! What the bot keeps in its database, and the [`Db`] trait every query goes
+//! through. [`ch::ClickhouseDb`] is the real one; tests use a fake.
+
+use std::collections::HashSet;
+
+use async_trait::async_trait;
+use clickhouse::Row;
 use serde::{Deserialize, Serialize};
-use std::sync::LazyLock;
 
-static CLICKHOUSE: LazyLock<Client> = LazyLock::new(|| {
-    Client::default()
-        .with_url(std::env::var("CLICKHOUSE_URL").expect("CLICKHOUSE_URL not set"))
-        .with_user(std::env::var("CLICKHOUSE_USER").expect("CLICKHOUSE_USER not set"))
-        .with_password(std::env::var("CLICKHOUSE_PASSWORD").expect("CLICKHOUSE_PASSWORD not set"))
-        .with_database(std::env::var("CLICKHOUSE_DATABASE").expect("CLICKHOUSE_DATABASE not set"))
-        // Many small writes — one per event, one per update position — so the
-        // server batches them into parts. Not waiting for the flush: an insert
-        // returns once the server has the rows, and only a connection or
-        // parsing failure comes back as an error.
-        .with_setting("async_insert", "1")
-        .with_setting("wait_for_async_insert", "0")
-});
+use crate::utils::peer_names::PeerNames;
+use crate::utils::poll_info::PollInfo;
 
-/// Build the client now, so a missing setting stops the bot at startup rather
-/// than at the first write.
-pub fn init() {
-    LazyLock::force(&CLICKHOUSE);
-}
+pub mod ch;
+#[cfg(test)]
+pub mod fake;
 
-pub fn clickhouse() -> &'static Client {
-    &CLICKHOUSE
-}
-
-/// Write rows to a table. Nothing is queued here: `async_insert` on the client
-/// (set above) means the server holds the rows and decides when they become a part.
-pub async fn insert_rows<T>(table: &str, rows: &[T]) -> Result<(), clickhouse::error::Error>
-where
-    T: Serialize + Send + 'static,
-    for<'a> T: Row<Value<'a> = T>,
-{
-    let mut insert = clickhouse().insert::<T>(table).await?;
-    for row in rows {
-        insert.write(row).await?;
-    }
-    insert.end().await
-}
+pub type DbResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 /// The Buffer table in front of `events_log` (migration 040). Everything the
 /// bot writes goes here and everything it reads back comes from here: ClickHouse
@@ -50,37 +26,92 @@ where
 /// query `events_log` and are at most a minute behind.
 pub const EVENTS: &str = "events_log_buffer";
 
-/// Log one event. It lands in the Buffer, which is memory, so this is cheap and
-/// the row is visible to the next lookup without waiting for a part to be
-/// written.
-///
-/// A failed write is retried a few times, which rides out a short hiccup.
-pub async fn log_event(event: Event) {
-    log_events(std::slice::from_ref(&event)).await
-}
+/// Every read and write the bot makes. A lookup that fails answers as if
+/// nothing were found, unless the caller needs to tell the two apart, in which
+/// case it returns a `DbResult`.
+#[async_trait]
+pub trait Db: Send + Sync {
+    /// Log events into the Buffer, which is memory, so this is cheap and the
+    /// rows are visible to the next lookup straight away. One insert, retried
+    /// a few times as a whole to ride out a short hiccup.
+    async fn log_events(&self, events: &[Event]);
 
-/// [`log_event`] for several rows at once: one insert, retried as a whole.
-pub async fn log_events(events: &[Event]) {
-    let mut delay = std::time::Duration::from_millis(500);
-    for attempt in 1..=INSERT_ATTEMPTS {
-        match insert_rows(EVENTS, events).await {
-            Ok(()) => return,
-            Err(e) if attempt == INSERT_ATTEMPTS => {
-                log::error!("insert into {EVENTS}: {e}");
-            }
-            Err(e) => {
-                log::warn!("insert into {EVENTS} (attempt {attempt}): {e}");
-                tokio::time::sleep(delay).await;
-                delay *= 2;
-            }
-        }
+    /// [`Db::log_events`] for one event.
+    async fn log_event(&self, event: Event) {
+        self.log_events(std::slice::from_ref(&event)).await
     }
-}
 
-const INSERT_ATTEMPTS: u32 = 3;
+    /// A backfill batch, straight into `events_log`: it is history, not
+    /// something the next lookup is waiting on.
+    async fn write_backfill(&self, events: &[Event]) -> DbResult<()>;
+
+    /// The text a message stands at now — the last edit if there was one, the
+    /// sent text otherwise — and its chat's title.
+    async fn find_message(&self, chat_id: i64, message_id: i64) -> MessageInfo;
+
+    /// What the log knows about every message in a deletion, in one query: a
+    /// chat cleared or a batch deleted names a hundred ids at a time, and a
+    /// round trip per id holds up every other chat on the same worker. The name
+    /// comes from `peer_names`, so a sender renamed since is named as they are
+    /// now.
+    ///
+    /// `channel` is the chat Telegram named. It names none for a private chat or
+    /// a basic group, but outside channels message ids are unique per account,
+    /// so the send rows name it: the one chat -- a user or a basic group, never
+    /// a channel -- with a message of that id. A message the log never saw is
+    /// not returned.
+    async fn find_deleted(&self, channel: Option<i64>, message_ids: &[i64]) -> Vec<DeletedMessage>;
+
+    /// The message a reply answers, as the log has it. `chat_id` is the chat
+    /// the *replied-to* message lives in, which is not the answering message's
+    /// chat when it quotes another.
+    async fn find_target(&self, chat_id: i64, message_id: i64) -> ReplyTarget;
+
+    /// A replied-to message's send row, for the reply line above a message.
+    async fn find_reply_row(&self, chat_id: i64, message_id: i64) -> Option<ReplyRow>;
+
+    /// Whether the log holds this message — sent, or a service message. An
+    /// ephemeral id names a different message entirely and never answers.
+    async fn message_exists(&self, chat_id: i64, message_id: i64) -> bool;
+
+    /// Which of these message ids the log already holds.
+    async fn known_ids(&self, chat_id: i64, ids: &[i64]) -> DbResult<HashSet<i64>>;
+
+    /// The oldest message id the log holds for a chat, 0 when it holds none.
+    async fn oldest_logged_id(&self, chat_id: i64) -> DbResult<i64>;
+
+    /// Every chat id the log holds a message for.
+    async fn logged_chat_ids(&self) -> DbResult<HashSet<i64>>;
+
+    /// The title and usernames a chat last went by in the log.
+    async fn last_chat_name(&self, chat_id: i64) -> Option<(String, Vec<String>)>;
+
+    /// The poll with this id, from the send row that carried it.
+    async fn find_poll(&self, poll_id: i64) -> Option<PollInfo>;
+
+    /// The stored copy of a Telegram photo or document, if the archiver has
+    /// one. A failed read is a miss.
+    async fn find_media_file(&self, kind: &str, tg_id: i64) -> Option<MediaFile>;
+
+    /// Write down where a Telegram file was stored.
+    async fn remember_media_file(&self, file: MediaFile);
+
+    /// The names last stored for a peer, by Bot API dialog id.
+    async fn load_peer_names(&self, peer_id: i64) -> Option<PeerNames>;
+
+    async fn write_peer_names(&self, names: &PeerNames);
+
+    /// The newest admin-log event already stored for a chat, 0 for none.
+    async fn last_admin_event_id(&self, chat_id: u64) -> u64;
+
+    async fn write_admin_actions(&self, actions: &[AdminAction]) -> DbResult<()>;
+
+    async fn write_user_sessions(&self, sessions: &[TelegramSession]) -> DbResult<()>;
+}
 
 pub use crate::events::EventKind;
 
+#[derive(Default, Clone)]
 pub struct MessageInfo {
     /// Whether the log has the message at all -- a send or an edit row. When
     /// it has not, the fields below are empty because nothing is known, not
@@ -95,61 +126,9 @@ pub struct MessageInfo {
     pub chat_title: String,
 }
 
-/// The body of a message as the log has it, read back for an edit.
-#[derive(Row, Deserialize, Default)]
-struct BodyRow {
-    message: String,
-    entities: Vec<crate::utils::entities::Entity>,
-    keyboard: Vec<crate::utils::entities::Button>,
-}
-
-/// Find message info by chat_id + message_id: the text as it stands now — the
-/// last edit if there was one, the sent text otherwise.
-///
-/// Straight from ClickHouse: the read goes to the Buffer table, which answers
-/// out of its own memory and the table underneath both, so a message logged a
-/// moment ago is already there to be read back.
-pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
-    let body = clickhouse()
-        .query(
-            "SELECT message, entities, keyboard FROM events_log_buffer \
-             WHERE chat_id = ? AND message_id = ? AND event IN (?, ?) \
-             ORDER BY event = ? DESC, date_time DESC LIMIT 1",
-        )
-        .bind(chat_id)
-        .bind(message_id)
-        .bind(EventKind::Send)
-        .bind(EventKind::Edit)
-        .bind(EventKind::Edit)
-        .fetch_one::<BodyRow>()
-        .await;
-    let logged = body.is_ok();
-    let body = body.unwrap_or_default();
-
-    let chat_title = clickhouse()
-        .query(
-            "SELECT chat_title FROM events_log_buffer \
-             WHERE chat_id = ? AND event = ? AND chat_title != '' \
-             ORDER BY date_time DESC LIMIT 1",
-        )
-        .bind(chat_id)
-        .bind(EventKind::Send)
-        .fetch_one::<String>()
-        .await
-        .unwrap_or_default();
-
-    MessageInfo {
-        logged,
-        message: body.message,
-        entities: body.entities,
-        keyboard: body.keyboard,
-        chat_title,
-    }
-}
-
 /// A deleted message as the log has it: the chat it lived in, the text as it
 /// last stood, the sender's name, and the chat's title.
-#[derive(Row, Deserialize)]
+#[derive(Row, Deserialize, Clone)]
 pub struct DeletedMessage {
     pub chat_id: i64,
     pub message_id: i64,
@@ -158,63 +137,8 @@ pub struct DeletedMessage {
     pub chat_title: String,
 }
 
-/// What the log knows about every message in a deletion, in one query: a chat
-/// cleared or a batch deleted names a hundred ids at a time, and a round trip
-/// per id holds up every other chat on the same worker. The name comes from
-/// `peer_names`, so a sender renamed since is named as they are now.
-///
-/// `channel` is the chat Telegram named. It names none for a private chat or a
-/// basic group, but outside channels message ids are unique per account, so
-/// the send rows name it: the one chat -- a user or a basic group, never a
-/// channel -- with a message of that id. A message the log never saw is not
-/// returned.
-pub async fn find_deleted(channel: Option<i64>, message_ids: &[i64]) -> Vec<DeletedMessage> {
-    let chats = match channel {
-        Some(_) => "chat_id = ?",
-        None => "chat_id IN (SELECT if(peer_id > 0, peer_id, -peer_id) FROM peer_names_buffer \
-                 WHERE peer_id > -1000000000000)",
-    };
-    let sql = format!(
-        "WITH m AS ( \
-             SELECT chat_id, message_id, \
-                    argMax(message, (event = ?, date_time)) AS message, \
-                    argMaxIf(user_id, date_time, event = ?) AS user_id \
-             FROM events_log_buffer \
-             WHERE {chats} AND has(?, message_id) AND event IN (?, ?) \
-             GROUP BY chat_id, message_id) \
-         SELECT m.chat_id AS chat_id, m.message_id AS message_id, m.message AS message, \
-                n.first_name AS first_name, t.title AS chat_title \
-         FROM m \
-         LEFT JOIN ( \
-             SELECT peer_id, argMax(first_name, updated_at) AS first_name \
-             FROM peer_names_buffer \
-             WHERE peer_id IN (SELECT toInt64(user_id) FROM m WHERE user_id != 0) \
-             GROUP BY peer_id) AS n ON n.peer_id = toInt64(m.user_id) \
-         LEFT JOIN ( \
-             SELECT chat_id, argMax(chat_title, date_time) AS title \
-             FROM events_log_buffer \
-             WHERE chat_id IN (SELECT chat_id FROM m) AND event = ? AND chat_title != '' \
-             GROUP BY chat_id) AS t ON t.chat_id = m.chat_id"
-    );
-    let mut query = clickhouse().query(&sql).bind(EventKind::Edit).bind(EventKind::Send);
-    if let Some(chat_id) = channel {
-        query = query.bind(chat_id);
-    }
-    query
-        .bind(message_ids)
-        .bind(EventKind::Send)
-        .bind(EventKind::Edit)
-        .bind(EventKind::Send)
-        .fetch_all::<DeletedMessage>()
-        .await
-        .unwrap_or_else(|e| {
-            log::warn!("looking up deleted messages {message_ids:?}: {e}");
-            Vec::new()
-        })
-}
-
 /// A Telegram file already stored in S3, from `media_files`.
-#[derive(Row, Serialize, Deserialize)]
+#[derive(Row, Serialize, Deserialize, Clone)]
 pub struct MediaFile {
     pub kind: String,
     pub tg_id: i64,
@@ -224,33 +148,18 @@ pub struct MediaFile {
     pub size: u64,
 }
 
-/// The stored copy of a Telegram photo or document, if the archiver has one.
-/// A failed read is a miss: the file is downloaded as if never seen.
-pub async fn find_media_file(kind: &str, tg_id: i64) -> Option<MediaFile> {
-    clickhouse()
-        .query(
-            "SELECT ?fields FROM media_files FINAL \
-             WHERE kind = ? AND tg_id = ? LIMIT 1",
-        )
-        .bind(kind)
-        .bind(tg_id)
-        .fetch_optional::<MediaFile>()
-        .await
-        .unwrap_or_else(|e| {
-            log::warn!("media_files lookup for {kind} {tg_id}: {e}");
-            None
-        })
-}
-
-/// Write down where a Telegram file was stored, for the next time it is posted.
-pub async fn remember_media_file(file: MediaFile) {
-    if let Err(e) = insert_rows("media_files", std::slice::from_ref(&file)).await {
-        log::warn!("media_files insert for {} {}: {e}", file.kind, file.tg_id);
-    }
+/// A replied-to message's send row.
+#[derive(Row, Deserialize, Default, Clone)]
+pub struct ReplyRow {
+    pub message: String,
+    pub user_id: u64,
+    pub chat_title: String,
+    pub fwd_from_chat_id: i64,
+    pub fwd_from_msg_id: i64,
 }
 
 /// What the log knows about the message a reply points at.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ReplyTarget {
     /// Who sent it, 0 when the message is older than the log, was never seen,
     /// or was posted by a channel rather than a user.
@@ -260,26 +169,6 @@ pub struct ReplyTarget {
     /// hangs off. Such a copy is sent by the channel (no user) and carries the
     /// post's own id in `fwd_from_msg_id`.
     pub post_copy: bool,
-}
-
-/// The message a reply answers, as the log has it. `chat_id` is the chat the
-/// *replied-to* message lives in, which is not the answering message's chat
-/// when it quotes another.
-pub async fn find_target(chat_id: i64, message_id: i64) -> ReplyTarget {
-    clickhouse()
-        .query(
-            "SELECT user_id, user_id = 0 AND fwd_from_chat_id != 0 AND fwd_from_msg_id != 0 \
-             FROM events_log_buffer \
-             WHERE chat_id = ? AND message_id = ? AND event = ? \
-             ORDER BY date_time DESC LIMIT 1",
-        )
-        .bind(chat_id)
-        .bind(message_id)
-        .bind(EventKind::Send)
-        .fetch_one::<(u64, bool)>()
-        .await
-        .map(|(user_id, post_copy)| ReplyTarget { user_id, post_copy })
-        .unwrap_or_default()
 }
 
 /// Settle what a message replies to, and who sent that: the target is looked up
@@ -293,7 +182,11 @@ pub async fn find_target(chat_id: i64, message_id: i64) -> ReplyTarget {
 /// itself. When the target turns out to be that copy, the reply is cleared and
 /// the comment is logged as the plain message it is. A comment answering
 /// *another comment* points at that comment, not at the post, and stays a reply.
-pub async fn resolve_reply(chat_id: i64, reply: &mut crate::utils::reply_target::ReplyInfo) -> u64 {
+pub async fn resolve_reply(
+    db: &dyn Db,
+    chat_id: i64,
+    reply: &mut crate::utils::reply_target::ReplyInfo,
+) -> u64 {
     let id = match reply.reply_to {
         0 => return 0,
         id => id as i64,
@@ -305,7 +198,7 @@ pub async fn resolve_reply(chat_id: i64, reply: &mut crate::utils::reply_target:
         chat_id
     };
 
-    let target = find_target(target_chat, id).await;
+    let target = db.find_target(target_chat, id).await;
 
     // Only in the chat the message was posted in: a quote of another chat names
     // a post over there deliberately, and is a reply whatever it points at.
@@ -501,7 +394,7 @@ pub fn now() -> u32 {
         .unwrap_or_default()
 }
 
-#[derive(Row, Serialize)]
+#[derive(Row, Serialize, Clone)]
 pub struct AdminAction {
     pub date: u32,
     pub event_id: u64,
@@ -523,7 +416,7 @@ pub struct AdminAction {
     pub user_is_admin: bool,
 }
 
-#[derive(Row, Serialize)]
+#[derive(Row, Serialize, Clone)]
 pub struct TelegramSession {
     pub hash: i64,
     pub device_model: String,

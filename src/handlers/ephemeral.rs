@@ -17,14 +17,14 @@ use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;
 use log::info;
 
-use crate::db::{log_event, Event, EventKind};
+use crate::db::{Event, EventKind};
 use crate::events::DeleteEvent;
-use crate::utils::log_ignore::is_log_ignored;
 use crate::utils::peer_names;
+use crate::app::App;
 
 /// A new or edited ephemeral message. `event` is the column the two share a
 /// table under: `"new"` or `"edit"`.
-pub async fn save_ephemeral(message: &tl::enums::EphemeralMessage, event: &str) {
+pub async fn save_ephemeral(app: &App, message: &tl::enums::EphemeralMessage, event: &str) {
     let tl::enums::EphemeralMessage::Message(msg) = message;
 
     // A bot can also send one outside a group, straight to the receiver: then
@@ -35,15 +35,15 @@ pub async fn save_ephemeral(message: &tl::enums::EphemeralMessage, event: &str) 
     let chat_id = peer.bare_id_unchecked();
     let sender = PeerId::from(&msg.from_id);
 
-    let chat_title = title_of(peer.bot_api_dialog_id_unchecked()).await;
-    let sender_title = title_of(sender.bot_api_dialog_id_unchecked()).await;
+    let chat_title = title_of(app, peer.bot_api_dialog_id_unchecked()).await;
+    let sender_title = title_of(app, sender.bot_api_dialog_id_unchecked()).await;
 
     // Rendered for the console, stored as it came.
     let text = body(msg);
     let stored = stored_body(msg);
     let (reply_to, reply_to_ephemeral) = reply(msg);
 
-    if !is_log_ignored(chat_id) {
+    if !app.is_log_ignored(chat_id) {
         let sender_short: String = sender_title.chars().take(10).collect();
         let chat_short: String = chat_title.chars().take(25).collect();
         info!(
@@ -56,7 +56,7 @@ pub async fn save_ephemeral(message: &tl::enums::EphemeralMessage, event: &str) 
         );
     }
 
-    log_event(Event {
+    app.db.log_event(Event {
         date_time: msg.date as u32,
         chat_id,
         chat_title,
@@ -80,13 +80,13 @@ pub async fn save_ephemeral(message: &tl::enums::EphemeralMessage, event: &str) 
 
 /// Ephemeral messages are deleted by id alone: Telegram names the chat and the
 /// ids, and nothing about what was in them.
-pub async fn save_ephemeral_deleted(peer: &tl::enums::Peer, ids: &[i32]) {
+pub async fn save_ephemeral_deleted(app: &App, peer: &tl::enums::Peer, ids: &[i32]) {
     let peer = PeerId::from(peer);
     let chat_id = peer.bare_id_unchecked();
-    let chat_title = title_of(peer.bot_api_dialog_id_unchecked()).await;
+    let chat_title = title_of(app, peer.bot_api_dialog_id_unchecked()).await;
     let date_time = chrono::Utc::now().timestamp() as u32;
 
-    if !is_log_ignored(chat_id) {
+    if !app.is_log_ignored(chat_id) {
         let chat_short: String = chat_title.chars().take(25).collect();
         for id in ids {
             info!(
@@ -97,7 +97,7 @@ pub async fn save_ephemeral_deleted(peer: &tl::enums::Peer, ids: &[i32]) {
     }
 
     for id in ids {
-        log_event(Event::from(DeleteEvent {
+        app.db.log_event(Event::from(DeleteEvent {
             date_time,
             chat_id,
             chat_title: chat_title.clone(),
@@ -177,8 +177,8 @@ fn reply(msg: &tl::types::EphemeralMessage) -> (u64, bool) {
 /// The stored name for a peer. Ephemeral updates carry no peer objects at all,
 /// so there is nothing to resolve from and nothing to write back: an unknown
 /// peer stays blank until ordinary traffic in that chat names it.
-async fn title_of(peer_id: i64) -> String {
-    peer_names::load(peer_id)
+async fn title_of(app: &App, peer_id: i64) -> String {
+    peer_names::load(app, peer_id)
         .await
         .map(|names| names.title)
         .unwrap_or_default()

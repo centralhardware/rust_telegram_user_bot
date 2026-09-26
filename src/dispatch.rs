@@ -8,9 +8,10 @@ use std::pin::Pin;
 use grammers_client::session::types::PeerId;
 use grammers_client::tl;
 use grammers_client::update::{Message, Update};
-use grammers_client::Client;
+use std::sync::Arc;
 use log::error;
 
+use crate::app::App;
 use crate::db::Event;
 use crate::handlers;
 
@@ -39,8 +40,7 @@ pub async fn run<M: Send>(steps: &[&dyn Handler<M>], msg: &mut M) {
 
 /// A new message on its way through [`NEW_MESSAGE`].
 pub struct NewMessage {
-    pub client: Client,
-    pub me: u64,
+    pub app: Arc<App>,
     pub message: Message,
     /// The row the message was logged as, once [`Save`] has run and succeeded.
     pub event: Option<Event>,
@@ -67,31 +67,39 @@ pub static NEW_MESSAGE: &[&dyn Handler<NewMessage>] = &[
 /// messages, reactions, and what else can happen to a message after it is
 /// sent — pinned or unpinned, voted in, or seen and forwarded often enough
 /// for Telegram to say so. Each handler picks out the updates it knows.
-pub static RAW: &[&dyn Handler<tl::enums::Update>] =
+/// A raw update and the app it arrived on.
+pub struct RawUpdate<'a> {
+    pub app: &'a App,
+    pub update: tl::enums::Update,
+}
+
+pub static RAW: &[&dyn for<'a> Handler<RawUpdate<'a>>] =
     &[&Ephemeral, &Reactions, &Pins, &Polls, &Views];
 
-pub async fn handle(client: &Client, me: u64, update: Update) {
+pub async fn handle(app: &Arc<App>, update: Update) {
     match update {
         Update::NewMessage(message) => {
             let mut msg = NewMessage {
-                client: client.clone(),
-                me,
+                app: Arc::clone(app),
                 message,
                 event: None,
             };
             run(NEW_MESSAGE, &mut msg).await;
         }
         Update::MessageEdited(message) => {
-            if let Err(e) = handlers::save_edited(&message).await {
+            if let Err(e) = handlers::save_edited(app, &message).await {
                 error!("Failed to save edited message: {:?}", e);
             }
         }
         Update::MessageDeleted(deletion) => {
-            if let Err(e) = handlers::save_deleted(&deletion).await {
+            if let Err(e) = handlers::save_deleted(app, &deletion).await {
                 error!("Failed to save deleted message: {:?}", e);
             }
         }
-        Update::Raw(mut raw) => run(RAW, &mut raw.raw).await,
+        Update::Raw(raw) => {
+            let mut raw = RawUpdate { app, update: raw.raw };
+            run(RAW, &mut raw).await
+        }
         _ => {}
     }
 }
@@ -100,7 +108,7 @@ struct BackfillReply;
 impl Handler<NewMessage> for BackfillReply {
     fn handle<'a>(&'a self, m: &'a mut NewMessage) -> Step<'a, Flow> {
         Box::pin(async move {
-            handlers::backfill_reply(&m.client, &m.message).await;
+            handlers::backfill_reply(&m.app, &m.message).await;
             Flow::Continue
         })
     }
@@ -110,7 +118,7 @@ struct Service;
 impl Handler<NewMessage> for Service {
     fn handle<'a>(&'a self, m: &'a mut NewMessage) -> Step<'a, Flow> {
         Box::pin(async move {
-            if handlers::save_service(&m.message).await {
+            if handlers::save_service(&m.app, &m.message).await {
                 Flow::Stop
             } else {
                 Flow::Continue
@@ -123,10 +131,10 @@ struct Save;
 impl Handler<NewMessage> for Save {
     fn handle<'a>(&'a self, m: &'a mut NewMessage) -> Step<'a, Flow> {
         Box::pin(async move {
-            let saved = if crate::utils::self_id::is_outgoing(&m.message) {
-                handlers::save_outgoing(&m.message, &m.client, m.me).await
+            let saved = if crate::utils::self_id::is_outgoing(m.app.me, &m.message) {
+                handlers::save_outgoing(&m.app, &m.message).await
             } else {
-                handlers::save_incoming(&m.message, &m.client).await
+                handlers::save_incoming(&m.app, &m.message).await
             }
             // The boxed error is not `Send`; keep its text so this future can
             // run on a worker.
@@ -145,7 +153,7 @@ impl Handler<NewMessage> for Media {
     fn handle<'a>(&'a self, m: &'a mut NewMessage) -> Step<'a, Flow> {
         Box::pin(async move {
             if let Some(event) = &m.event {
-                handlers::save_media(&m.message, event).await;
+                handlers::save_media(&m.app, &m.message, event).await;
             }
             Flow::Continue
         })
@@ -168,25 +176,27 @@ struct BackfillCommand;
 impl Handler<NewMessage> for BackfillCommand {
     fn handle<'a>(&'a self, m: &'a mut NewMessage) -> Step<'a, Flow> {
         Box::pin(async move {
-            handlers::backfill_command(&m.client, &m.message).await;
+            handlers::backfill_command(&m.app, &m.message).await;
             Flow::Continue
         })
     }
 }
 
 struct Ephemeral;
-impl Handler<tl::enums::Update> for Ephemeral {
-    fn handle<'a>(&'a self, u: &'a mut tl::enums::Update) -> Step<'a, Flow> {
+impl<'r> Handler<RawUpdate<'r>> for Ephemeral {
+    fn handle<'a>(&'a self, raw: &'a mut RawUpdate<'r>) -> Step<'a, Flow> {
         Box::pin(async move {
+            let app = raw.app;
+            let u = &mut raw.update;
             match u {
                 tl::enums::Update::NewEphemeralMessage(u) => {
-                    handlers::save_ephemeral(&u.message, "new").await
+                    handlers::save_ephemeral(app, &u.message, "new").await
                 }
                 tl::enums::Update::EditEphemeralMessage(u) => {
-                    handlers::save_ephemeral(&u.message, "edit").await
+                    handlers::save_ephemeral(app, &u.message, "edit").await
                 }
                 tl::enums::Update::DeleteEphemeralMessages(u) => {
-                    handlers::save_ephemeral_deleted(&u.peer, &u.ids).await
+                    handlers::save_ephemeral_deleted(app, &u.peer, &u.ids).await
                 }
                 _ => {}
             }
@@ -196,11 +206,13 @@ impl Handler<tl::enums::Update> for Ephemeral {
 }
 
 struct Reactions;
-impl Handler<tl::enums::Update> for Reactions {
-    fn handle<'a>(&'a self, u: &'a mut tl::enums::Update) -> Step<'a, Flow> {
+impl<'r> Handler<RawUpdate<'r>> for Reactions {
+    fn handle<'a>(&'a self, raw: &'a mut RawUpdate<'r>) -> Step<'a, Flow> {
         Box::pin(async move {
+            let app = raw.app;
+            let u = &mut raw.update;
             if let tl::enums::Update::MessageReactions(u) = u {
-                handlers::save_reactions(u).await;
+                handlers::save_reactions(app, u).await;
             }
             Flow::Continue
         })
@@ -208,9 +220,11 @@ impl Handler<tl::enums::Update> for Reactions {
 }
 
 struct Pins;
-impl Handler<tl::enums::Update> for Pins {
-    fn handle<'a>(&'a self, u: &'a mut tl::enums::Update) -> Step<'a, Flow> {
+impl<'r> Handler<RawUpdate<'r>> for Pins {
+    fn handle<'a>(&'a self, raw: &'a mut RawUpdate<'r>) -> Step<'a, Flow> {
         Box::pin(async move {
+            let app = raw.app;
+            let u = &mut raw.update;
             let (peer, messages, pinned) = match u {
                 tl::enums::Update::PinnedMessages(u) => {
                     (PeerId::from(&u.peer), &u.messages, u.pinned)
@@ -221,6 +235,7 @@ impl Handler<tl::enums::Update> for Pins {
                 _ => return Flow::Continue,
             };
             handlers::save_pinned(
+                app,
                 peer.bare_id_unchecked(),
                 peer.bot_api_dialog_id_unchecked(),
                 messages,
@@ -233,11 +248,13 @@ impl Handler<tl::enums::Update> for Pins {
 }
 
 struct Polls;
-impl Handler<tl::enums::Update> for Polls {
-    fn handle<'a>(&'a self, u: &'a mut tl::enums::Update) -> Step<'a, Flow> {
+impl<'r> Handler<RawUpdate<'r>> for Polls {
+    fn handle<'a>(&'a self, raw: &'a mut RawUpdate<'r>) -> Step<'a, Flow> {
         Box::pin(async move {
+            let app = raw.app;
+            let u = &mut raw.update;
             if let tl::enums::Update::MessagePoll(u) = u {
-                handlers::save_poll(u).await;
+                handlers::save_poll(app, u).await;
             }
             Flow::Continue
         })
@@ -245,15 +262,17 @@ impl Handler<tl::enums::Update> for Polls {
 }
 
 struct Views;
-impl Handler<tl::enums::Update> for Views {
-    fn handle<'a>(&'a self, u: &'a mut tl::enums::Update) -> Step<'a, Flow> {
+impl<'r> Handler<RawUpdate<'r>> for Views {
+    fn handle<'a>(&'a self, raw: &'a mut RawUpdate<'r>) -> Step<'a, Flow> {
         Box::pin(async move {
+            let app = raw.app;
+            let u = &mut raw.update;
             match u {
                 tl::enums::Update::ChannelMessageViews(u) => {
-                    handlers::save_views(u.channel_id, u.id, u.views.max(0) as u32, 0).await
+                    handlers::save_views(app, u.channel_id, u.id, u.views.max(0) as u32, 0).await
                 }
                 tl::enums::Update::ChannelMessageForwards(u) => {
-                    handlers::save_views(u.channel_id, u.id, 0, u.forwards.max(0) as u32)
+                    handlers::save_views(app, u.channel_id, u.id, 0, u.forwards.max(0) as u32)
                         .await
                 }
                 _ => {}

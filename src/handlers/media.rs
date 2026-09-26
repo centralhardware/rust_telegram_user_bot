@@ -5,23 +5,22 @@
 //! `Client::download_media` would use for large files. Only chats already in the
 //! update stream are touched — nothing is backfilled.
 
-use grammers_client::Client;
 use grammers_client::media::{Downloadable, Media};
 use grammers_client::update::Message;
 use log::{error, info, warn};
 use sha2::{Digest, Sha256};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
+
+use crate::app::App;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
 use crate::db::Event;
-use crate::utils::admin_chats;
-use crate::utils::log_ignore::is_log_ignored;
 
 /// Waited out between downloads so a busy chat cannot turn into a burst of
 /// `upload.getFile` calls.
 const DOWNLOAD_GAP: std::time::Duration = std::time::Duration::from_millis(500);
 
-struct Job {
+pub struct Job {
     media: Media,
     /// The `events_log` send row this file belongs to. It is never written
     /// again: once the upload is done the archiver logs a `file_uploaded` row
@@ -29,12 +28,15 @@ struct Job {
     event: Event,
 }
 
-static QUEUE: OnceLock<UnboundedSender<Job>> = OnceLock::new();
+/// The download worker's queue, set once the worker is running. Empty when S3
+/// is not configured, in which case `save_media` is a no-op.
+#[derive(Default)]
+pub struct MediaQueue(OnceLock<UnboundedSender<Job>>);
 
 /// Spawns the single download worker. Does nothing when S3 is unconfigured, in
 /// which case `save_media` degrades to a no-op.
-pub fn start(client: Client) {
-    let Some(storage) = crate::s3::storage() else {
+pub fn start(app: Arc<App>) {
+    let Some(storage) = &app.storage else {
         info!("media archive: S3 not configured, media will not be saved");
         return;
     };
@@ -45,13 +47,13 @@ pub fn start(client: Client) {
     );
 
     let (tx, mut rx) = unbounded_channel::<Job>();
-    if QUEUE.set(tx).is_err() {
+    if app.media.0.set(tx).is_err() {
         return;
     }
 
     tokio::spawn(async move {
         while let Some(job) = rx.recv().await {
-            if let Err(e) = archive(&client, &job).await {
+            if let Err(e) = archive(&app, &job).await {
                 error!(
                     "media archive: chat {} message {}: {:?}",
                     job.event.chat_id, job.event.message_id, e
@@ -64,13 +66,13 @@ pub fn start(client: Client) {
 
 /// Queues the message's media if it comes from a chat we administer. Returns
 /// immediately — the download happens on the worker, off the update loop.
-pub async fn save_media(message: &Message, event: &Event) {
-    let Some(queue) = QUEUE.get() else {
+pub async fn save_media(app: &App, message: &Message, event: &Event) {
+    let Some(queue) = app.media.0.get() else {
         return;
     };
 
     let chat_id = message.peer_id().bare_id_unchecked();
-    if !admin_chats::contains(chat_id as u64) || is_log_ignored(chat_id) {
+    if !app.admin_chats.contains(chat_id as u64) || app.is_log_ignored(chat_id) {
         return;
     }
 
@@ -91,10 +93,10 @@ fn is_archivable(media: &Media) -> bool {
 }
 
 async fn archive(
-    client: &Client,
+    app: &App,
     job: &Job,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let storage = crate::s3::storage().expect("worker only starts when configured");
+    let storage = app.storage.as_ref().expect("worker only starts when configured");
 
     let (file_name, mime_type) = match &job.media {
         Media::Photo(_) => (None, Some("image/jpeg".to_string())),
@@ -110,7 +112,7 @@ async fn archive(
     // stored before is found without downloading it again.
     let file = known_file_id(&job.media);
     if let Some((kind, tg_id)) = file
-        && let Some(known) = crate::db::find_media_file(kind, tg_id).await
+        && let Some(known) = app.db.find_media_file(kind, tg_id).await
         && known.s3_bucket == storage.bucket
     {
         info!(
@@ -119,7 +121,7 @@ async fn archive(
             known.size / 1024,
             known.s3_key
         );
-        crate::db::log_event(job.event.file_uploaded(
+        app.db.log_event(job.event.file_uploaded(
             known.sha256,
             known.s3_bucket,
             known.s3_key,
@@ -139,7 +141,7 @@ async fn archive(
         }
 
     let mut bytes: Vec<u8> = Vec::new();
-    let mut download = client.iter_download(&job.media);
+    let mut download = app.tg.iter_download(&job.media);
     while let Some(chunk) = download.next().await? {
         bytes.extend(chunk);
         if bytes.len() as u64 > storage.max_bytes {
@@ -184,7 +186,7 @@ async fn archive(
     };
 
     if let Some((kind, tg_id)) = file {
-        crate::db::remember_media_file(crate::db::MediaFile {
+        app.db.remember_media_file(crate::db::MediaFile {
             kind: kind.to_string(),
             tg_id,
             sha256: sha256.clone(),
@@ -194,7 +196,7 @@ async fn archive(
         })
         .await;
     }
-    crate::db::log_event(job.event.file_uploaded(sha256, storage.bucket.clone(), key, size))
+    app.db.log_event(job.event.file_uploaded(sha256, storage.bucket.clone(), key, size))
         .await;
 
     Ok(())

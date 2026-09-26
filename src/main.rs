@@ -1,3 +1,4 @@
+mod app;
 mod clickhouse_session;
 mod db;
 mod dispatch;
@@ -11,6 +12,9 @@ mod utils;
 use grammers_client::update::Update;
 use log::error;
 use std::env;
+use std::sync::Arc;
+
+use app::App;
 use tokio::sync::mpsc;
 
 #[tokio::main]
@@ -20,6 +24,8 @@ async fn main() -> Result<()> {
         .parse()
         .expect("TZ invalid");
 
+    let ignored = Arc::new(utils::log_ignore::LogIgnore::from_env());
+    let log_ignored = Arc::clone(&ignored);
     env_logger::Builder::from_default_env()
         .write_style(env_logger::WriteStyle::Always)
         .format(move |buf, record| {
@@ -29,7 +35,7 @@ async fn main() -> Result<()> {
                 .is_some_and(|m| m.starts_with("grammers"))
             {
                 let msg = record.args().to_string();
-                if utils::log_ignore::is_message_ignored(&msg) {
+                if log_ignored.is_message_ignored(&msg) {
                     return Ok(());
                 }
             }
@@ -42,18 +48,27 @@ async fn main() -> Result<()> {
         log::error!("{}\n{}", info, backtrace);
     }));
 
-    db::init();
+    // Built now, so a missing setting stops the bot at startup rather than at
+    // the first write.
+    let db = db::ch::ClickhouseDb::from_env();
 
-    let (client, mut updates): (grammers_client::Client, _) = session::connect().await?;
+    let (client, session, mut updates) = session::connect(db.client().clone()).await?;
 
     log::info!("Listening for messages...");
 
-    let client_id = client.get_me().await?.id().bare_id().unwrap() as u64;
-    utils::self_id::set(client_id);
-    handlers::start_media(client.clone());
+    let me = client.get_me().await?.id().bare_id().unwrap() as u64;
+    let app = Arc::new(App::new(
+        client,
+        Arc::new(db),
+        s3::Storage::from_env(),
+        Some(session),
+        me,
+        ignored,
+    ));
+    handlers::start_media(Arc::clone(&app));
     // Before any update is handled: until the admin chats are known, media
     // posted in them would not be archived, and nothing catches up on it.
-    schedulers::start(client.clone(), client_id).await;
+    schedulers::start(Arc::clone(&app)).await;
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
 
@@ -64,10 +79,10 @@ async fn main() -> Result<()> {
     let workers: Vec<mpsc::Sender<Update>> = (0..WORKERS)
         .map(|_| {
             let (tx, mut rx) = mpsc::channel::<Update>(WORKER_QUEUE);
-            let client = client.clone();
+            let app = Arc::clone(&app);
             tokio::spawn(async move {
                 while let Some(update) = rx.recv().await {
-                    dispatch::handle(&client, client_id, update).await;
+                    dispatch::handle(&app, update).await;
                 }
             });
             tx

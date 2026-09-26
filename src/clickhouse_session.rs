@@ -13,7 +13,8 @@ use grammers_session::{Session, SessionData};
 use log::{debug, error, warn};
 use serde::{Deserialize, Serialize};
 
-use crate::db::{clickhouse, insert_rows, now};
+use crate::db::ch::insert_rows;
+use crate::db::now;
 
 // ── ClickHouse row types ────────────────────────────────────────────
 
@@ -69,14 +70,15 @@ struct Cache {
 // ── ClickhouseSession ───────────────────────────────────────────────
 
 pub struct ClickhouseSession {
+    ch: clickhouse::Client,
     cache: Mutex<Cache>,
 }
 
 impl ClickhouseSession {
-    pub async fn open() -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn open(ch: clickhouse::Client) -> Result<Self, Box<dyn std::error::Error>> {
         let defaults = SessionData::default();
 
-        let home_dc = clickhouse()
+        let home_dc = ch
             .query("SELECT dc_id FROM session_dc_home FINAL WHERE key = 1 LIMIT 1")
             .fetch_one::<DcHomeRow>()
             .await
@@ -86,7 +88,7 @@ impl ClickhouseSession {
 
         // Load dc_options
         let mut dc_options: HashMap<i32, DcOption> = defaults.dc_options;
-        let rows: Vec<DcOptionRow> = clickhouse()
+        let rows: Vec<DcOptionRow> = ch
             .query("SELECT dc_id, ipv4, ipv6, auth_key FROM session_dc_option FINAL")
             .fetch_all()
             .await
@@ -98,7 +100,7 @@ impl ClickhouseSession {
         }
 
         // Load updates state
-        let updates = clickhouse()
+        let updates = ch
             .query("SELECT pts, qts, date, seq FROM session_update_state FINAL WHERE key = 1 LIMIT 1")
             .fetch_one::<UpdateStateRow>()
             .await
@@ -112,7 +114,7 @@ impl ClickhouseSession {
             })
             .unwrap_or_default();
 
-        let channels: Vec<ChannelStateRow> = clickhouse()
+        let channels: Vec<ChannelStateRow> = ch
             .query("SELECT peer_id, pts FROM session_channel_state FINAL")
             .fetch_all()
             .await
@@ -130,6 +132,7 @@ impl ClickhouseSession {
         };
 
         Ok(Self {
+            ch,
             cache: Mutex::new(Cache {
                 home_dc,
                 dc_options,
@@ -275,7 +278,7 @@ impl Session for ClickhouseSession {
     fn set_home_dc_id(&self, dc_id: i32) -> BoxFuture<'_, Result<(), Self::Error>> {
         self.cache.lock().unwrap_or_else(PoisonError::into_inner).home_dc = dc_id;
         Box::pin(async move {
-            persist("session_dc_home", DcHomeRow { dc_id }).await;
+            persist(&self.ch, "session_dc_home", DcHomeRow { dc_id }).await;
             Ok(())
         })
     }
@@ -293,7 +296,7 @@ impl Session for ClickhouseSession {
 
         let row = dc_option_to_row(dc_option);
         Box::pin(async move {
-            persist("session_dc_option", row).await;
+            persist(&self.ch, "session_dc_option", row).await;
             Ok(())
         })
     }
@@ -309,7 +312,7 @@ impl Session for ClickhouseSession {
 
                 let result = if !is_self_query {
                     let dialog_id = peer.bot_api_dialog_id().unwrap();
-                    clickhouse()
+                    self.ch
                         .query(
                             // argMax over the version rather than FINAL, which
                             // ClickHouse recommends against and which a Buffer
@@ -331,7 +334,7 @@ impl Session for ClickhouseSession {
                         .fetch_one::<PeerRow>()
                         .await
                 } else {
-                    clickhouse()
+                    self.ch
                         .query(
                             // The WHERE narrows to peers that carried the self
                             // bit in any version -- it is what makes this a
@@ -403,7 +406,7 @@ impl Session for ClickhouseSession {
     fn cache_peer(&self, peer: PeerInfo) -> BoxFuture<'_, Result<(), Self::Error>> {
         Box::pin(async move {
             let row = peer_to_row(&peer);
-            if let Err(e) = insert_rows(PEER_CACHE, std::slice::from_ref(&row)).await {
+            if let Err(e) = insert_rows(&self.ch, PEER_CACHE, std::slice::from_ref(&row)).await {
                 error!("insert into {PEER_CACHE}: {e}");
             }
             Ok(())
@@ -416,7 +419,7 @@ impl Session for ClickhouseSession {
     fn cache_peers(&self, peers: Vec<PeerInfo>) -> BoxFuture<'_, Result<(), Self::Error>> {
         Box::pin(async move {
             let rows: Vec<PeerRow> = peers.iter().map(peer_to_row).collect();
-            if let Err(e) = insert_rows(PEER_CACHE, &rows).await {
+            if let Err(e) = insert_rows(&self.ch, PEER_CACHE, &rows).await {
                 error!("insert into {PEER_CACHE}: {e}");
             }
             Ok(())
@@ -461,7 +464,7 @@ impl Session for ClickhouseSession {
             match &update {
                 UpdateState::All(state) => {
                     // Write full update_state
-                    persist("session_update_state", UpdateStateRow {
+                    persist(&self.ch, "session_update_state", UpdateStateRow {
                                 pts: state.pts,
                                 qts: state.qts,
                                 date: state.date,
@@ -469,7 +472,7 @@ impl Session for ClickhouseSession {
                             }).await;
 
                     // Replace all channel states: truncate + re-insert
-                    if let Err(e) = clickhouse()
+                    if let Err(e) = self.ch
                         .query("TRUNCATE TABLE session_channel_state")
                         .execute()
                         .await
@@ -484,7 +487,7 @@ impl Session for ClickhouseSession {
                         .map(|ch| ChannelStateRow { peer_id: ch.id, pts: ch.pts })
                         .collect();
                     if let Err(e) =
-                        crate::db::insert_rows("session_channel_state", &rows).await
+                        insert_rows(&self.ch, "session_channel_state", &rows).await
                     {
                         error!("failed to write session_channel_state: {e}");
                     }
@@ -499,7 +502,7 @@ impl Session for ClickhouseSession {
                             seq: *seq,
                         }
                     };
-                    persist("session_update_state", row).await;
+                    persist(&self.ch, "session_update_state", row).await;
                 }
                 UpdateState::Secondary { qts } => {
                     let row = {
@@ -511,10 +514,10 @@ impl Session for ClickhouseSession {
                             seq: cache.updates.seq,
                         }
                     };
-                    persist("session_update_state", row).await;
+                    persist(&self.ch, "session_update_state", row).await;
                 }
                 UpdateState::Channel { id, pts } => {
-                    persist("session_channel_state", ChannelStateRow {
+                    persist(&self.ch, "session_channel_state", ChannelStateRow {
                                 peer_id: *id,
                                 pts: *pts,
                             }).await;
@@ -527,12 +530,12 @@ impl Session for ClickhouseSession {
 
 /// Write one session row, saying so when it fails: a lost update position
 /// means the next start resumes from an older one, and that should be visible.
-async fn persist<T>(table: &str, row: T)
+async fn persist<T>(ch: &clickhouse::Client, table: &str, row: T)
 where
     T: serde::Serialize + Send + 'static,
     for<'a> T: clickhouse::Row<Value<'a> = T>,
 {
-    if let Err(e) = crate::db::insert_rows(table, std::slice::from_ref(&row)).await {
+    if let Err(e) = insert_rows(ch, table, std::slice::from_ref(&row)).await {
         error!("failed to write {table}: {e}");
     }
 }

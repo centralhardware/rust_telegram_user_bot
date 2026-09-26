@@ -8,13 +8,12 @@
 
 use clickhouse::Row;
 use grammers_client::peer::Peer;
-use log::{debug, error};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::LazyLock;
 use tokio::sync::Mutex;
 
-use crate::db::{insert_rows, now};
+use crate::app::App;
+use crate::db::now;
 use crate::handlers::extract::{ChatInfo, SenderInfo};
 
 /// The community a chat belongs to. Only a channel or a supergroup can be in
@@ -153,53 +152,24 @@ impl PeerNames {
 /// invalidated. Only the path where the update arrived without a name reaches
 /// this — a named update never queries at all.
 /// The peer's display name, empty when it has never been seen named.
-pub async fn title_of(peer_id: i64) -> String {
-    load(peer_id)
+pub async fn title_of(app: &App, peer_id: i64) -> String {
+    load(app, peer_id)
         .await
         .map(|names| names.title)
         .unwrap_or_default()
 }
 
-pub async fn load(peer_id: i64) -> Option<PeerNames> {
-    match crate::db::clickhouse()
-        .query(
-            "SELECT peer_id, \
-                    argMax(peer_names_buffer.title, peer_names_buffer.updated_at) AS title, \
-                    argMax(peer_names_buffer.first_name, peer_names_buffer.updated_at) AS first_name, \
-                    argMax(peer_names_buffer.last_name, peer_names_buffer.updated_at) AS last_name, \
-                    argMax(peer_names_buffer.usernames, peer_names_buffer.updated_at) AS usernames, \
-                    argMax(peer_names_buffer.community_id, peer_names_buffer.updated_at) AS community_id, \
-                    max(peer_names_buffer.updated_at) AS updated_at \
-             FROM peer_names_buffer WHERE peer_id = ? \
-             GROUP BY peer_id",
-        )
-        .bind(peer_id)
-        .fetch_one::<PeerNames>()
-        .await
-    {
-        Ok(row) => Some(row),
-        Err(clickhouse::error::Error::RowNotFound) => {
-            debug!("peer {peer_id} has no stored names");
-            None
-        }
-        Err(e) => {
-            error!("looking up names for peer {peer_id}: {e}");
-            None
-        }
-    }
+pub async fn load(app: &App, peer_id: i64) -> Option<PeerNames> {
+    app.db.load_peer_names(peer_id).await
 }
-
-/// The Buffer table in front of `peer_names` (migration 041). Written and read
-/// through, so nothing about a peer is held back in the bot.
-const PEER_NAMES: &str = "peer_names_buffer";
 
 /// What was last written for each peer, `updated_at` aside. Called about twice
 /// per message — chat and sender — and almost always with the row already
 /// stored, so the repeats used to be left to the Buffer and `ReplacingMergeTree`
 /// to collapse. That is one round trip each all the same, and a backfill reading
 /// a chat's whole history is thousands of them for one unchanging pair of names.
-static WRITTEN: LazyLock<Mutex<HashMap<i64, PeerNames>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+#[derive(Default)]
+pub struct WrittenNames(Mutex<HashMap<i64, PeerNames>>);
 
 const WRITTEN_LIMIT: usize = 100_000;
 
@@ -207,9 +177,9 @@ const WRITTEN_LIMIT: usize = 100_000;
 ///
 /// A name that changes is written again: the check is on the names themselves,
 /// not on having seen the peer.
-pub async fn remember(names: &PeerNames) {
+pub async fn remember(app: &App, names: &PeerNames) {
     {
-        let mut written = WRITTEN.lock().await;
+        let mut written = app.names_written.0.lock().await;
         match written.get(&names.peer_id) {
             // `updated_at` is the version, not part of the identity: comparing it
             // would make every call a change and the check pointless.
@@ -224,9 +194,7 @@ pub async fn remember(names: &PeerNames) {
             }
         }
     }
-    if let Err(e) = insert_rows(PEER_NAMES, std::slice::from_ref(names)).await {
-        error!("insert into {PEER_NAMES}: {e}");
-    }
+    app.db.write_peer_names(names).await;
 }
 
 fn same_names(a: &PeerNames, b: &PeerNames) -> bool {

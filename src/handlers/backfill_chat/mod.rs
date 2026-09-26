@@ -56,12 +56,13 @@ use grammers_session::types::{PeerId, PeerInfo, PeerRef};
 use grammers_tl_types as tl;
 use log::{debug, info, warn};
 use std::collections::HashSet;
-use std::sync::LazyLock;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 
+use crate::app::App;
 use crate::db::Event;
+use std::sync::Arc;
 
 mod new;
 mod walk;
@@ -95,11 +96,12 @@ pub(super) const SEARCH_PAGE: usize = 100;
 
 /// Chats a backfill is running for. One at a time per chat: two walks of the
 /// same history would only write each other's rows again.
-pub(super) static RUNNING: LazyLock<Mutex<HashSet<i64>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+#[derive(Default)]
+pub struct RunningBackfills(pub(super) Mutex<HashSet<i64>>);
 
 /// Handle `!backfill` if this message is one. Returns whether it was.
-pub async fn handle_command(client: &Client, message: &Message) -> bool {
-    if !crate::utils::self_id::is_outgoing(message) {
+pub async fn handle_command(app: &Arc<App>, message: &Message) -> bool {
+    if !crate::utils::self_id::is_outgoing(app.me, message) {
         return false;
     }
     let text = message.text().trim();
@@ -159,7 +161,7 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
             .await;
             return true;
         }
-        start_new(client, message, mine_only, dry_run).await;
+        start_new(app, message, mine_only, dry_run).await;
         return true;
     }
 
@@ -179,7 +181,7 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
                 return true;
             }
         },
-        Some(id) => match find_peer(normalize(id)).await {
+        Some(id) => match find_peer(app, normalize(id)).await {
             Some(peer) => (peer, normalize(id)),
             None => {
                 reply(
@@ -196,7 +198,7 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
     };
 
     {
-        let mut running = RUNNING.lock().await;
+        let mut running = app.backfills.0.lock().await;
         if !running.insert(chat_id) {
             reply(message, "backfill: already running for that chat").await;
             return true;
@@ -219,11 +221,11 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
         }
     };
 
-    let client = client.clone();
+    let app = Arc::clone(app);
     tokio::spawn(async move {
-        let bot_chat = is_bot_chat(peer).await;
+        let bot_chat = is_bot_chat(&app, peer).await;
         let outcome = walk_chat(
-            &client,
+            &app,
             peer,
             chat_id,
             mine_only,
@@ -239,7 +241,7 @@ pub async fn handle_command(client: &Client, message: &Message) -> bool {
             "\x1b[96m{:<8} {:>8} {}\x1b[0m",
             "backfill", chat_id, outcome
         );
-        RUNNING.lock().await.remove(&chat_id);
+        app.backfills.0.lock().await.remove(&chat_id);
     });
 
     true
@@ -262,8 +264,8 @@ pub(super) fn normalize(id: i64) -> i64 {
 /// session knows is the answer. Listing dialogs would say it outright, but
 /// grammers panics on a dialog whose peer the same response did not name, which
 /// is a whole bot lost to a `!backfill` typo.
-pub(super) async fn find_peer(chat_id: i64) -> Option<PeerRef> {
-    let session = crate::session::session()?;
+pub(super) async fn find_peer(app: &App, chat_id: i64) -> Option<PeerRef> {
+    let session = app.session.as_ref()?;
     let candidates = [
         Some(PeerId::channel_unchecked(chat_id)),
         Some(PeerId::user_unchecked(chat_id)),
