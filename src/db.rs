@@ -56,9 +56,14 @@ pub const EVENTS: &str = "events_log_buffer";
 ///
 /// A failed write is retried a few times, which rides out a short hiccup.
 pub async fn log_event(event: Event) {
+    log_events(std::slice::from_ref(&event)).await
+}
+
+/// [`log_event`] for several rows at once: one insert, retried as a whole.
+pub async fn log_events(events: &[Event]) {
     let mut delay = std::time::Duration::from_millis(500);
     for attempt in 1..=INSERT_ATTEMPTS {
-        match insert_rows(EVENTS, std::slice::from_ref(&event)).await {
+        match insert_rows(EVENTS, events).await {
             Ok(()) => return,
             Err(e) if attempt == INSERT_ATTEMPTS => {
                 log::error!("insert into {EVENTS}: {e}");
@@ -107,7 +112,6 @@ pub struct MessageInfo {
     pub entities: Vec<crate::utils::entities::Entity>,
     pub keyboard: Vec<crate::utils::entities::Button>,
     pub chat_title: String,
-    pub first_name: String,
 }
 
 /// The body of a message as the log has it, read back for an edit.
@@ -116,13 +120,6 @@ struct BodyRow {
     message: String,
     entities: Vec<crate::utils::entities::Entity>,
     keyboard: Vec<crate::utils::entities::Button>,
-}
-
-/// Who the send row of a message says posted it. Read back for a deletion,
-/// which Telegram reports as a bare id.
-#[derive(Row, Deserialize, Default)]
-struct SendRow {
-    user_id: u64,
 }
 
 /// Find message info by chat_id + message_id: the text as it stands now — the
@@ -148,45 +145,17 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
     let logged = body.is_ok();
     let body = body.unwrap_or_default();
 
-    let (chat_title, first_name) = {
-        let title = clickhouse()
-            .query(
-                "SELECT chat_title FROM events_log_buffer \
-                 WHERE chat_id = ? AND event = ? AND chat_title != '' \
-                 ORDER BY date_time DESC LIMIT 1",
-            )
-            .bind(chat_id)
-            .bind(SEND)
-            .fetch_one::<String>()
-            .await
-            .unwrap_or_default();
-
-        // The row says who sent it and where; the name itself comes from
-        // `peer_names`, which is kept current for every peer that passes through —
-        // so a sender renamed since the message was logged is named as they are now.
-        let send = clickhouse()
-            .query(
-                "SELECT user_id FROM events_log_buffer \
-                 WHERE chat_id = ? AND message_id = ? AND event = ? \
-                 ORDER BY date_time DESC LIMIT 1",
-            )
-            .bind(chat_id)
-            .bind(message_id)
-            .bind(SEND)
-            .fetch_one::<SendRow>()
-            .await
-            .unwrap_or_default();
-
-        let name = match send.user_id {
-            0 => String::new(),
-            id => crate::utils::peer_names::load(id as i64)
-                .await
-                .map(|n| n.first_name)
-                .unwrap_or_default(),
-        };
-
-        (title, name)
-    };
+    let chat_title = clickhouse()
+        .query(
+            "SELECT chat_title FROM events_log_buffer \
+             WHERE chat_id = ? AND event = ? AND chat_title != '' \
+             ORDER BY date_time DESC LIMIT 1",
+        )
+        .bind(chat_id)
+        .bind(SEND)
+        .fetch_one::<String>()
+        .await
+        .unwrap_or_default();
 
     MessageInfo {
         logged,
@@ -194,29 +163,73 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
         entities: body.entities,
         keyboard: body.keyboard,
         chat_title,
-        first_name,
     }
 }
 
-/// The chat a message deleted outside any channel lived in. Telegram names no
-/// chat for those deletions, but outside channels message ids are unique per
-/// account, so the send row names it: the one chat — a user or a basic group,
-/// never a channel — that has a message with this id. `None` when the message
-/// is older than the log or was never seen.
-pub async fn find_private_chat(message_id: i64) -> Option<i64> {
-    clickhouse()
-        .query(
-            "SELECT chat_id FROM events_log_buffer \
-             WHERE message_id = ? AND event = ? AND chat_id IN ( \
-                 SELECT if(peer_id > 0, peer_id, -peer_id) FROM peer_names_buffer \
-                 WHERE peer_id > -1000000000000) \
-             ORDER BY date_time DESC LIMIT 1",
-        )
-        .bind(message_id)
+/// A deleted message as the log has it: the chat it lived in, the text as it
+/// last stood, the sender's name, and the chat's title.
+#[derive(Row, Deserialize)]
+pub struct DeletedMessage {
+    pub chat_id: i64,
+    pub message_id: i64,
+    pub message: String,
+    pub first_name: String,
+    pub chat_title: String,
+}
+
+/// What the log knows about every message in a deletion, in one query: a chat
+/// cleared or a batch deleted names a hundred ids at a time, and a round trip
+/// per id holds up every other chat on the same worker. The name comes from
+/// `peer_names`, so a sender renamed since is named as they are now.
+///
+/// `channel` is the chat Telegram named. It names none for a private chat or a
+/// basic group, but outside channels message ids are unique per account, so
+/// the send rows name it: the one chat -- a user or a basic group, never a
+/// channel -- with a message of that id. A message the log never saw is not
+/// returned.
+pub async fn find_deleted(channel: Option<i64>, message_ids: &[i64]) -> Vec<DeletedMessage> {
+    let chats = match channel {
+        Some(_) => "chat_id = ?",
+        None => "chat_id IN (SELECT if(peer_id > 0, peer_id, -peer_id) FROM peer_names_buffer \
+                 WHERE peer_id > -1000000000000)",
+    };
+    let sql = format!(
+        "WITH m AS ( \
+             SELECT chat_id, message_id, \
+                    argMax(message, (event = ?, date_time)) AS message, \
+                    argMaxIf(user_id, date_time, event = ?) AS user_id \
+             FROM events_log_buffer \
+             WHERE {chats} AND has(?, message_id) AND event IN (?, ?) \
+             GROUP BY chat_id, message_id) \
+         SELECT m.chat_id AS chat_id, m.message_id AS message_id, m.message AS message, \
+                n.first_name AS first_name, t.title AS chat_title \
+         FROM m \
+         LEFT JOIN ( \
+             SELECT peer_id, argMax(first_name, updated_at) AS first_name \
+             FROM peer_names_buffer \
+             WHERE peer_id IN (SELECT toInt64(user_id) FROM m WHERE user_id != 0) \
+             GROUP BY peer_id) AS n ON n.peer_id = toInt64(m.user_id) \
+         LEFT JOIN ( \
+             SELECT chat_id, argMax(chat_title, date_time) AS title \
+             FROM events_log_buffer \
+             WHERE chat_id IN (SELECT chat_id FROM m) AND event = ? AND chat_title != '' \
+             GROUP BY chat_id) AS t ON t.chat_id = m.chat_id"
+    );
+    let mut query = clickhouse().query(&sql).bind(EDIT).bind(SEND);
+    if let Some(chat_id) = channel {
+        query = query.bind(chat_id);
+    }
+    query
+        .bind(message_ids)
         .bind(SEND)
-        .fetch_optional::<i64>()
+        .bind(EDIT)
+        .bind(SEND)
+        .fetch_all::<DeletedMessage>()
         .await
-        .unwrap_or_default()
+        .unwrap_or_else(|e| {
+            log::warn!("looking up deleted messages {message_ids:?}: {e}");
+            Vec::new()
+        })
 }
 
 /// What the log knows about the message a reply points at.
