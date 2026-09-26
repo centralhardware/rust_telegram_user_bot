@@ -117,7 +117,11 @@ impl<'a> LogLine<'a> {
             }
         }
 
-        let mut lines = self.body.lines();
+        // A body that carries colours of its own (the edit diff) ends each run
+        // with a full reset, which would drop the rest of the line to the
+        // terminal's default; pick the line's own colour back up after it.
+        let body = self.body.replace("\x1b[0m", &format!("\x1b[0m{colour}"));
+        let mut lines = body.lines();
         if let Some(first) = lines.next() {
             if self.chat.is_some() {
                 line.push_str(&format!(" {bar} {first}"));
@@ -220,5 +224,13 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(bar(second), bar(first) + TIMESTAMP_WIDTH);
+    }
+
+    #[test]
+    fn a_reset_in_the_body_returns_to_the_line_colour() {
+        let line = LogLine::new(Tone::Edited, "edited", 1)
+            .body("a \x1b[32mb\x1b[0m c")
+            .render();
+        assert!(line.contains("\x1b[0m\x1b[93m c"), "{line:?}");
     }
 }
