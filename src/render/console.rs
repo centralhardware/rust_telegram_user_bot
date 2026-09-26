@@ -109,7 +109,10 @@ impl<'a> LogLine<'a> {
             line.push_str(&format!(" {:<CHAT_WIDTH$}", clip(chat, CHAT_WIDTH)));
             width += 1 + CHAT_WIDTH;
             if let Some(sender) = self.sender {
-                line.push_str(&format!(" {bar} {:<SENDER_WIDTH$}", clip(sender, SENDER_WIDTH)));
+                line.push_str(&format!(
+                    " {bar} {:<SENDER_WIDTH$}",
+                    clip(sender, SENDER_WIDTH)
+                ));
                 width += 3 + SENDER_WIDTH;
             }
         }
@@ -182,7 +185,10 @@ mod tests {
             .sender("Bartholomew")
             .body("x");
         let text = plain(&line);
-        assert!(text.contains("a chat whose title goes o │ Bartholome │ x"), "{text}");
+        assert!(
+            text.contains("a chat whose title goes o │ Bartholome │ x"),
+            "{text}"
+        );
     }
 
     #[test]
@@ -199,12 +205,20 @@ mod tests {
 
     #[test]
     fn a_long_body_continues_under_its_first_line() {
-        let line = LogLine::new(Tone::Info, "poll", 5).chat("chat").body("question\noption");
+        let line = LogLine::new(Tone::Info, "poll", 5)
+            .chat("chat")
+            .body("question\noption");
         let text = plain(&line);
         let [first, second] = text.lines().collect::<Vec<_>>().try_into().unwrap();
         // The continuation's bar sits under the first line's, once the
         // logger's timestamp is in front of the first.
-        let bar = |s: &str| s.chars().collect::<Vec<_>>().iter().rposition(|&c| c == '│').unwrap();
+        let bar = |s: &str| {
+            s.chars()
+                .collect::<Vec<_>>()
+                .iter()
+                .rposition(|&c| c == '│')
+                .unwrap()
+        };
         assert_eq!(bar(second), bar(first) + TIMESTAMP_WIDTH);
     }
 }

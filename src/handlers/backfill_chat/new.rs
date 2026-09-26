@@ -1,7 +1,7 @@
 //! `!backfill new`: the dialogs the log has never seen.
 
 use super::*;
-use crate::telegram::dialogs::{dialog_offset, Pages, ARCHIVE_FOLDER, MAIN_FOLDER};
+use crate::telegram::dialogs::{ARCHIVE_FOLDER, MAIN_FOLDER, Pages, dialog_offset};
 
 /// The key `RUNNING` holds while a `new` scan is on. A chat id is never 0, so
 /// it can share the set with them and keep the one-at-a-time rule for free.
@@ -40,7 +40,9 @@ pub(super) async fn start_new(app: &Arc<App>, message: &Message, mine_only: bool
         if let Some(status) = &status {
             let _ = status.edit(outcome.as_str()).await;
         }
-        LogLine::new(Tone::Info, "backfill", "new").body(&outcome).print();
+        LogLine::new(Tone::Info, "backfill", "new")
+            .body(&outcome)
+            .print();
         app.backfills.0.lock().await.remove(&NEW_SCAN);
     });
 }
@@ -67,9 +69,7 @@ pub(super) async fn run_new(
     let missing: Vec<Dialog> = scan
         .dialogs
         .into_iter()
-        .filter(|d| {
-            !logged.contains(&d.chat_id) && !app.is_log_ignored(d.chat_id)
-        })
+        .filter(|d| !logged.contains(&d.chat_id) && !app.is_log_ignored(d.chat_id))
         .collect();
 
     // Where every dialog went, so a count that looks short can be read rather
@@ -82,7 +82,9 @@ pub(super) async fn run_new(
         scan.unreadable,
         scan.peerless
     );
-    LogLine::new(Tone::Info, "backfill", "new").body(&census).print();
+    LogLine::new(Tone::Info, "backfill", "new")
+        .body(&census)
+        .print();
 
     if missing.is_empty() {
         return format!("backfill new: nothing to do — {census}");
@@ -143,7 +145,9 @@ pub(super) async fn run_new(
             status,
         )
         .await;
-        LogLine::new(Tone::Info, "backfill", dialog.chat_id).body(&outcome.to_string()).print();
+        LogLine::new(Tone::Info, "backfill", dialog.chat_id)
+            .body(&outcome.to_string())
+            .print();
         written += outcome.written;
         refused += usize::from(outcome.refused);
         done += 1;

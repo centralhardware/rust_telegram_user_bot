@@ -153,7 +153,11 @@ impl From<PinEvent> for Event {
             chat_id: e.chat_id,
             message_id: e.message_id,
             pinned: e.pinned,
-            ..Event::of(if e.pinned { EventKind::Pin } else { EventKind::Unpin })
+            ..Event::of(if e.pinned {
+                EventKind::Pin
+            } else {
+                EventKind::Unpin
+            })
         }
     }
 }
@@ -218,21 +222,36 @@ mod tests {
 
     #[test]
     fn a_kind_is_written_as_the_string_the_column_holds() {
-        assert_eq!(serde_json::to_string(&EventKind::FileUploaded).unwrap(), "\"file_uploaded\"");
+        assert_eq!(
+            serde_json::to_string(&EventKind::FileUploaded).unwrap(),
+            "\"file_uploaded\""
+        );
         assert_eq!(serde_json::to_string(&EventKind::Send).unwrap(), "\"send\"");
     }
 
     #[test]
     fn an_unpin_is_its_own_kind_and_says_so_in_pinned() {
-        let row: Event = PinEvent { date_time: 1, chat_id: 2, message_id: 3, pinned: false }.into();
+        let row: Event = PinEvent {
+            date_time: 1,
+            chat_id: 2,
+            message_id: 3,
+            pinned: false,
+        }
+        .into();
         assert_eq!(row.event, EventKind::Unpin);
         assert!(!row.pinned);
     }
 
     #[test]
     fn a_typed_row_leaves_every_other_column_empty() {
-        let row: Event = ViewsEvent { date_time: 1, chat_id: 2, message_id: 3, views: 10, forwards: 0 }
-            .into();
+        let row: Event = ViewsEvent {
+            date_time: 1,
+            chat_id: 2,
+            message_id: 3,
+            views: 10,
+            forwards: 0,
+        }
+        .into();
         assert_eq!(row.event, EventKind::Views);
         assert_eq!(row.views, 10);
         assert!(row.message.is_empty() && row.raw.is_empty() && row.user_id == 0);

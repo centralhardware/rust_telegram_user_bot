@@ -16,8 +16,8 @@ use std::pin::Pin;
 use grammers_client::session::types::PeerId;
 use grammers_client::tl;
 use grammers_client::update::{Message, Update};
-use std::sync::Arc;
 use log::{error, warn};
+use std::sync::Arc;
 
 use crate::app::App;
 use crate::db::Event;
@@ -105,7 +105,10 @@ pub async fn handle(app: &Arc<App>, update: Update) {
             }
         }
         Update::Raw(raw) => {
-            let mut raw = RawUpdate { app, update: raw.raw };
+            let mut raw = RawUpdate {
+                app,
+                update: raw.raw,
+            };
             run(RAW, &mut raw).await
         }
         _ => {}
@@ -236,9 +239,11 @@ impl<'r> Handler<RawUpdate<'r>> for Pins {
                 tl::enums::Update::PinnedMessages(u) => {
                     (PeerId::from(&u.peer), &u.messages, u.pinned)
                 }
-                tl::enums::Update::PinnedChannelMessages(u) => {
-                    (PeerId::channel_unchecked(u.channel_id), &u.messages, u.pinned)
-                }
+                tl::enums::Update::PinnedChannelMessages(u) => (
+                    PeerId::channel_unchecked(u.channel_id),
+                    &u.messages,
+                    u.pinned,
+                ),
                 _ => return Flow::Continue,
             };
             handlers::save_pinned(
@@ -279,8 +284,7 @@ impl<'r> Handler<RawUpdate<'r>> for Views {
                     handlers::save_views(app, u.channel_id, u.id, u.views.max(0) as u32, 0).await
                 }
                 tl::enums::Update::ChannelMessageForwards(u) => {
-                    handlers::save_views(app, u.channel_id, u.id, 0, u.forwards.max(0) as u32)
-                        .await
+                    handlers::save_views(app, u.channel_id, u.id, 0, u.forwards.max(0) as u32).await
                 }
                 _ => {}
             }
@@ -309,7 +313,11 @@ mod tests {
     #[tokio::test]
     async fn steps_run_in_the_order_they_are_listed() {
         let mut seen = vec![];
-        run(&[&Push("a", Flow::Continue), &Push("b", Flow::Continue)], &mut seen).await;
+        run(
+            &[&Push("a", Flow::Continue), &Push("b", Flow::Continue)],
+            &mut seen,
+        )
+        .await;
         assert_eq!(seen, ["a", "b"]);
     }
 
@@ -317,7 +325,11 @@ mod tests {
     async fn a_step_that_stops_hides_the_message_from_the_rest() {
         let mut seen = vec![];
         run(
-            &[&Push("a", Flow::Continue), &Push("b", Flow::Stop), &Push("c", Flow::Continue)],
+            &[
+                &Push("a", Flow::Continue),
+                &Push("b", Flow::Stop),
+                &Push("c", Flow::Continue),
+            ],
             &mut seen,
         )
         .await;

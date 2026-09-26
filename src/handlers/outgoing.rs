@@ -1,10 +1,10 @@
 use grammers_client::peer::Peer;
 use grammers_client::update::Message;
 
-use crate::db::Event;
 use super::extract::ChatInfo;
 use super::send::Body;
 use crate::app::App;
+use crate::db::Event;
 
 pub async fn save_outgoing(app: &App, message: &Message) -> anyhow::Result<Event> {
     let chat = crate::state::peer_info::chat_info(app, message).await;
@@ -18,7 +18,10 @@ pub async fn save_outgoing(app: &App, message: &Message) -> anyhow::Result<Event
     // the buffer like every other read, so a title logged a moment ago counts,
     // and with argMax rather than a sort of the chat's whole history.
     let (title, usernames) = if title.is_empty() {
-        app.db.last_chat_name(chat_id).await.unwrap_or((title, usernames))
+        app.db
+            .last_chat_name(chat_id)
+            .await
+            .unwrap_or((title, usernames))
     } else {
         (title, usernames)
     };
@@ -30,7 +33,15 @@ pub async fn save_outgoing(app: &App, message: &Message) -> anyhow::Result<Event
     });
     let body = Body::of(app, message, sender_id, sender_name.as_deref()).await;
 
-    super::send::print(app, message, &body, ("outgoing", crate::render::console::Tone::Outgoing), &title, "").await;
+    super::send::print(
+        app,
+        message,
+        &body,
+        ("outgoing", crate::render::console::Tone::Outgoing),
+        &title,
+        "",
+    )
+    .await;
 
     let chat = ChatInfo {
         chat_title: title,

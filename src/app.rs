@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use grammers_client::Client;
 
-use crate::db::session::ClickhouseSession;
 use crate::db::Db;
+use crate::db::session::ClickhouseSession;
 use crate::handlers::backfill_chat::RunningBackfills;
 use crate::handlers::media::MediaQueue;
 use crate::handlers::polls::PollCounts;
@@ -112,8 +112,14 @@ mod tests {
 
         let rows = db.events();
         assert_eq!(rows.len(), 2);
-        assert!(rows.iter().all(|r| r.event == EventKind::Unpin && !r.pinned && r.chat_id == 5));
-        assert_eq!(rows.iter().map(|r| r.message_id).collect::<Vec<_>>(), [10, 11]);
+        assert!(
+            rows.iter()
+                .all(|r| r.event == EventKind::Unpin && !r.pinned && r.chat_id == 5)
+        );
+        assert_eq!(
+            rows.iter().map(|r| r.message_id).collect::<Vec<_>>(),
+            [10, 11]
+        );
     }
 
     #[tokio::test]
@@ -123,7 +129,10 @@ mod tests {
 
         let [row] = db.events().try_into().ok().unwrap();
         assert_eq!(row.event, EventKind::Views);
-        assert_eq!((row.chat_id, row.message_id, row.views, row.forwards), (7, 3, 120, 0));
+        assert_eq!(
+            (row.chat_id, row.message_id, row.views, row.forwards),
+            (7, 3, 120, 0)
+        );
     }
 
     /// Telegram threads a post's comments off the copy of the post in the

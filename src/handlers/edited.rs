@@ -1,8 +1,8 @@
-use grammers_client::update::Message;
 use crate::render::console::{LogLine, Tone};
+use grammers_client::update::Message;
 
-use crate::db::Event;
 use crate::app::App;
+use crate::db::Event;
 
 pub async fn save_edited(app: &App, message: &Message) -> anyhow::Result<()> {
     let chat_id = message.peer_id().bare_id_unchecked();
@@ -81,29 +81,31 @@ pub async fn save_edited(app: &App, message: &Message) -> anyhow::Result<()> {
     // row.
     let meta = crate::telegram::media_description::media_meta(message).unwrap_or_default();
 
-    app.db.log_event(Event {
-        date_time: now,
-        chat_id,
-        message_id: msg_id,
-        message: message_content,
-        entities,
-        keyboard,
-        diff,
-        raw: serde_json::to_string(&std::ops::Deref::deref(message).raw).unwrap_or_default(),
-        media_type: meta.media_type,
-        file_name: meta.file_name,
-        mime_type: meta.mime_type,
-        size: meta.size,
-        duration: meta.duration,
-        width: meta.width,
-        height: meta.height,
-        lat: meta.lat,
-        lon: meta.lon,
-        poll_question: meta.poll_question,
-        poll_options: meta.poll_options,
-        poll_id: meta.poll_id,
-        ..Event::of(crate::db::EventKind::Edit)
-    }).await;
+    app.db
+        .log_event(Event {
+            date_time: now,
+            chat_id,
+            message_id: msg_id,
+            message: message_content,
+            entities,
+            keyboard,
+            diff,
+            raw: serde_json::to_string(&std::ops::Deref::deref(message).raw).unwrap_or_default(),
+            media_type: meta.media_type,
+            file_name: meta.file_name,
+            mime_type: meta.mime_type,
+            size: meta.size,
+            duration: meta.duration,
+            width: meta.width,
+            height: meta.height,
+            lat: meta.lat,
+            lon: meta.lon,
+            poll_question: meta.poll_question,
+            poll_options: meta.poll_options,
+            poll_id: meta.poll_id,
+            ..Event::of(crate::db::EventKind::Edit)
+        })
+        .await;
 
     Ok(())
 }

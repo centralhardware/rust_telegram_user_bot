@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use crate::db::AdminAction;
-use crate::telegram::dialogs::{Pages, ARCHIVE_FOLDER, MAIN_FOLDER};
+use crate::telegram::dialogs::{ARCHIVE_FOLDER, MAIN_FOLDER, Pages};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// How often the dialog list is re-scanned for chats where we are an admin.
@@ -68,7 +68,8 @@ async fn discover(app: &App) -> Option<Vec<AdminChat>> {
                 .collect::<Vec<_>>()
                 .join("\n");
             info!("admin log: watching {} chat(s):\n{}", found.len(), titles);
-            app.admin_chats.set(found.iter().map(|c| c.chat_id).collect());
+            app.admin_chats
+                .set(found.iter().map(|c| c.chat_id).collect());
             Some(found)
         }
         Err(e) => {
@@ -84,9 +85,7 @@ async fn discover(app: &App) -> Option<Vec<AdminChat>> {
 /// Only channels and megagroups keep an admin log; basic groups are skipped.
 /// Everything this wants -- the title, the usernames, the admin rights -- is on
 /// the `Chat` objects of each page, whatever kind of dialog pointed at them.
-async fn discover_admin_chats(
-    client: &Client,
-) -> anyhow::Result<Vec<AdminChat>> {
+async fn discover_admin_chats(client: &Client) -> anyhow::Result<Vec<AdminChat>> {
     let mut chats = Vec::new();
     let mut seen: HashSet<i64> = HashSet::new();
 
@@ -148,10 +147,7 @@ async fn discover_admin_chats(
 }
 
 /// The user ids currently holding admin rights in a chat, used to flag the actor of each event.
-async fn fetch_admin_ids(
-    client: &Client,
-    peer: PeerRef,
-) -> anyhow::Result<HashSet<i64>> {
+async fn fetch_admin_ids(client: &Client, peer: PeerRef) -> anyhow::Result<HashSet<i64>> {
     let channel: tl::enums::InputChannel = peer.into();
     let result = client
         .invoke(&tl::functions::channels::GetParticipants {
@@ -410,7 +406,10 @@ fn banned_rights(p: &tl::enums::ChannelParticipant) -> Option<&tl::types::ChatBa
     }
 }
 
-fn is_restricted(rights: Option<&tl::types::ChatBannedRights>, has: fn(&tl::types::ChatBannedRights) -> bool) -> bool {
+fn is_restricted(
+    rights: Option<&tl::types::ChatBannedRights>,
+    has: fn(&tl::types::ChatBannedRights) -> bool,
+) -> bool {
     rights.is_some_and(has)
 }
 
@@ -482,7 +481,11 @@ fn describe_ban_change(
     }
 
     // One right per line, names padded, so a long list can be skimmed down the arrows.
-    let width = changed.iter().map(|(right, _)| right.len()).max().unwrap_or(0);
+    let width = changed
+        .iter()
+        .map(|(right, _)| right.len())
+        .max()
+        .unwrap_or(0);
     let lines: Vec<String> = changed
         .iter()
         .map(|(right, restricted)| {
@@ -519,8 +522,14 @@ fn format_log_output(
         ChangeAbout(a) => format!("about: {} -> {}", a.prev_value, a.new_value),
         ChangeUsername(a) => format!("username: {} -> {}", a.prev_value, a.new_value),
         ChangePhoto(_) => "photo changed".to_string(),
-        ToggleInvites(a) => format!("invites: {}", if a.new_value { "enabled" } else { "disabled" }),
-        ToggleSignatures(a) => format!("signatures: {}", if a.new_value { "enabled" } else { "disabled" }),
+        ToggleInvites(a) => format!(
+            "invites: {}",
+            if a.new_value { "enabled" } else { "disabled" }
+        ),
+        ToggleSignatures(a) => format!(
+            "signatures: {}",
+            if a.new_value { "enabled" } else { "disabled" }
+        ),
         UpdatePinned(_) => "message pinned/unpinned".to_string(),
         EditMessage(a) => {
             let prev = message_text(&a.prev_message);
@@ -547,9 +556,15 @@ fn format_log_output(
             &a.new_participant,
             &participant_name(&a.new_participant, users),
         ),
-        ParticipantToggleAdmin(a) => format!("{} admin toggled", participant_name(&a.new_participant, users)),
+        ParticipantToggleAdmin(a) => format!(
+            "{} admin toggled",
+            participant_name(&a.new_participant, users)
+        ),
         ChangeStickerSet(_) => "sticker set changed".to_string(),
-        TogglePreHistoryHidden(a) => format!("pre-history: {}", if a.new_value { "hidden" } else { "visible" }),
+        TogglePreHistoryHidden(a) => format!(
+            "pre-history: {}",
+            if a.new_value { "hidden" } else { "visible" }
+        ),
         DefaultBannedRights(_) => "default banned rights changed".to_string(),
         StopPoll(_) => "poll stopped".to_string(),
         ChangeLinkedChat(a) => format!("linked chat: {} -> {}", a.prev_value, a.new_value),
@@ -567,27 +582,50 @@ fn format_log_output(
         ParticipantVolume(_) => format!("{} volume changed in call", user_title),
         ChangeHistoryTtl(a) => format!("history TTL: {}s -> {}s", a.prev_value, a.new_value),
         ParticipantJoinByRequest(_) => format!("{} joined by request", user_title),
-        ToggleNoForwards(a) => format!("no forwards: {}", if a.new_value { "enabled" } else { "disabled" }),
+        ToggleNoForwards(a) => format!(
+            "no forwards: {}",
+            if a.new_value { "enabled" } else { "disabled" }
+        ),
         SendMessage(a) => message_text(&a.message),
         ChangeAvailableReactions(_) => "available reactions changed".to_string(),
         ChangeUsernames(a) => format!("usernames: {:?} -> {:?}", a.prev_value, a.new_value),
-        ToggleForum(a) => format!("forum: {}", if a.new_value { "enabled" } else { "disabled" }),
+        ToggleForum(a) => format!(
+            "forum: {}",
+            if a.new_value { "enabled" } else { "disabled" }
+        ),
         CreateTopic(_) => "topic created".to_string(),
         EditTopic(_) => "topic edited".to_string(),
         DeleteTopic(_) => "topic deleted".to_string(),
         PinTopic(_) => "topic pinned/unpinned".to_string(),
-        ToggleAntiSpam(a) => format!("anti-spam: {}", if a.new_value { "enabled" } else { "disabled" }),
+        ToggleAntiSpam(a) => format!(
+            "anti-spam: {}",
+            if a.new_value { "enabled" } else { "disabled" }
+        ),
         ChangePeerColor(_) => "peer color changed".to_string(),
         ChangeProfilePeerColor(_) => "profile peer color changed".to_string(),
         ChangeWallpaper(_) => "wallpaper changed".to_string(),
         ChangeEmojiStatus(_) => "emoji status changed".to_string(),
         ChangeEmojiStickerSet(_) => "emoji sticker set changed".to_string(),
-        ToggleSignatureProfiles(a) => format!("signature profiles: {}", if a.new_value { "enabled" } else { "disabled" }),
+        ToggleSignatureProfiles(a) => format!(
+            "signature profiles: {}",
+            if a.new_value { "enabled" } else { "disabled" }
+        ),
         ParticipantSubExtend(_) => format!("{} subscription extended", user_title),
-        ToggleAutotranslation(a) => format!("autotranslation: {}", if a.new_value { "enabled" } else { "disabled" }),
+        ToggleAutotranslation(a) => format!(
+            "autotranslation: {}",
+            if a.new_value { "enabled" } else { "disabled" }
+        ),
         ParticipantEditRank(a) => {
-            let prev = if a.prev_rank.is_empty() { "none" } else { &a.prev_rank };
-            let new = if a.new_rank.is_empty() { "none" } else { &a.new_rank };
+            let prev = if a.prev_rank.is_empty() {
+                "none"
+            } else {
+                &a.prev_rank
+            };
+            let new = if a.new_rank.is_empty() {
+                "none"
+            } else {
+                &a.new_rank
+            };
             format!("{}: rank {} -> {}", user_title, prev, new)
         }
     }
@@ -597,12 +635,11 @@ fn action_message_json(action: &tl::enums::ChannelAdminLogEventAction) -> String
     serde_json::to_string(action).unwrap_or_default()
 }
 
-fn extract_user_info(
-    users: &[tl::enums::User],
-    user_id: i64,
-) -> (String, Vec<String>) {
+fn extract_user_info(users: &[tl::enums::User], user_id: i64) -> (String, Vec<String>) {
     for u in users {
-        let tl::enums::User::User(user) = u else { continue };
+        let tl::enums::User::User(user) = u else {
+            continue;
+        };
         if user.id == user_id {
             let title = match (&user.first_name, &user.last_name) {
                 (Some(first), Some(last)) if !last.is_empty() => format!("{} {}", first, last),
@@ -627,11 +664,7 @@ fn extract_user_info(
     (String::new(), Vec::new())
 }
 
-
-async fn log_admin_actions(
-    app: &App,
-    chat: &AdminChat,
-) -> anyhow::Result<()> {
+async fn log_admin_actions(app: &App, chat: &AdminChat) -> anyhow::Result<()> {
     let min_id = app.db.last_admin_event_id(chat.chat_id).await as i64;
     let mut max_id: i64 = 0;
     let mut total_inserted: usize = 0;
@@ -705,10 +738,14 @@ async fn log_admin_actions(
 
         app.db.write_admin_actions(&actions).await?;
 
-        let (batch_min, batch_max) = result.events.iter().fold((i64::MAX, 0u64), |(min, max), e| {
-            let tl::enums::ChannelAdminLogEvent::Event(ev) = e;
-            (min.min(ev.id), max.max(ev.id as u64))
-        });
+        let (batch_min, batch_max) =
+            result
+                .events
+                .iter()
+                .fold((i64::MAX, 0u64), |(min, max), e| {
+                    let tl::enums::ChannelAdminLogEvent::Event(ev) = e;
+                    (min.min(ev.id), max.max(ev.id as u64))
+                });
 
         total_inserted += result.events.len();
         if batch_max > new_last_id {

@@ -8,10 +8,10 @@
 
 use crate::render::console::{LogLine, Tone};
 
+use crate::app::App;
 use crate::db::Event;
 use crate::events::ViewsEvent;
 use crate::state::peer_names::title_of;
-use crate::app::App;
 
 pub async fn save_views(app: &App, channel_id: i64, message_id: i32, views: u32, forwards: u32) {
     if !app.is_log_ignored(channel_id) {
@@ -41,12 +41,13 @@ pub async fn save_views(app: &App, channel_id: i64, message_id: i32, views: u32,
             .print();
     }
 
-    app.db.log_event(Event::from(ViewsEvent {
-        date_time: chrono::Utc::now().timestamp() as u32,
-        chat_id: channel_id,
-        message_id: message_id as i64,
-        views,
-        forwards,
-    }))
-    .await;
+    app.db
+        .log_event(Event::from(ViewsEvent {
+            date_time: chrono::Utc::now().timestamp() as u32,
+            chat_id: channel_id,
+            message_id: message_id as i64,
+            views,
+            forwards,
+        }))
+        .await;
 }

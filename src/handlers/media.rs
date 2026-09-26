@@ -83,7 +83,10 @@ pub async fn save_media(app: &App, message: &Message, event: &Event) {
         return;
     }
 
-    let _ = queue.send(Job { media, event: event.clone() });
+    let _ = queue.send(Job {
+        media,
+        event: event.clone(),
+    });
 }
 
 /// Stickers and custom emoji are the same handful of files over and over, and the
@@ -92,11 +95,11 @@ fn is_archivable(media: &Media) -> bool {
     matches!(media, Media::Photo(_) | Media::Document(_))
 }
 
-async fn archive(
-    app: &App,
-    job: &Job,
-) -> anyhow::Result<()> {
-    let storage = app.storage.as_ref().expect("worker only starts when configured");
+async fn archive(app: &App, job: &Job) -> anyhow::Result<()> {
+    let storage = app
+        .storage
+        .as_ref()
+        .expect("worker only starts when configured");
 
     let (file_name, mime_type) = match &job.media {
         Media::Photo(_) => (None, Some("image/jpeg".to_string())),
@@ -121,24 +124,26 @@ async fn archive(
             known.size / 1024,
             known.s3_key
         );
-        app.db.log_event(job.event.file_uploaded(
-            known.sha256,
-            known.s3_bucket,
-            known.s3_key,
-            known.size,
-        ))
-        .await;
+        app.db
+            .log_event(job.event.file_uploaded(
+                known.sha256,
+                known.s3_bucket,
+                known.s3_key,
+                known.size,
+            ))
+            .await;
         return Ok(());
     }
 
     if let Some(size) = Downloadable::size(&job.media)
-        && size as u64 > storage.max_bytes {
-            warn!(
-                "media archive: skipping {} B file in chat {} (limit {} B)",
-                size, job.event.chat_id, storage.max_bytes
-            );
-            return Ok(());
-        }
+        && size as u64 > storage.max_bytes
+    {
+        warn!(
+            "media archive: skipping {} B file in chat {} (limit {} B)",
+            size, job.event.chat_id, storage.max_bytes
+        );
+        return Ok(());
+    }
 
     let mut bytes: Vec<u8> = Vec::new();
     let mut download = app.tg.iter_download(&job.media);
@@ -186,17 +191,22 @@ async fn archive(
     };
 
     if let Some((kind, tg_id)) = file {
-        app.db.remember_media_file(crate::db::MediaFile {
-            kind: kind.to_string(),
-            tg_id,
-            sha256: sha256.clone(),
-            s3_bucket: storage.bucket.clone(),
-            s3_key: key.clone(),
-            size,
-        })
-        .await;
+        app.db
+            .remember_media_file(crate::db::MediaFile {
+                kind: kind.to_string(),
+                tg_id,
+                sha256: sha256.clone(),
+                s3_bucket: storage.bucket.clone(),
+                s3_key: key.clone(),
+                size,
+            })
+            .await;
     }
-    app.db.log_event(job.event.file_uploaded(sha256, storage.bucket.clone(), key, size))
+    app.db
+        .log_event(
+            job.event
+                .file_uploaded(sha256, storage.bucket.clone(), key, size),
+        )
         .await;
 
     Ok(())

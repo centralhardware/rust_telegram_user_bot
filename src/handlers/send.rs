@@ -9,8 +9,8 @@ use log::info;
 use crate::render::console::{LogLine, Tone};
 
 use super::extract::ChatInfo;
-use crate::db::Event;
 use crate::app::App;
+use crate::db::Event;
 
 /// The body of a message, described once for the console line and the row
 /// alike.
@@ -34,7 +34,8 @@ impl Body {
     ) -> Self {
         let text = crate::render::format_entities::formatted_text(message);
         let game_title =
-            crate::telegram::service_action::game_title(&app.tg, std::ops::Deref::deref(message)).await;
+            crate::telegram::service_action::game_title(&app.tg, std::ops::Deref::deref(message))
+                .await;
         let action_desc = match message.action() {
             Some(a) if text.is_empty() => Some(crate::telegram::service_action::format(
                 a,

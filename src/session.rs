@@ -42,12 +42,7 @@ pub async fn connect(
     }
 
     let updates = client
-        .stream_updates(
-            updates,
-            UpdatesConfiguration {
-                catch_up: false,
-            },
-        )
+        .stream_updates(updates, UpdatesConfiguration { catch_up: false })
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
 
