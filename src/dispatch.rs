@@ -66,7 +66,6 @@ pub static NEW_MESSAGE: &[&dyn Handler<NewMessage>] = &[
     // in S3, so it needs the row as it was logged.
     &Media,
     &AutoCat,
-    &MapRelay,
     // After the save: `!backfill` is a message like any other, and belongs in
     // the log with the rest.
     &BackfillCommand,
@@ -178,16 +177,6 @@ impl Handler<NewMessage> for AutoCat {
             if let Err(e) = handlers::handle_auto_cat(&m.message).await {
                 error!("Failed to handle auto cat: {e:#}");
             }
-            Flow::Continue
-        })
-    }
-}
-
-struct MapRelay;
-impl Handler<NewMessage> for MapRelay {
-    fn handle<'a>(&'a self, m: &'a mut NewMessage) -> Step<'a, Flow> {
-        Box::pin(async move {
-            handlers::handle_map_relay(&m.app, &m.message);
             Flow::Continue
         })
     }
