@@ -1,8 +1,8 @@
-//! `/map` for someone who can't use @CountryUpdaterBot directly: when they
-//! send `/map` in their private chat with this account, the account asks the
-//! bot itself and forwards the live location it gets back into that chat.
+//! `/map` in the private chat with someone who can't use @CountryUpdaterBot
+//! directly: when either side sends `/map` there, the account asks the bot
+//! itself and forwards the live location it gets back into that chat.
 //!
-//! Configured by `MAP_RELAY_USER_ID` (whose `/map` is relayed) and
+//! Configured by `MAP_RELAY_USER_ID` (the user whose private chat it works in) and
 //! `MAP_RELAY_BOT` (the bot's username, `CountryUpdaterBot` by default);
 //! without `MAP_RELAY_USER_ID` the relay is off.
 
@@ -32,14 +32,8 @@ static BOT: LazyLock<String> = LazyLock::new(|| {
 
 pub fn handle_map_relay(app: &Arc<App>, message: &Message) {
     let Some(user_id) = *USER_ID else { return };
-    // Their own message in the private chat with them: both the chat and the
-    // sender are that user.
-    let from_user = message.sender_id().map(|s| s.bare_id_unchecked()) == Some(user_id);
-    if message.outgoing()
-        || !from_user
-        || message.peer_id().bare_id_unchecked() != user_id
-        || message.text().trim() != TRIGGER
-    {
+    // Either side of the private chat with them: theirs or this account's own.
+    if message.peer_id().bare_id_unchecked() != user_id || message.text().trim() != TRIGGER {
         return;
     }
 
