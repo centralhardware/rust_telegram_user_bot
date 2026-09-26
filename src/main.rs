@@ -50,7 +50,9 @@ async fn main() -> Result<()> {
     let client_id = client.get_me().await?.id().bare_id().unwrap() as u64;
     utils::self_id::set(client_id);
     handlers::start_media(client.clone());
-    schedulers::start(client.clone(), client_id);
+    // Before any update is handled: until the admin chats are known, media
+    // posted in them would not be archived, and nothing catches up on it.
+    schedulers::start(client.clone(), client_id).await;
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
 
