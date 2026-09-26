@@ -11,24 +11,37 @@ pub async fn save_edited(message: &Message) -> Result<(), Box<dyn std::error::Er
     let entities = crate::utils::entities::of_message(message);
     let keyboard = crate::utils::entities::keyboard_of_message(message);
 
-    if message_content.is_empty() && entities.is_empty() && keyboard.is_empty() {
-        return Ok(());
-    }
-
     let original = crate::db::find_message(chat_id, msg_id).await;
+
+    // What the message said before, as far as the log knows. A photo or a file
+    // sent without a caption is logged as its media description, which is not
+    // text the sender wrote: a caption added later replaces nothing.
+    let media_desc = crate::utils::media_description::describe(message);
+    let before = if !original.logged {
+        None
+    } else if media_desc.as_deref() == Some(original.message.as_str()) {
+        Some("")
+    } else {
+        Some(original.message.as_str())
+    };
 
     // Nothing about the body changed -- Telegram also reports an edit for things
     // the log does not keep, a link preview appearing being the usual one.
-    if original.message.is_empty()
-        || (original.message == message_content
-            && original.entities == entities
-            && original.keyboard == keyboard)
+    if before == Some(message_content.as_str())
+        && original.entities == entities
+        && original.keyboard == keyboard
     {
         return Ok(());
     }
 
-    let original = original.message;
-    let diff = crate::utils::diff::word_patch(&original, &message_content);
+    // A message sent before the bot saw the chat has no send row to diff
+    // against: the edit is logged with the text as it now stands and an empty
+    // patch, rather than one claiming every word is new.
+    let original = before.unwrap_or_default().to_string();
+    let diff = match before {
+        Some(before) => crate::utils::diff::word_patch(before, &message_content),
+        None => String::new(),
+    };
 
     let sender = crate::utils::peer_info::sender_info(message).await;
 
