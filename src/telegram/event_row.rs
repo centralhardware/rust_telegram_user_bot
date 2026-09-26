@@ -101,6 +101,7 @@ pub fn build(message: &tl::enums::Message, cx: Context) -> Event {
         grouped_id: meta_msg.grouped_id,
         via_bot_id: meta_msg.via_bot_id,
         guest_from_id: meta_msg.guest_from_id,
+        sender_chat_id: meta_msg.sender_chat_id,
         post_author: meta_msg.post_author,
         pinned: meta_msg.pinned,
         silent: meta_msg.silent,
