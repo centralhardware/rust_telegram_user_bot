@@ -21,32 +21,26 @@ struct AdminChat {
     admin_ids: HashSet<i64>,
 }
 
-pub fn start(client: Client, _client_id: u64) {
+/// Discover the admin chats before returning, so the media archiver knows
+/// them from the first update on, then poll their admin logs in the
+/// background.
+pub async fn start(client: Client, _client_id: u64) {
+    let first = discover(&client).await;
+    // A failed first walk is tried again on the next tick, not an hour later.
+    let mut discovered_at = first.is_some().then(Instant::now);
+    let mut chats = first.unwrap_or_default();
+
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(POLL_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        let mut chats: Vec<AdminChat> = Vec::new();
-        let mut discovered_at: Option<Instant> = None;
         loop {
             interval.tick().await;
 
-            if discovered_at.is_none_or(|at| at.elapsed() >= DISCOVERY_INTERVAL) {
-                match discover_admin_chats(&client).await {
-                    Ok(found) => {
-                        // One chat per line: a comma-joined list of a dozen-odd
-                        // titles is a single unreadable line in the log.
-                        let titles = found
-                            .iter()
-                            .map(|c| format!("  {} ({})", c.title, c.chat_id))
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        info!("admin log: watching {} chat(s):\n{}", found.len(), titles);
-                        crate::utils::admin_chats::set(found.iter().map(|c| c.chat_id).collect());
-                        chats = found;
-                        discovered_at = Some(Instant::now());
-                    }
-                    Err(e) => error!("Failed to discover admin chats: {:?}", e),
-                }
+            if discovered_at.is_none_or(|at| at.elapsed() >= DISCOVERY_INTERVAL)
+                && let Some(found) = discover(&client).await
+            {
+                chats = found;
+                discovered_at = Some(Instant::now());
             }
 
             for chat in &chats {
@@ -56,6 +50,29 @@ pub fn start(client: Client, _client_id: u64) {
             }
         }
     });
+}
+
+/// Walk the dialog list for the chats this account administers and publish
+/// them to `admin_chats`. `None` when the walk failed.
+async fn discover(client: &Client) -> Option<Vec<AdminChat>> {
+    match discover_admin_chats(client).await {
+        Ok(found) => {
+            // One chat per line: a comma-joined list of a dozen-odd titles is
+            // a single unreadable line in the log.
+            let titles = found
+                .iter()
+                .map(|c| format!("  {} ({})", c.title, c.chat_id))
+                .collect::<Vec<_>>()
+                .join("\n");
+            info!("admin log: watching {} chat(s):\n{}", found.len(), titles);
+            crate::utils::admin_chats::set(found.iter().map(|c| c.chat_id).collect());
+            Some(found)
+        }
+        Err(e) => {
+            error!("Failed to discover admin chats: {:?}", e);
+            None
+        }
+    }
 }
 
 /// Every chat in the dialog list -- the main list and the archive -- where the
