@@ -20,91 +20,54 @@ pub async fn event_of(app: &App, msg: &Message) -> Event {
     let chat = chat_info(app, msg).await;
 
     let text = crate::render::format_entities::plain_text(msg);
-    let sender_bare_id = sender.user_id as i64;
-    let message = if !text.is_empty() {
-        text
-    } else if let Some(action) = msg.action() {
-        let sender_display = if sender.second_name.is_empty() {
-            sender.first_name.clone()
-        } else {
-            format!("{} {}", sender.first_name, sender.second_name)
-        };
-        let game_title = crate::telegram::service_action::game_title(&app.tg, msg).await;
-        crate::telegram::service_action::format(
-            action,
-            Some(sender_bare_id),
-            Some(&sender_display),
-            game_title.as_deref(),
-        )
-    } else if let Some(media) = crate::telegram::media_description::describe_of(&msg.raw) {
-        // What the live path writes for a message that is a photo, a voice note,
-        // a sticker: the description, not the message's wire form. The raw JSON
-        // below is a last resort for a message that is none of the three, and
-        // was standing in for this one.
-        media
-    } else {
-        serde_json::to_string(&msg.raw).unwrap_or_default()
+    let action_desc = match msg.action() {
+        Some(action) if text.is_empty() => {
+            let sender_display = if sender.second_name.is_empty() {
+                sender.first_name.clone()
+            } else {
+                format!("{} {}", sender.first_name, sender.second_name)
+            };
+            let game_title = crate::telegram::service_action::game_title(&app.tg, msg).await;
+            Some(crate::telegram::service_action::format(
+                action,
+                Some(sender.user_id as i64),
+                Some(&sender_display),
+                game_title.as_deref(),
+            ))
+        }
+        _ => None,
     };
 
     let mut reply = crate::telegram::reply_target::reply_info(msg);
     let reply_to_user_id = crate::db::resolve_reply(&*app.db, chat_id, &mut reply).await;
     let (topic_id, topic_name) = crate::state::topic::topic_of(app, msg).await;
+    let raw = serde_json::to_string(&msg.raw).unwrap_or_default();
 
-    let meta = crate::telegram::media_description::media_meta_of(&msg.raw).unwrap_or_default();
-    let meta_msg = crate::telegram::message_meta::of(&msg.raw);
-
-    Event {
-        date_time: msg.date().as_second() as u32,
-        message,
-        entities: crate::telegram::entities::of_message(msg),
-        keyboard: crate::telegram::entities::keyboard_of_raw(&msg.raw),
-        chat_title: chat.chat_title,
-        chat_id,
+    let mut event = Event {
         username: sender.username,
         first_name: sender.first_name,
         second_name: sender.second_name,
         user_id: sender.user_id,
         community_tag: extract_community_tag(&msg.raw),
-        community_id: chat.community_id,
-        message_id: msg.id() as i64,
-        chat_usernames: chat.chat_usernames,
-        // A fetched message can be one this account sent: `Event::send()` defaults
+        // A fetched message can be one this account sent: a send row defaults
         // to incoming, which would be wrong for half of them.
         out: crate::telegram::self_id::is_outgoing(app.me, msg),
-        reply_to: reply.reply_to,
-        reply_to_user_id,
-        reply_to_chat_id: reply.reply_to_chat_id,
-        quote_text: reply.quote_text,
-        comment_to: reply.comment_to,
-        topic_id,
-        topic_name,
-        raw: serde_json::to_string(&msg.raw).unwrap_or_default(),
-        media_type: meta.media_type,
-        file_name: meta.file_name,
-        mime_type: meta.mime_type,
-        size: meta.size,
-        duration: meta.duration,
-        width: meta.width,
-        height: meta.height,
-        lat: meta.lat,
-        lon: meta.lon,
-        poll_question: meta.poll_question,
-        poll_options: meta.poll_options,
-        poll_id: meta.poll_id,
-        fwd_from_user_id: meta_msg.fwd_from_user_id,
-        fwd_from_chat_id: meta_msg.fwd_from_chat_id,
-        fwd_from_msg_id: meta_msg.fwd_from_msg_id,
-        fwd_from_name: meta_msg.fwd_from_name,
-        fwd_date: meta_msg.fwd_date,
-        action: meta_msg.action,
-        grouped_id: meta_msg.grouped_id,
-        via_bot_id: meta_msg.via_bot_id,
-        guest_from_id: meta_msg.guest_from_id,
-        post_author: meta_msg.post_author,
-        pinned: meta_msg.pinned,
-        silent: meta_msg.silent,
-        noforwards: meta_msg.noforwards,
-        ttl_period: meta_msg.ttl_period,
-        ..Event::of(crate::db::EventKind::Send)
+        ..crate::telegram::event_row::build(
+            &msg.raw,
+            crate::telegram::event_row::Context {
+                chat,
+                reply,
+                reply_to_user_id,
+                topic_id,
+                topic_name,
+                action_desc,
+                raw: raw.clone(),
+            },
+        )
+    };
+    // A message that is neither text, an action nor media stands in for itself.
+    if event.message.is_empty() {
+        event.message = raw;
     }
+    event
 }

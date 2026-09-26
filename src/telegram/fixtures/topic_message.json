@@ -1,0 +1,78 @@
+{
+ "Message": {
+  "out": false,
+  "mentioned": false,
+  "media_unread": false,
+  "silent": false,
+  "post": false,
+  "from_scheduled": false,
+  "legacy": false,
+  "edit_hide": false,
+  "pinned": false,
+  "noforwards": false,
+  "invert_media": false,
+  "offline": false,
+  "video_processing_pending": false,
+  "paid_suggested_post_stars": false,
+  "paid_suggested_post_ton": false,
+  "id": 42,
+  "from_id": {
+   "User": {
+    "user_id": 7
+   }
+  },
+  "from_boosts_applied": null,
+  "from_rank": null,
+  "peer_id": {
+   "Channel": {
+    "channel_id": 1001
+   }
+  },
+  "saved_peer_id": null,
+  "fwd_from": null,
+  "via_bot_id": null,
+  "via_business_bot_id": null,
+  "guestchat_via_from": null,
+  "reply_to": {
+   "Header": {
+    "reply_to_scheduled": false,
+    "forum_topic": true,
+    "quote": false,
+    "reply_to_ephemeral": false,
+    "reply_to_msg_id": 10,
+    "reply_to_peer_id": null,
+    "reply_from": null,
+    "reply_media": null,
+    "reply_to_top_id": null,
+    "quote_text": null,
+    "quote_entities": null,
+    "quote_offset": null,
+    "todo_item_id": null,
+    "poll_option": null
+   }
+  },
+  "date": 1700000000,
+  "message": "in a topic",
+  "media": null,
+  "reply_markup": null,
+  "entities": null,
+  "views": null,
+  "forwards": null,
+  "replies": null,
+  "edit_date": null,
+  "post_author": null,
+  "grouped_id": null,
+  "reactions": null,
+  "restriction_reason": null,
+  "ttl_period": null,
+  "quick_reply_shortcut_id": null,
+  "effect": null,
+  "factcheck": null,
+  "report_delivery_until_date": null,
+  "paid_message_stars": null,
+  "suggested_post": null,
+  "schedule_repeat_period": null,
+  "summary_from_language": null,
+  "rich_message": null
+ }
+}

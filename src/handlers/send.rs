@@ -73,21 +73,6 @@ impl Body {
         }
         preview
     }
-
-    /// The message as its row keeps it: the text as the sender wrote it -- its
-    /// formatting and its buttons are columns of their own, and the console
-    /// line is where they are rendered back onto it -- or, with no text, the
-    /// action or the media it carries.
-    fn content(&self, message: &Message) -> String {
-        let plain = crate::render::format_entities::plain_text(message);
-        if !plain.is_empty() {
-            plain
-        } else if let Some(desc) = &self.action_desc {
-            desc.clone()
-        } else {
-            self.media_desc.clone().unwrap_or_default()
-        }
-    }
 }
 
 /// Print the console line for a new message, and the line for what it
@@ -131,53 +116,17 @@ pub(super) async fn event(app: &App, message: &Message, body: &Body, chat: ChatI
     let reply_to_user_id = crate::db::resolve_reply(&*app.db, chat_id, &mut reply).await;
     let (topic_id, topic_name) = crate::state::topic::topic_of(app, message).await;
 
-    let meta = crate::telegram::media_description::media_meta(message).unwrap_or_default();
-    let meta_msg = crate::telegram::message_meta::of(&std::ops::Deref::deref(message).raw);
-
-    Event {
-        date_time: message.date().as_second() as u32,
-        message: body.content(message),
-        entities: crate::telegram::entities::of_message(message),
-        keyboard: crate::telegram::entities::keyboard_of_message(message),
-        chat_title: chat.chat_title,
-        chat_id,
-        chat_usernames: chat.chat_usernames,
-        community_id: chat.community_id,
-        message_id: message.id() as i64,
-        reply_to: reply.reply_to,
-        reply_to_user_id,
-        reply_to_chat_id: reply.reply_to_chat_id,
-        quote_text: reply.quote_text,
-        comment_to: reply.comment_to,
-        topic_id,
-        topic_name,
-        raw: serde_json::to_string(&message.raw).unwrap_or_default(),
-        media_type: meta.media_type,
-        file_name: meta.file_name,
-        mime_type: meta.mime_type,
-        size: meta.size,
-        fwd_from_user_id: meta_msg.fwd_from_user_id,
-        fwd_from_chat_id: meta_msg.fwd_from_chat_id,
-        fwd_from_msg_id: meta_msg.fwd_from_msg_id,
-        fwd_from_name: meta_msg.fwd_from_name,
-        fwd_date: meta_msg.fwd_date,
-        action: meta_msg.action,
-        grouped_id: meta_msg.grouped_id,
-        via_bot_id: meta_msg.via_bot_id,
-        guest_from_id: meta_msg.guest_from_id,
-        post_author: meta_msg.post_author,
-        pinned: meta_msg.pinned,
-        silent: meta_msg.silent,
-        noforwards: meta_msg.noforwards,
-        ttl_period: meta_msg.ttl_period,
-        duration: meta.duration,
-        width: meta.width,
-        height: meta.height,
-        lat: meta.lat,
-        lon: meta.lon,
-        poll_question: meta.poll_question,
-        poll_options: meta.poll_options,
-        poll_id: meta.poll_id,
-        ..Event::of(crate::db::EventKind::Send)
-    }
+    crate::telegram::event_row::build(
+        &std::ops::Deref::deref(message).raw,
+        crate::telegram::event_row::Context {
+            chat,
+            reply,
+            reply_to_user_id,
+            topic_id,
+            topic_name,
+            action_desc: body.action_desc.clone(),
+            // The update the message came on, as a live row has always kept it.
+            raw: serde_json::to_string(&message.raw).unwrap_or_default(),
+        },
+    )
 }

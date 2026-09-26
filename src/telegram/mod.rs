@@ -4,6 +4,7 @@
 pub mod dialogs;
 pub mod entities;
 pub mod event_of;
+pub mod event_row;
 pub mod media_description;
 pub mod message_meta;
 pub mod reply_target;

@@ -1,0 +1,81 @@
+{
+ "Message": {
+  "out": false,
+  "mentioned": false,
+  "media_unread": false,
+  "silent": false,
+  "post": false,
+  "from_scheduled": false,
+  "legacy": false,
+  "edit_hide": false,
+  "pinned": false,
+  "noforwards": false,
+  "invert_media": false,
+  "offline": false,
+  "video_processing_pending": false,
+  "paid_suggested_post_stars": false,
+  "paid_suggested_post_ton": false,
+  "id": 42,
+  "from_id": {
+   "User": {
+    "user_id": 7
+   }
+  },
+  "from_boosts_applied": null,
+  "from_rank": null,
+  "peer_id": {
+   "Channel": {
+    "channel_id": 1001
+   }
+  },
+  "saved_peer_id": null,
+  "fwd_from": {
+   "Header": {
+    "imported": false,
+    "saved_out": false,
+    "from_id": {
+     "Channel": {
+      "channel_id": 555
+     }
+    },
+    "from_name": null,
+    "date": 1690000000,
+    "channel_post": 77,
+    "post_author": null,
+    "saved_from_peer": null,
+    "saved_from_msg_id": null,
+    "saved_from_id": null,
+    "saved_from_name": null,
+    "saved_date": null,
+    "psa_type": null
+   }
+  },
+  "via_bot_id": null,
+  "via_business_bot_id": null,
+  "guestchat_via_from": null,
+  "reply_to": null,
+  "date": 1700000000,
+  "message": "forwarded text",
+  "media": null,
+  "reply_markup": null,
+  "entities": null,
+  "views": null,
+  "forwards": null,
+  "replies": null,
+  "edit_date": null,
+  "post_author": null,
+  "grouped_id": null,
+  "reactions": null,
+  "restriction_reason": null,
+  "ttl_period": null,
+  "quick_reply_shortcut_id": null,
+  "effect": null,
+  "factcheck": null,
+  "report_delivery_until_date": null,
+  "paid_message_stars": null,
+  "suggested_post": null,
+  "schedule_repeat_period": null,
+  "summary_from_language": null,
+  "rich_message": null
+ }
+}

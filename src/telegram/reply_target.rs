@@ -31,6 +31,11 @@ pub struct ReplyInfo {
 /// inside a topic keeps the topic root in `reply_to_top_id` and points
 /// `reply_to_msg_id` at some *other* message.
 pub fn reply_target(message: &Message) -> Option<i32> {
+    reply_target_of(&message.raw)
+}
+
+/// [`reply_target`], for the TL message on its own.
+pub fn reply_target_of(message: &tl::enums::Message) -> Option<i32> {
     let header = header(message)?;
 
     if header.forum_topic && !is_foreign(&header) {
@@ -55,7 +60,12 @@ pub fn reply_target(message: &Message) -> Option<i32> {
 /// beside it. The quoted text is the only part of the target that is guaranteed
 /// to be here at all: the source chat may be one the account never sees.
 pub fn reply_info(message: &Message) -> ReplyInfo {
-    let Some(reply_to) = reply_target(message) else {
+    reply_info_of(&message.raw)
+}
+
+/// [`reply_info`], for the TL message on its own.
+pub fn reply_info_of(message: &tl::enums::Message) -> ReplyInfo {
+    let Some(reply_to) = reply_target_of(message) else {
         return ReplyInfo::default();
     };
     let Some(header) = header(message) else {
@@ -78,7 +88,7 @@ pub fn reply_info(message: &Message) -> ReplyInfo {
 /// quote of another chat is the exception: its `reply_to_msg_id` is an id over
 /// there, so it names no topic here and only `reply_to_top_id` can.
 pub fn topic_id(message: &Message) -> Option<i32> {
-    let header = header(message)?;
+    let header = header(&message.raw)?;
 
     if !header.forum_topic {
         return None;
@@ -109,9 +119,14 @@ fn foreign_chat_id(header: &tl::types::MessageReplyHeader) -> Option<i64> {
         .map(|peer| PeerId::from(peer).bare_id_unchecked())
 }
 
-fn header(message: &Message) -> Option<tl::types::MessageReplyHeader> {
-    match message.reply_header() {
-        Some(tl::enums::MessageReplyHeader::Header(header)) => Some(header),
+fn header(message: &tl::enums::Message) -> Option<tl::types::MessageReplyHeader> {
+    let reply_to = match message {
+        tl::enums::Message::Message(m) => m.reply_to.as_ref(),
+        tl::enums::Message::Service(m) => m.reply_to.as_ref(),
+        tl::enums::Message::Empty(_) => None,
+    };
+    match reply_to {
+        Some(tl::enums::MessageReplyHeader::Header(header)) => Some(header.clone()),
         _ => None,
     }
 }
