@@ -80,7 +80,7 @@ pub struct ClickhouseSession {
 }
 
 impl ClickhouseSession {
-    pub async fn open(ch: clickhouse::Client) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn open(ch: clickhouse::Client) -> anyhow::Result<Self> {
         let defaults = SessionData::default();
 
         let home_dc = ch

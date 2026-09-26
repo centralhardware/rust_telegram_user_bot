@@ -116,7 +116,7 @@ async fn main() -> Result<()> {
                 if workers[shard].send(update).await.is_err() {
                     // A worker only ends by panicking; without it a whole
                     // share of chats would go unlogged, so restart instead.
-                    return Err(format!("update worker {shard} is gone").into());
+                    anyhow::bail!("update worker {shard} is gone");
                 }
             }
             // Nothing to flush on the way out any more: every row is written
@@ -151,4 +151,4 @@ fn chat_of(update: &Update) -> i64 {
     }
 }
 
-pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+pub use anyhow::Result;

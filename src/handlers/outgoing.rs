@@ -6,7 +6,7 @@ use super::extract::ChatInfo;
 use super::send::Body;
 use crate::app::App;
 
-pub async fn save_outgoing(app: &App, message: &Message) -> Result<Event, Box<dyn std::error::Error>> {
+pub async fn save_outgoing(app: &App, message: &Message) -> anyhow::Result<Event> {
     let chat = crate::state::peer_info::chat_info(app, message).await;
     let community_id = chat.community_id;
     let (title, usernames) = (chat.chat_title, chat.chat_usernames);

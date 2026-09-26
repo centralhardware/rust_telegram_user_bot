@@ -95,7 +95,7 @@ fn is_archivable(media: &Media) -> bool {
 async fn archive(
     app: &App,
     job: &Job,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> anyhow::Result<()> {
     let storage = app.storage.as_ref().expect("worker only starts when configured");
 
     let (file_name, mime_type) = match &job.media {

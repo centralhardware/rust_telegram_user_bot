@@ -13,13 +13,13 @@ pub fn start(app: Arc<App>) {
         loop {
             interval.tick().await;
             if let Err(e) = log_sessions(&app).await {
-                error!("Failed to fetch sessions: {:?}", e);
+                error!("Failed to fetch sessions: {e:#}");
             }
         }
     });
 }
 
-async fn log_sessions(app: &App) -> Result<(), Box<dyn std::error::Error>> {
+async fn log_sessions(app: &App) -> anyhow::Result<()> {
     let tl::enums::account::Authorizations::Authorizations(result) = app
         .tg
         .invoke(&tl::functions::account::GetAuthorizations {})
@@ -52,7 +52,7 @@ async fn log_sessions(app: &App) -> Result<(), Box<dyn std::error::Error>> {
             client_id: app.me,
         });
     }
-    app.db.write_user_sessions(&sessions).await.map_err(|e| e.to_string())?;
+    app.db.write_user_sessions(&sessions).await?;
 
     Ok(())
 }

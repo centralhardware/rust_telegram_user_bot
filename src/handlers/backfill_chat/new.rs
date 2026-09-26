@@ -181,7 +181,7 @@ pub(super) struct Dialog {
 /// Every chat in the dialog list: the main list and the archive, which is
 /// most of what the official client's export finds and a scan of one folder
 /// does not.
-pub(super) async fn list_dialogs(client: &Client) -> Result<Scan, Box<dyn std::error::Error>> {
+pub(super) async fn list_dialogs(client: &Client) -> anyhow::Result<Scan> {
     let mut scan = Scan::default();
     let mut seen: HashSet<i64> = HashSet::new();
     for folder_id in [MAIN_FOLDER, ARCHIVE_FOLDER] {

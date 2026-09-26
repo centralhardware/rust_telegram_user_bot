@@ -1,6 +1,14 @@
-//! Where an update goes. Each thing that happens to a new message, and each
-//! raw update the bot understands, is a handler of its own; the lists below
-//! are the one place that says which run and in what order.
+//! Where an update goes.
+//!
+//! Each thing that happens to a new message, and each raw update the bot
+//! understands, is a handler of its own; the lists below are the one place
+//! that says which run and in what order.
+//!
+//! This is also where a handler's error ends up. Handlers return
+//! `anyhow::Result` and leave logging to the caller: the pipeline here, the
+//! media worker, or a scheduler's loop. The one exception is the database
+//! layer. A failed lookup there answers "nothing found" and logs once, because
+//! every caller would do exactly that anyway.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -9,7 +17,7 @@ use grammers_client::session::types::PeerId;
 use grammers_client::tl;
 use grammers_client::update::{Message, Update};
 use std::sync::Arc;
-use log::error;
+use log::{error, warn};
 
 use crate::app::App;
 use crate::db::Event;
@@ -88,12 +96,12 @@ pub async fn handle(app: &Arc<App>, update: Update) {
         }
         Update::MessageEdited(message) => {
             if let Err(e) = handlers::save_edited(app, &message).await {
-                error!("Failed to save edited message: {:?}", e);
+                error!("Failed to save edited message: {e:#}");
             }
         }
         Update::MessageDeleted(deletion) => {
             if let Err(e) = handlers::save_deleted(app, &deletion).await {
-                error!("Failed to save deleted message: {:?}", e);
+                error!("Failed to save deleted message: {e:#}");
             }
         }
         Update::Raw(raw) => {
@@ -108,7 +116,9 @@ struct BackfillReply;
 impl Handler<NewMessage> for BackfillReply {
     fn handle<'a>(&'a self, m: &'a mut NewMessage) -> Step<'a, Flow> {
         Box::pin(async move {
-            handlers::backfill_reply(&m.app, &m.message).await;
+            if let Err(e) = handlers::backfill_reply(&m.app, &m.message).await {
+                warn!("Failed to backfill a reply: {e:#}");
+            }
             Flow::Continue
         })
     }
@@ -135,13 +145,10 @@ impl Handler<NewMessage> for Save {
                 handlers::save_outgoing(&m.app, &m.message).await
             } else {
                 handlers::save_incoming(&m.app, &m.message).await
-            }
-            // The boxed error is not `Send`; keep its text so this future can
-            // run on a worker.
-            .map_err(|e| e.to_string());
+            };
             match saved {
                 Ok(event) => m.event = Some(event),
-                Err(e) => error!("Failed to save message: {:?}", e),
+                Err(e) => error!("Failed to save message: {e:#}"),
             }
             Flow::Continue
         })
@@ -165,7 +172,7 @@ impl Handler<NewMessage> for AutoCat {
     fn handle<'a>(&'a self, m: &'a mut NewMessage) -> Step<'a, Flow> {
         Box::pin(async move {
             if let Err(e) = handlers::handle_auto_cat(&m.message).await {
-                error!("Failed to handle auto cat: {:?}", e);
+                error!("Failed to handle auto cat: {e:#}");
             }
             Flow::Continue
         })

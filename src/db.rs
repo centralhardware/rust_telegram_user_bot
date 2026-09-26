@@ -15,7 +15,7 @@ pub mod session;
 #[cfg(test)]
 pub mod fake;
 
-pub type DbResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+pub type DbResult<T> = anyhow::Result<T>;
 
 /// The Buffer table in front of `events_log` (migration 040). Everything the
 /// bot writes goes here and everything it reads back comes from here: ClickHouse

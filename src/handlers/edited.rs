@@ -4,7 +4,7 @@ use crate::render::console::{LogLine, Tone};
 use crate::db::Event;
 use crate::app::App;
 
-pub async fn save_edited(app: &App, message: &Message) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn save_edited(app: &App, message: &Message) -> anyhow::Result<()> {
     let chat_id = message.peer_id().bare_id_unchecked();
     let msg_id = message.id() as i64;
     let message_content = crate::render::format_entities::plain_text(message);

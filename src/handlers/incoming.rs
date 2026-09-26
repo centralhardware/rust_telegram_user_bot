@@ -6,7 +6,7 @@ use super::send::Body;
 use crate::state::peer_info::{chat_info, sender_info};
 use crate::app::App;
 
-pub async fn save_incoming(app: &App, message: &Message) -> Result<Event, Box<dyn std::error::Error>> {
+pub async fn save_incoming(app: &App, message: &Message) -> anyhow::Result<Event> {
     let sender = sender_info(app, message).await;
     let chat = chat_info(app, message).await;
     let chat_id = message.peer_id().bare_id_unchecked();
