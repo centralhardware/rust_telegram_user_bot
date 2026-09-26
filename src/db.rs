@@ -232,6 +232,42 @@ pub async fn find_deleted(channel: Option<i64>, message_ids: &[i64]) -> Vec<Dele
         })
 }
 
+/// A Telegram file already stored in S3, from `media_files`.
+#[derive(Row, Serialize, Deserialize)]
+pub struct MediaFile {
+    pub kind: String,
+    pub tg_id: i64,
+    pub sha256: String,
+    pub s3_bucket: String,
+    pub s3_key: String,
+    pub size: u64,
+}
+
+/// The stored copy of a Telegram photo or document, if the archiver has one.
+/// A failed read is a miss: the file is downloaded as if never seen.
+pub async fn find_media_file(kind: &str, tg_id: i64) -> Option<MediaFile> {
+    clickhouse()
+        .query(
+            "SELECT ?fields FROM media_files FINAL \
+             WHERE kind = ? AND tg_id = ? LIMIT 1",
+        )
+        .bind(kind)
+        .bind(tg_id)
+        .fetch_optional::<MediaFile>()
+        .await
+        .unwrap_or_else(|e| {
+            log::warn!("media_files lookup for {kind} {tg_id}: {e}");
+            None
+        })
+}
+
+/// Write down where a Telegram file was stored, for the next time it is posted.
+pub async fn remember_media_file(file: MediaFile) {
+    if let Err(e) = insert_rows("media_files", std::slice::from_ref(&file)).await {
+        log::warn!("media_files insert for {} {}: {e}", file.kind, file.tg_id);
+    }
+}
+
 /// What the log knows about the message a reply points at.
 #[derive(Default)]
 pub struct ReplyTarget {
