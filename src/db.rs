@@ -192,6 +192,27 @@ pub async fn find_message(chat_id: i64, message_id: i64) -> MessageInfo {
     }
 }
 
+/// The chat a message deleted outside any channel lived in. Telegram names no
+/// chat for those deletions, but outside channels message ids are unique per
+/// account, so the send row names it: the one chat — a user or a basic group,
+/// never a channel — that has a message with this id. `None` when the message
+/// is older than the log or was never seen.
+pub async fn find_private_chat(message_id: i64) -> Option<i64> {
+    clickhouse()
+        .query(
+            "SELECT chat_id FROM events_log_buffer \
+             WHERE message_id = ? AND event = ? AND chat_id IN ( \
+                 SELECT if(peer_id > 0, peer_id, -peer_id) FROM peer_names_buffer \
+                 WHERE peer_id > -1000000000000) \
+             ORDER BY date_time DESC LIMIT 1",
+        )
+        .bind(message_id)
+        .bind(SEND)
+        .fetch_optional::<i64>()
+        .await
+        .unwrap_or_default()
+}
+
 /// What the log knows about the message a reply points at.
 #[derive(Default)]
 pub struct ReplyTarget {
