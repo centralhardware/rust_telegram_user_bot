@@ -108,7 +108,7 @@ pub async fn save_edited(message: &Message) -> Result<(), Box<dyn std::error::Er
         poll_question: meta.poll_question,
         poll_options: meta.poll_options,
         poll_id: meta.poll_id,
-        ..Event::edit()
+        ..Event::of(crate::db::EventKind::Edit)
     }).await;
 
     Ok(())

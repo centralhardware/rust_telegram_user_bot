@@ -77,8 +77,8 @@ async fn message_exists(chat_id: i64, message_id: i32) -> bool {
         )
         .bind(chat_id)
         .bind(message_id as i64)
-        .bind(crate::db::SEND)
-        .bind(crate::db::SERVICE)
+        .bind(crate::db::EventKind::Send)
+        .bind(crate::db::EventKind::Service)
         .fetch_one::<u64>()
         .await
         && count > 0 {

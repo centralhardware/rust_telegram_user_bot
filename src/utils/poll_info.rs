@@ -10,7 +10,7 @@ use clickhouse::Row;
 use log::{debug, error};
 use serde::Deserialize;
 
-use crate::db::{EDIT, SEND};
+use crate::db::EventKind;
 
 #[derive(Row, Deserialize, Clone, Default, Debug)]
 pub struct PollInfo {
@@ -41,8 +41,8 @@ pub async fn load(poll_id: i64) -> Option<PollInfo> {
              ORDER BY date_time DESC LIMIT 1",
         )
         .bind(poll_id)
-        .bind(SEND)
-        .bind(EDIT)
+        .bind(EventKind::Send)
+        .bind(EventKind::Edit)
         .fetch_one::<PollInfo>()
         .await
     {

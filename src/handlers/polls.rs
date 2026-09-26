@@ -20,6 +20,7 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
 use crate::db::{log_event, Event};
+use crate::events::PollEvent;
 use crate::utils::log_ignore::is_log_ignored;
 use crate::utils::peer_names::title_of;
 use crate::utils::poll_info;
@@ -123,7 +124,7 @@ pub async fn save_poll(update: &tl::types::UpdateMessagePoll) {
         info!("{text}\x1b[0m");
     }
 
-    log_event(Event {
+    log_event(Event::from(PollEvent {
         date_time: chrono::Utc::now().timestamp() as u32,
         chat_id,
         message_id,
@@ -133,8 +134,7 @@ pub async fn save_poll(update: &tl::types::UpdateMessagePoll) {
         poll_options: options,
         poll_results: counts,
         poll_total_voters: results.total_voters.unwrap_or(0).max(0) as u32,
-        ..Event::poll()
-    })
+    }))
     .await;
 }
 

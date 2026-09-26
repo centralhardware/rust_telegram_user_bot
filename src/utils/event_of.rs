@@ -105,6 +105,6 @@ pub async fn event_of(client: &Client, msg: &Message) -> Event {
         silent: meta_msg.silent,
         noforwards: meta_msg.noforwards,
         ttl_period: meta_msg.ttl_period,
-        ..Event::send()
+        ..Event::of(crate::db::EventKind::Send)
     }
 }

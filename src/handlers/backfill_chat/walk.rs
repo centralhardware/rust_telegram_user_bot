@@ -373,8 +373,8 @@ pub(super) async fn known_ids(chat_id: i64, ids: &[i64]) -> HashSet<i64> {
             crate::db::EVENTS
         ))
         .bind(chat_id)
-        .bind(crate::db::SEND)
-        .bind(crate::db::SERVICE)
+        .bind(crate::db::EventKind::Send)
+        .bind(crate::db::EventKind::Service)
         .fetch_all::<i64>()
         .await
     {
@@ -408,7 +408,7 @@ async fn oldest_logged_id(chat_id: i64) -> i64 {
             crate::db::EVENTS
         ))
         .bind(chat_id)
-        .bind(crate::db::SEND)
+        .bind(crate::db::EventKind::Send)
         .fetch_one::<i64>()
         .await
         .unwrap_or_else(|e| {

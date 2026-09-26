@@ -17,7 +17,8 @@ use grammers_client::session::types::PeerId;
 use grammers_tl_types as tl;
 use log::info;
 
-use crate::db::{log_event, Event};
+use crate::db::{log_event, Event, EventKind};
+use crate::events::DeleteEvent;
 use crate::utils::log_ignore::is_log_ignored;
 use crate::utils::peer_names;
 
@@ -71,7 +72,8 @@ pub async fn save_ephemeral(message: &tl::enums::EphemeralMessage, event: &str) 
         reply_to_ephemeral,
         welcome: msg.welcome_template,
         ephemeral: true,
-        ..Event::of_ephemeral(event)
+        // Telegram calls a new one "new"; the log calls a new message a send.
+        ..Event::of(if event == "new" { EventKind::Send } else { EventKind::Edit })
     })
     .await;
 }
@@ -95,14 +97,13 @@ pub async fn save_ephemeral_deleted(peer: &tl::enums::Peer, ids: &[i32]) {
     }
 
     for id in ids {
-        log_event(Event {
+        log_event(Event::from(DeleteEvent {
             date_time,
             chat_id,
             chat_title: chat_title.clone(),
             message_id: *id as i64,
             ephemeral: true,
-            ..Event::delete()
-        })
+        }))
         .await;
     }
 }

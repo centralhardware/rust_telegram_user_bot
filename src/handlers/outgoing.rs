@@ -34,7 +34,7 @@ pub async fn save_outgoing(message: &Message, client: &Client, me: u64) -> Resul
                  WHERE chat_id = ? AND event = ? AND chat_title != ''",
             )
             .bind(chat_id)
-            .bind(crate::db::SEND)
+            .bind(crate::db::EventKind::Send)
             .fetch_one::<LastChatRow>()
             .await
         {

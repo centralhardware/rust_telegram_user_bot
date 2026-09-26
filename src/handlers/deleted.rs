@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::db::Event;
+use crate::events::DeleteEvent;
 use crate::utils::log_ignore::is_log_ignored;
 
 pub async fn save_deleted(
@@ -55,12 +56,13 @@ pub async fn save_deleted(
 
         // Telegram names nothing but the chat and the id, and that is all the
         // row keeps: what the message was is already on its send row.
-        rows.push(Event {
+        rows.push(Event::from(DeleteEvent {
             date_time: now,
             chat_id,
             message_id: msg_id,
-            ..Event::delete()
-        });
+            chat_title: String::new(),
+            ephemeral: false,
+        }));
     }
 
     // One insert for the whole deletion.
