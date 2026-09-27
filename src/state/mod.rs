@@ -2,6 +2,7 @@
 //! names, polls, the admin-chat list, and the console's ignore list.
 
 pub mod admin_chats;
+pub mod claims;
 pub mod log_ignore;
 pub mod peer_info;
 pub mod peer_names;

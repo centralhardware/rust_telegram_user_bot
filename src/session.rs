@@ -18,13 +18,14 @@ use crate::db::session::ClickhouseSession;
 /// type the code. An empty session is an error pointing at `setup`.
 pub async fn connect(
     ch: clickhouse::Client,
+    account: &str,
 ) -> Result<(Client, Arc<ClickhouseSession>, UpdateStream)> {
-    let (client, session, updates) = open(ch).await?;
+    let (client, session, updates) = open(ch, account).await?;
 
     if !client.is_authorized().await? {
         anyhow::bail!(
-            "the session in this database is not logged in; run `telegram_user_bot setup` \
-             against it from a machine with a terminal"
+            "account {account:?} is not logged in; run `telegram_user_bot setup {account}` \
+             from a machine with a terminal"
         );
     }
 
@@ -38,24 +39,19 @@ pub async fn connect(
 
 /// Log the account in and leave the session in ClickHouse, for `setup`.
 /// Returns who is logged in. Asks nothing when the session already works.
-pub async fn login(ch: clickhouse::Client) -> Result<String> {
-    let (client, _session, _updates) = open(ch).await?;
+pub async fn login(ch: clickhouse::Client, account: &str) -> Result<grammers_client::peer::User> {
+    let (client, _session, _updates) = open(ch, account).await?;
     if client.is_authorized().await? {
         info!("This database already holds a logged-in session");
     } else {
         sign_in(&client).await?;
     }
-    let me = client.get_me().await?;
-    Ok(format!(
-        "{} (id {}{})",
-        me.full_name(),
-        me.id().bare_id_unchecked(),
-        me.username().map(|u| format!(", @{u}")).unwrap_or_default()
-    ))
+    Ok(client.get_me().await?)
 }
 
 async fn open(
     ch: clickhouse::Client,
+    account: &str,
 ) -> Result<(
     Client,
     Arc<ClickhouseSession>,
@@ -66,7 +62,7 @@ async fn open(
         .parse()
         .expect("TG_ID invalid");
 
-    let session = Arc::new(ClickhouseSession::open(ch).await?);
+    let session = Arc::new(ClickhouseSession::open(ch, account).await?);
 
     let SenderPool {
         runner,

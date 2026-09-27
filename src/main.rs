@@ -59,31 +59,125 @@ async fn main() -> Result<()> {
 
     // Built now, so a missing setting stops the bot at startup rather than at
     // the first write.
-    let db = db::ch::ClickhouseDb::from_env();
+    let db = Arc::new(db::ch::ClickhouseDb::from_env());
     // Before the session store reads its tables and before any row is
     // written: the schema has to be the one this build expects.
     db::migrate::run(db.client()).await?;
 
-    let (client, session, mut updates) = session::connect(db.client().clone()).await?;
+    let claims = Arc::new(state::claims::Claims::default());
+    // An account whose connection is gone reports here, and the process exits
+    // so the restart policy brings every account back.
+    let (failed, mut failures) = mpsc::channel::<anyhow::Error>(1);
 
-    log::info!("Listening for messages...");
+    // The first account is not optional: without it there is nothing to run.
+    let first = connect_account(&db, "", &ignored, &claims).await?;
+    spawn_account(first, failed.clone());
+    tokio::spawn(watch_accounts(Arc::clone(&db), ignored, claims, failed));
 
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    // Nothing to flush on the way out any more: every row is written as it
+    // happens, so a shutdown — or a crash, which never got to run this —
+    // leaves nothing behind in memory.
+    tokio::select! {
+        Some(e) = failures.recv() => Err(e),
+        _ = tokio::signal::ctrl_c() => {
+            log::info!("SIGINT received, shutting down");
+            Ok(())
+        }
+        _ = sigterm.recv() => {
+            log::info!("SIGTERM received, shutting down");
+            Ok(())
+        }
+    }
+}
+
+/// An account, connected, with its `App` built and its schedulers running,
+/// and the stream of its updates. `name` is `""` for the first account.
+async fn connect_account(
+    db: &db::ch::ClickhouseDb,
+    name: &str,
+    ignored: &Arc<state::log_ignore::LogIgnore>,
+    claims: &Arc<state::claims::Claims>,
+) -> Result<(Arc<App>, grammers_client::client::UpdateStream)> {
+    let (client, session, updates) = session::connect(db.client().clone(), name).await?;
     let me = client.get_me().await?.id().bare_id().unwrap() as u64;
+    claims.register(me);
+    log::info!(
+        "Listening for messages on {}...",
+        if name.is_empty() {
+            "the first account"
+        } else {
+            name
+        }
+    );
     let app = Arc::new(App::new(
         client,
-        Arc::new(db),
+        Arc::new(db.for_account(me, name)),
         s3::Storage::from_env(),
         Some(session),
         me,
-        ignored,
+        Arc::clone(ignored),
+        Arc::clone(claims),
     ));
     handlers::start_media(Arc::clone(&app));
     // Before any update is handled: until the admin chats are known, media
     // posted in them would not be archived, and nothing catches up on it.
     schedulers::start(Arc::clone(&app)).await;
+    Ok((app, updates))
+}
 
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+fn spawn_account(
+    (app, updates): (Arc<App>, grammers_client::client::UpdateStream),
+    failed: mpsc::Sender<anyhow::Error>,
+) {
+    tokio::spawn(async move {
+        if let Err(e) = receive(app, updates).await {
+            let _ = failed.send(e).await;
+        }
+    });
+}
 
+/// Start every account `setup` has recorded, now and whenever one is added.
+/// One that cannot connect is tried again on the next pass.
+async fn watch_accounts(
+    db: Arc<db::ch::ClickhouseDb>,
+    ignored: Arc<state::log_ignore::LogIgnore>,
+    claims: Arc<state::claims::Claims>,
+    failed: mpsc::Sender<anyhow::Error>,
+) {
+    let mut running = std::collections::HashSet::new();
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+    loop {
+        interval.tick().await;
+        let names: Vec<String> = match db
+            .client()
+            .query("SELECT DISTINCT name FROM accounts")
+            .fetch_all()
+            .await
+        {
+            Ok(names) => names,
+            Err(e) => {
+                log::warn!("reading accounts: {e}");
+                continue;
+            }
+        };
+        for name in names {
+            if running.contains(&name) || !setup::valid_name(&name) {
+                continue;
+            }
+            match connect_account(&db, &name, &ignored, &claims).await {
+                Ok(account) => {
+                    spawn_account(account, failed.clone());
+                    running.insert(name);
+                }
+                Err(e) => log::warn!("account {name:?} not started: {e:#}"),
+            }
+        }
+    }
+}
+
+/// Hand one account's updates to its workers until the stream fails for good.
+async fn receive(app: Arc<App>, mut updates: grammers_client::client::UpdateStream) -> Result<()> {
     // Updates for one chat are handled in order — an edit must find the send
     // row it amends — but chats no longer wait on each other: each chat hashes
     // to one of a fixed set of workers, so a slow ClickHouse round-trip for one
@@ -103,44 +197,29 @@ async fn main() -> Result<()> {
 
     let mut failures = 0u32;
     loop {
-        tokio::select! {
-            update = updates.next() => {
-                let update = match update {
-                    Ok(update) => {
-                        failures = 0;
-                        update
-                    }
-                    // One bad update is not a reason to stop; a run of them is
-                    // a connection that is gone, and the restart policy is the
-                    // way back from that.
-                    Err(e) => {
-                        failures += 1;
-                        error!("Failed to receive update ({failures} in a row): {e:?}");
-                        if failures >= MAX_UPDATE_FAILURES {
-                            return Err(e.into());
-                        }
-                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                        continue;
-                    }
-                };
-                let shard = (chat_of(&update).unsigned_abs() % WORKERS as u64) as usize;
-                if workers[shard].send(update).await.is_err() {
-                    // A worker only ends by panicking; without it a whole
-                    // share of chats would go unlogged, so restart instead.
-                    anyhow::bail!("update worker {shard} is gone");
+        let update = match updates.next().await {
+            Ok(update) => {
+                failures = 0;
+                update
+            }
+            // One bad update is not a reason to stop; a run of them is a
+            // connection that is gone, and the restart policy is the way back
+            // from that.
+            Err(e) => {
+                failures += 1;
+                error!("Failed to receive update ({failures} in a row): {e:?}");
+                if failures >= MAX_UPDATE_FAILURES {
+                    return Err(e.into());
                 }
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                continue;
             }
-            // Nothing to flush on the way out any more: every row is written
-            // as it happens, so a shutdown — or a crash, which never got to run
-            // this — leaves nothing behind in memory.
-            _ = tokio::signal::ctrl_c() => {
-                log::info!("SIGINT received, shutting down");
-                return Ok(());
-            }
-            _ = sigterm.recv() => {
-                log::info!("SIGTERM received, shutting down");
-                return Ok(());
-            }
+        };
+        let shard = (chat_of(&update).unsigned_abs() % WORKERS as u64) as usize;
+        if workers[shard].send(update).await.is_err() {
+            // A worker only ends by panicking; without it a whole share of
+            // chats would go unlogged, so restart instead.
+            anyhow::bail!("update worker {shard} is gone");
         }
     }
 }

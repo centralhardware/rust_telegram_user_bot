@@ -15,6 +15,7 @@ use crate::handlers::media::MediaQueue;
 use crate::handlers::polls::PollCounts;
 use crate::s3::Storage;
 use crate::state::admin_chats::AdminChats;
+use crate::state::claims::Claims;
 use crate::state::log_ignore::LogIgnore;
 use crate::state::peer_names::WrittenNames;
 use crate::state::topic::TopicNames;
@@ -32,6 +33,8 @@ pub struct App {
     /// Chats kept out of the console. Shared with the logger, which needs it
     /// before there is an `App`.
     pub ignored: Arc<LogIgnore>,
+    /// Which account writes an event every account sees. Shared by all of them.
+    pub claims: Arc<Claims>,
     pub admin_chats: AdminChats,
     pub media: MediaQueue,
     pub topics: TopicNames,
@@ -48,6 +51,7 @@ impl App {
         session: Option<Arc<ClickhouseSession>>,
         me: u64,
         ignored: Arc<LogIgnore>,
+        claims: Arc<Claims>,
     ) -> Self {
         App {
             tg,
@@ -56,6 +60,7 @@ impl App {
             session,
             me,
             ignored,
+            claims,
             admin_chats: AdminChats::default(),
             media: MediaQueue::default(),
             topics: TopicNames::default(),
@@ -85,6 +90,7 @@ impl App {
             None,
             1,
             Arc::new(LogIgnore::default()),
+            Arc::new(Claims::default()),
         )
     }
 }
