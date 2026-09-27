@@ -76,15 +76,54 @@ struct Cache {
 
 pub struct ClickhouseSession {
     ch: clickhouse::Client,
+    /// Appended to every table name: empty for the first account, `_<name>`
+    /// for a later one, each of which keeps its own DC keys, update positions
+    /// and access hashes (those are per account too).
+    suffix: String,
     cache: Mutex<Cache>,
 }
 
+/// The session tables, each copied per account.
+const TABLES: &[&str] = &[
+    "session_dc_home",
+    "session_dc_option",
+    "session_update_state",
+    "session_channel_state",
+    "peer_cache",
+];
+
 impl ClickhouseSession {
-    pub async fn open(ch: clickhouse::Client) -> anyhow::Result<Self> {
+    /// The session of the account named `name`, `""` for the first one. A
+    /// later account's tables are made here the first time it is opened.
+    pub async fn open(ch: clickhouse::Client, name: &str) -> anyhow::Result<Self> {
+        let suffix = if name.is_empty() {
+            String::new()
+        } else {
+            format!("_{name}")
+        };
+        if !suffix.is_empty() {
+            for table in TABLES {
+                ch.query(&format!(
+                    "CREATE TABLE IF NOT EXISTS {table}{suffix} AS {table}"
+                ))
+                .execute()
+                .await?;
+            }
+            ch.query(&format!(
+                "CREATE TABLE IF NOT EXISTS peer_cache_buffer{suffix} AS peer_cache{suffix} \
+                 ENGINE = Buffer(currentDatabase(), peer_cache{suffix}, 1, 10, 60, 100, 10000, 65536, 4194304)"
+            ))
+            .execute()
+            .await?;
+        }
+        let t = |table: &str| format!("{table}{suffix}");
         let defaults = SessionData::default();
 
         let home_dc = ch
-            .query("SELECT dc_id FROM session_dc_home FINAL WHERE key = 1 LIMIT 1")
+            .query(&format!(
+                "SELECT dc_id FROM {} FINAL WHERE key = 1 LIMIT 1",
+                t("session_dc_home")
+            ))
             .fetch_one::<DcHomeRow>()
             .await
             .ok()
@@ -94,7 +133,10 @@ impl ClickhouseSession {
         // Load dc_options
         let mut dc_options: HashMap<i32, DcOption> = defaults.dc_options;
         let rows: Vec<DcOptionRow> = ch
-            .query("SELECT dc_id, ipv4, ipv6, auth_key FROM session_dc_option FINAL")
+            .query(&format!(
+                "SELECT dc_id, ipv4, ipv6, auth_key FROM {} FINAL",
+                t("session_dc_option")
+            ))
             .fetch_all()
             .await
             .unwrap_or_default();
@@ -106,9 +148,10 @@ impl ClickhouseSession {
 
         // Load updates state
         let updates = ch
-            .query(
-                "SELECT pts, qts, date, seq FROM session_update_state FINAL WHERE key = 1 LIMIT 1",
-            )
+            .query(&format!(
+                "SELECT pts, qts, date, seq FROM {} FINAL WHERE key = 1 LIMIT 1",
+                t("session_update_state")
+            ))
             .fetch_one::<UpdateStateRow>()
             .await
             .ok()
@@ -122,7 +165,10 @@ impl ClickhouseSession {
             .unwrap_or_default();
 
         let channels: Vec<ChannelStateRow> = ch
-            .query("SELECT peer_id, pts FROM session_channel_state FINAL")
+            .query(&format!(
+                "SELECT peer_id, pts FROM {} FINAL",
+                t("session_channel_state")
+            ))
             .fetch_all()
             .await
             .unwrap_or_default();
@@ -140,6 +186,7 @@ impl ClickhouseSession {
 
         Ok(Self {
             ch,
+            suffix,
             cache: Mutex::new(Cache {
                 home_dc,
                 dc_options,
@@ -268,6 +315,17 @@ fn dc_option_from_row(row: &DcOptionRow) -> Option<DcOption> {
 /// on the way down.
 const PEER_CACHE: &str = "peer_cache_buffer";
 
+impl ClickhouseSession {
+    fn t(&self, table: &str) -> String {
+        format!("{table}{}", self.suffix)
+    }
+
+    /// A peer query written against `peer_cache_buffer`, for this account.
+    fn peer_sql(&self, sql: &str) -> String {
+        sql.replace(PEER_CACHE, &self.t(PEER_CACHE))
+    }
+}
+
 // ── Session trait ───────────────────────────────────────────────────
 
 impl Session for ClickhouseSession {
@@ -292,7 +350,7 @@ impl Session for ClickhouseSession {
             .unwrap_or_else(PoisonError::into_inner)
             .home_dc = dc_id;
         Box::pin(async move {
-            persist(&self.ch, "session_dc_home", DcHomeRow { dc_id }).await;
+            persist(&self.ch, &self.t("session_dc_home"), DcHomeRow { dc_id }).await;
             Ok(())
         })
     }
@@ -316,7 +374,7 @@ impl Session for ClickhouseSession {
 
         let row = dc_option_to_row(dc_option);
         Box::pin(async move {
-            persist(&self.ch, "session_dc_option", row).await;
+            persist(&self.ch, &self.t("session_dc_option"), row).await;
             Ok(())
         })
     }
@@ -343,12 +401,12 @@ impl Session for ClickhouseSession {
                             // equal to the column it aggregates shadows it, and
                             // `argMax(hash, updated_at)` then reads the alias
                             // and is rejected as a nested aggregate (Code 184).
-                            "SELECT peer_id, \
+                            &self.peer_sql("SELECT peer_id, \
                                     argMax(peer_cache_buffer.hash, peer_cache_buffer.updated_at) AS hash, \
                                     argMax(peer_cache_buffer.subtype, peer_cache_buffer.updated_at) AS subtype, \
                                     max(peer_cache_buffer.updated_at) AS updated_at \
                              FROM peer_cache_buffer WHERE peer_id = ? \
-                             GROUP BY peer_id",
+                             GROUP BY peer_id"),
                         )
                         .bind(dialog_id)
                         .fetch_one::<PeerRow>()
@@ -368,7 +426,7 @@ impl Session for ClickhouseSession {
                             // WHERE. The HAVING is deliberately NOT qualified:
                             // there it is the collapsed value that has to carry
                             // the bit.
-                            "SELECT peer_id, \
+                            &self.peer_sql("SELECT peer_id, \
                                     argMax(peer_cache_buffer.hash, peer_cache_buffer.updated_at) AS hash, \
                                     argMax(peer_cache_buffer.subtype, peer_cache_buffer.updated_at) AS subtype, \
                                     max(peer_cache_buffer.updated_at) AS updated_at \
@@ -377,7 +435,7 @@ impl Session for ClickhouseSession {
                                AND bitAnd(peer_cache_buffer.subtype, 1) = 1 \
                              GROUP BY peer_id \
                              HAVING bitAnd(subtype, 1) = 1 \
-                             LIMIT 1",
+                             LIMIT 1"),
                         )
                         .fetch_one::<PeerRow>()
                         .await
@@ -426,8 +484,10 @@ impl Session for ClickhouseSession {
     fn cache_peer(&self, peer: PeerInfo) -> BoxFuture<'_, Result<(), Self::Error>> {
         Box::pin(async move {
             let row = peer_to_row(&peer);
-            if let Err(e) = insert_rows(&self.ch, PEER_CACHE, std::slice::from_ref(&row)).await {
-                error!("insert into {PEER_CACHE}: {e}");
+            if let Err(e) =
+                insert_rows(&self.ch, &self.t(PEER_CACHE), std::slice::from_ref(&row)).await
+            {
+                error!("insert into {}: {e}", self.t(PEER_CACHE));
             }
             Ok(())
         })
@@ -439,8 +499,8 @@ impl Session for ClickhouseSession {
     fn cache_peers(&self, peers: Vec<PeerInfo>) -> BoxFuture<'_, Result<(), Self::Error>> {
         Box::pin(async move {
             let rows: Vec<PeerRow> = peers.iter().map(peer_to_row).collect();
-            if let Err(e) = insert_rows(&self.ch, PEER_CACHE, &rows).await {
-                error!("insert into {PEER_CACHE}: {e}");
+            if let Err(e) = insert_rows(&self.ch, &self.t(PEER_CACHE), &rows).await {
+                error!("insert into {}: {e}", self.t(PEER_CACHE));
             }
             Ok(())
         })
@@ -493,7 +553,7 @@ impl Session for ClickhouseSession {
                     // Write full update_state
                     persist(
                         &self.ch,
-                        "session_update_state",
+                        &self.t("session_update_state"),
                         UpdateStateRow {
                             pts: state.pts,
                             qts: state.qts,
@@ -506,7 +566,10 @@ impl Session for ClickhouseSession {
                     // Replace all channel states: truncate + re-insert
                     if let Err(e) = self
                         .ch
-                        .query("TRUNCATE TABLE session_channel_state")
+                        .query(&format!(
+                            "TRUNCATE TABLE {}",
+                            self.t("session_channel_state")
+                        ))
                         .execute()
                         .await
                     {
@@ -522,7 +585,9 @@ impl Session for ClickhouseSession {
                             pts: ch.pts,
                         })
                         .collect();
-                    if let Err(e) = insert_rows(&self.ch, "session_channel_state", &rows).await {
+                    if let Err(e) =
+                        insert_rows(&self.ch, &self.t("session_channel_state"), &rows).await
+                    {
                         error!("failed to write session_channel_state: {e}");
                     }
                 }
@@ -536,7 +601,7 @@ impl Session for ClickhouseSession {
                             seq: *seq,
                         }
                     };
-                    persist(&self.ch, "session_update_state", row).await;
+                    persist(&self.ch, &self.t("session_update_state"), row).await;
                 }
                 UpdateState::Secondary { qts } => {
                     let row = {
@@ -548,12 +613,12 @@ impl Session for ClickhouseSession {
                             seq: cache.updates.seq,
                         }
                     };
-                    persist(&self.ch, "session_update_state", row).await;
+                    persist(&self.ch, &self.t("session_update_state"), row).await;
                 }
                 UpdateState::Channel { id, pts } => {
                     persist(
                         &self.ch,
-                        "session_channel_state",
+                        &self.t("session_channel_state"),
                         ChannelStateRow {
                             peer_id: *id,
                             pts: *pts,

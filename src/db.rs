@@ -346,6 +346,11 @@ pub struct Event {
     pub sha256: String,
     pub s3_bucket: String,
     pub s3_key: String,
+    /// Whose numbering `message_id` is in (migration 049): 0 for the first
+    /// account and for every channel, the account's user id on a later
+    /// account's private-chat and basic-group rows. Set by the database layer
+    /// on the way in, never by a handler.
+    pub account_id: u64,
 }
 
 impl Event {

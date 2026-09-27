@@ -4,7 +4,30 @@
 use super::*;
 
 impl ClickhouseDb {
+    /// The rows with the `account_id` their chat gives them.
+    async fn scoped(&self, events: &[Event]) -> Vec<Event> {
+        // A backfill batch is one chat a thousand times over: one lookup each.
+        let mut scopes = std::collections::HashMap::new();
+        let mut rows = Vec::with_capacity(events.len());
+        for e in events {
+            let account_id = match scopes.get(&e.chat_id) {
+                Some(&scope) => scope,
+                None => {
+                    let scope = self.scope(e.chat_id).await;
+                    scopes.insert(e.chat_id, scope);
+                    scope
+                }
+            };
+            rows.push(Event {
+                account_id,
+                ..e.clone()
+            });
+        }
+        rows
+    }
+
     pub(super) async fn log_events(&self, events: &[Event]) {
+        let events = &self.scoped(events).await;
         let mut delay = std::time::Duration::from_millis(500);
         for attempt in 1..=INSERT_ATTEMPTS {
             match insert_rows(&self.ch, EVENTS, events).await {
@@ -22,7 +45,7 @@ impl ClickhouseDb {
     }
 
     pub(super) async fn write_backfill(&self, events: &[Event]) -> DbResult<()> {
-        Ok(insert_rows(&self.ch, "events_log", events).await?)
+        Ok(insert_rows(&self.ch, "events_log", &self.scoped(events).await).await?)
     }
 
     pub(super) async fn find_message(&self, chat_id: i64, message_id: i64) -> MessageInfo {
@@ -30,10 +53,11 @@ impl ClickhouseDb {
             .ch
             .query(
                 "SELECT message, entities, keyboard FROM events_log_buffer \
-                 WHERE chat_id = ? AND message_id = ? AND event IN (?, ?) \
+                 WHERE chat_id = ? AND account_id = ? AND message_id = ? AND event IN (?, ?) \
                  ORDER BY event = ? DESC, date_time DESC LIMIT 1",
             )
             .bind(chat_id)
+            .bind(self.scope(chat_id).await)
             .bind(message_id)
             .bind(EventKind::Send)
             .bind(EventKind::Edit)
@@ -47,10 +71,11 @@ impl ClickhouseDb {
             .ch
             .query(
                 "SELECT chat_title FROM events_log_buffer \
-                 WHERE chat_id = ? AND event = ? AND chat_title != '' \
+                 WHERE chat_id = ? AND account_id = ? AND event = ? AND chat_title != '' \
                  ORDER BY date_time DESC LIMIT 1",
             )
             .bind(chat_id)
+            .bind(self.scope(chat_id).await)
             .bind(EventKind::Send)
             .fetch_one::<String>()
             .await
@@ -71,10 +96,10 @@ impl ClickhouseDb {
         message_ids: &[i64],
     ) -> Vec<DeletedMessage> {
         let chats = match channel {
-            Some(_) => "chat_id = ?",
+            Some(_) => "chat_id = ? AND account_id = 0",
             None => {
                 "chat_id IN (SELECT if(peer_id > 0, peer_id, -peer_id) FROM peer_names_buffer \
-                     WHERE peer_id > -1000000000000)"
+                     WHERE peer_id > -1000000000000) AND account_id = ?"
             }
         };
         let sql = format!(
@@ -104,9 +129,10 @@ impl ClickhouseDb {
             .query(&sql)
             .bind(EventKind::Edit)
             .bind(EventKind::Send);
-        if let Some(chat_id) = channel {
-            query = query.bind(chat_id);
-        }
+        query = match channel {
+            Some(chat_id) => query.bind(chat_id),
+            None => query.bind(self.account),
+        };
         query
             .bind(message_ids)
             .bind(EventKind::Send)
@@ -125,10 +151,11 @@ impl ClickhouseDb {
             .query(
                 "SELECT user_id, user_id = 0 AND fwd_from_chat_id != 0 AND fwd_from_msg_id != 0 \
                  FROM events_log_buffer \
-                 WHERE chat_id = ? AND message_id = ? AND event = ? \
+                 WHERE chat_id = ? AND account_id = ? AND message_id = ? AND event = ? \
                  ORDER BY date_time DESC LIMIT 1",
             )
             .bind(chat_id)
+            .bind(self.scope(chat_id).await)
             .bind(message_id)
             .bind(EventKind::Send)
             .fetch_one::<(u64, bool)>()
@@ -142,10 +169,11 @@ impl ClickhouseDb {
             .query(
                 "SELECT message, user_id, chat_title, fwd_from_chat_id, fwd_from_msg_id \
                  FROM events_log_buffer \
-                 WHERE chat_id = ? AND message_id = ? AND event = ? \
+                 WHERE chat_id = ? AND account_id = ? AND message_id = ? AND event = ? \
                  ORDER BY date_time DESC LIMIT 1",
             )
             .bind(chat_id)
+            .bind(self.scope(chat_id).await)
             .bind(message_id)
             .bind(EventKind::Send)
             .fetch_one::<ReplyRow>()
@@ -157,9 +185,10 @@ impl ClickhouseDb {
         self.ch
             .query(
                 "SELECT count() FROM events_log_buffer \
-                 WHERE chat_id = ? AND message_id = ? AND event IN (?, ?) AND NOT ephemeral",
+                 WHERE chat_id = ? AND account_id = ? AND message_id = ? AND event IN (?, ?) AND NOT ephemeral",
             )
             .bind(chat_id)
+            .bind(self.scope(chat_id).await)
             .bind(message_id)
             .bind(EventKind::Send)
             .bind(EventKind::Service)
@@ -173,10 +202,11 @@ impl ClickhouseDb {
             .ch
             .query(&format!(
                 "SELECT message_id FROM {EVENTS} \
-                 WHERE chat_id = ? AND event IN (?, ?) AND NOT ephemeral \
+                 WHERE chat_id = ? AND account_id = ? AND event IN (?, ?) AND NOT ephemeral \
                  AND has(?, message_id)"
             ))
             .bind(chat_id)
+            .bind(self.scope(chat_id).await)
             .bind(EventKind::Send)
             .bind(EventKind::Service)
             .bind(ids)
@@ -190,9 +220,10 @@ impl ClickhouseDb {
         Ok(self
             .ch
             .query(&format!(
-                "SELECT min(message_id) FROM {EVENTS} WHERE chat_id = ? AND event = ?"
+                "SELECT min(message_id) FROM {EVENTS} WHERE chat_id = ? AND account_id = ? AND event = ?"
             ))
             .bind(chat_id)
+            .bind(self.scope(chat_id).await)
             .bind(EventKind::Send)
             .fetch_one::<i64>()
             .await?)
@@ -202,8 +233,10 @@ impl ClickhouseDb {
         Ok(self
             .ch
             .query(&format!(
-                "SELECT DISTINCT chat_id FROM {EVENTS} WHERE NOT ephemeral"
+                "SELECT DISTINCT chat_id FROM {EVENTS} WHERE NOT ephemeral \
+                 AND (account_id = ? OR chat_id <= -1000000000000)"
             ))
+            .bind(self.account)
             .fetch_all::<i64>()
             .await?
             .into_iter()
@@ -217,9 +250,10 @@ impl ClickhouseDb {
                 "SELECT argMax(chat_title, date_time) AS title, \
                         argMax(chat_usernames, date_time) AS usernames \
                  FROM events_log_buffer \
-                 WHERE chat_id = ? AND event = ? AND chat_title != ''",
+                 WHERE chat_id = ? AND account_id = ? AND event = ? AND chat_title != ''",
             )
             .bind(chat_id)
+            .bind(self.scope(chat_id).await)
             .bind(EventKind::Send)
             .fetch_one::<LastChatRow>()
             .await

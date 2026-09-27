@@ -17,6 +17,17 @@ use crate::state::poll_info::PollInfo;
 
 pub struct ClickhouseDb {
     ch: Client,
+    /// The `account_id` this account's private-chat and basic-group rows carry
+    /// (migration 049): 0 for the first account, the user id for a later one.
+    account: u64,
+    /// For a later account, the chats known to be channels, and where to ask
+    /// about the rest. See [`ClickhouseDb::scope`].
+    channels: Option<Channels>,
+}
+
+struct Channels {
+    peer_cache: String,
+    known: std::sync::Mutex<HashSet<i64>>,
 }
 
 impl ClickhouseDb {
@@ -35,7 +46,78 @@ impl ClickhouseDb {
             // parsing failure comes back as an error.
             .with_setting("async_insert", "1")
             .with_setting("wait_for_async_insert", "0");
-        ClickhouseDb { ch }
+        ClickhouseDb {
+            ch,
+            account: 0,
+            channels: None,
+        }
+    }
+
+    /// The same database, for a later account: `account` is its user id,
+    /// `name` what its session tables are suffixed with.
+    /// `""` is the first account, whose rows are all 0.
+    pub fn for_account(&self, account: u64, name: &str) -> Self {
+        if name.is_empty() {
+            return ClickhouseDb {
+                ch: self.ch.clone(),
+                account: 0,
+                channels: None,
+            };
+        }
+        ClickhouseDb {
+            ch: self.ch.clone(),
+            account,
+            channels: Some(Channels {
+                peer_cache: format!("peer_cache_buffer_{name}"),
+                known: Default::default(),
+            }),
+        }
+    }
+
+    /// The `account_id` a row of this chat carries: channels are shared by
+    /// every account (0), other chats number their messages per account.
+    ///
+    /// `chat_id` in `events_log` is the bare id, which does not say whether it
+    /// is a channel. The first account never needs to know -- all its rows are
+    /// 0. A later one asks its own peer cache, where grammers has put every
+    /// channel the account has had an update from, under its `-100…` id,
+    /// before any handler runs. Only a yes is remembered: a chat not cached
+    /// yet may be by the next lookup.
+    async fn scope(&self, chat_id: i64) -> u64 {
+        let Some(channels) = &self.channels else {
+            return 0;
+        };
+        let dialog_id = -1_000_000_000_000 - chat_id;
+        if chat_id > 0
+            && channels
+                .known
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains(&chat_id)
+        {
+            return 0;
+        }
+        let cached = chat_id > 0
+            && self
+                .ch
+                .query(&format!(
+                    "SELECT count() FROM {} WHERE peer_id = ?",
+                    channels.peer_cache
+                ))
+                .bind(dialog_id)
+                .fetch_one::<u64>()
+                .await
+                .is_ok_and(|n| n > 0);
+        if cached {
+            channels
+                .known
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(chat_id);
+            0
+        } else {
+            self.account
+        }
     }
 
     /// The raw client, for the session store, which is infrastructure rather
@@ -61,6 +143,12 @@ where
         insert.write(row).await?;
     }
     insert.end().await
+}
+
+/// Whether a Bot API dialog id -- not an `events_log` chat id, which is bare --
+/// is a channel or supergroup (`-100…`).
+pub fn is_channel(chat_id: i64) -> bool {
+    chat_id <= -1_000_000_000_000
 }
 
 const INSERT_ATTEMPTS: u32 = 3;

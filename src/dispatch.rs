@@ -22,6 +22,7 @@ use std::sync::Arc;
 use crate::app::App;
 use crate::db::Event;
 use crate::handlers;
+use sha2::Digest;
 
 pub type Step<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -85,6 +86,16 @@ pub static RAW: &[&dyn for<'a> Handler<RawUpdate<'a>>] =
     &[&Ephemeral, &Reactions, &Pins, &Polls, &Views];
 
 pub async fn handle(app: &Arc<App>, update: Update) {
+    if let Some(key) = shared_key(&update) {
+        match sender_of(&update) {
+            // One of the other accounts sent it, and logs it.
+            Some(sender) if app.claims.sent_by_another(app.me, sender) => return,
+            Some(sender) if sender == app.me => app.claims.take(app.me, key),
+            // Another account got it first and writes it.
+            _ if !app.claims.claim(app.me, key) => return,
+            _ => {}
+        }
+    }
     match update {
         Update::NewMessage(message) => {
             let mut msg = NewMessage {
@@ -112,6 +123,100 @@ pub async fn handle(app: &Arc<App>, update: Update) {
             run(RAW, &mut raw).await
         }
         _ => {}
+    }
+}
+
+/// Who sent a new or edited message, by user id.
+fn sender_of(update: &Update) -> Option<u64> {
+    match update {
+        Update::NewMessage(m) | Update::MessageEdited(m) => m
+            .sender_id()
+            .and_then(|s| s.bare_id())
+            .and_then(|id| u64::try_from(id).ok()),
+        _ => None,
+    }
+}
+
+/// What names this update among every account's copies of it, when every
+/// account receives the same one: anything in a channel or supergroup. `None`
+/// for a private chat or basic group, which each account logs as its own.
+///
+/// A raw update names its chat in a different field for every constructor, so
+/// it is keyed by its bytes instead: two accounts' copies of one channel event
+/// are the same bytes, and nothing that differs between accounts (a private
+/// chat's peer, an account's own vote) can be. Updates with no peer at all to
+/// tell them apart -- ephemeral ones -- are left to each account.
+fn shared_key(update: &Update) -> Option<String> {
+    use crate::db::ch::is_channel;
+    use grammers_client::tl::Serializable;
+    match update {
+        Update::NewMessage(m) => {
+            let chat = m.peer_id().bot_api_dialog_id_unchecked();
+            is_channel(chat).then(|| format!("send:{chat}:{}", m.id()))
+        }
+        Update::MessageEdited(m) => {
+            let chat = m.peer_id().bot_api_dialog_id_unchecked();
+            is_channel(chat).then(|| {
+                let at = m.edit_date().map(|d| d.as_second()).unwrap_or_default();
+                format!("edit:{chat}:{}:{at}", m.id())
+            })
+        }
+        Update::MessageDeleted(d) => d
+            .channel_id()
+            .map(|c| format!("delete:{c}:{:?}", d.messages())),
+        Update::Raw(raw) => match &raw.raw {
+            tl::enums::Update::ChannelMessageViews(_)
+            | tl::enums::Update::ChannelMessageForwards(_)
+            | tl::enums::Update::PinnedChannelMessages(_) => {
+                let bytes = raw.raw.to_bytes();
+                let hash: String = sha2::Sha256::digest(&bytes)
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect();
+                Some(format!("raw:{hash}"))
+            }
+            // These carry the account's own reaction or vote beside the
+            // counts, so the two copies differ; the counts are what is logged.
+            tl::enums::Update::MessageReactions(u) => {
+                let peer = PeerId::from(&u.peer);
+                let tl::enums::MessageReactions::Reactions(r) = &u.reactions;
+                let counts: Vec<_> = r
+                    .results
+                    .iter()
+                    .map(|c| {
+                        let tl::enums::ReactionCount::Count(c) = c;
+                        (format!("{:?}", c.reaction), c.count)
+                    })
+                    .collect();
+                is_channel(peer.bot_api_dialog_id_unchecked()).then(|| {
+                    format!(
+                        "reactions:{}:{}:{counts:?}",
+                        peer.bot_api_dialog_id_unchecked(),
+                        u.msg_id
+                    )
+                })
+            }
+            // A poll is one object for everyone who can see it, wherever it
+            // was posted.
+            tl::enums::Update::MessagePoll(u) => {
+                let tl::enums::PollResults::Results(r) = &u.results;
+                let voters: Vec<_> = r
+                    .results
+                    .iter()
+                    .flatten()
+                    .map(|a| {
+                        let tl::enums::PollAnswerVoters::Voters(v) = a;
+                        (v.option.clone(), v.voters)
+                    })
+                    .collect();
+                Some(format!(
+                    "poll:{}:{:?}:{voters:?}",
+                    u.poll_id, r.total_voters
+                ))
+            }
+            _ => None,
+        },
+        _ => None,
     }
 }
 

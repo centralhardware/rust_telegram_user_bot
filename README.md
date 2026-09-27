@@ -64,6 +64,7 @@ readers query the base tables, which are at most a minute behind.
 | `media_files` | Which S3 object a Telegram photo or document is already stored as |
 | `admin_actions2` | Admin-log events of the chats the account administers |
 | `user_sessions` | The account's other sessions |
+| `accounts` | Accounts after the first, as `setup <name>` recorded them |
 | `peer_cache` (+ buffer), `session_*` | The grammers session: DC keys, update positions, peer access hashes |
 | `schema_migrations` | Which files in `migrations/` have been applied |
 | `events_*_stat`, `v_*` | Aggregates and views over `events_log` for Grafana |
@@ -87,8 +88,38 @@ readers query the base tables, which are at most a minute behind.
 cargo run --release
 ```
 
-On the first run with an empty session it asks for a phone number and the login
-code in the terminal. After that, the session is kept in ClickHouse.
+The bot never logs in by itself: with an empty session it stops and says so.
+Logging in is done by `setup`, from any machine with a terminal, against the
+same ClickHouse (directly or through an SSH tunnel) and with the same `TG_*` /
+`CLICKHOUSE_*` settings the server uses:
+
+```sh
+cargo run --release -- setup           # the first account
+cargo run --release -- setup work      # another account, named "work"
+```
+
+It asks for the phone number, the code and the 2FA password, writes the session
+to ClickHouse, and exits. MTProto keys are not tied to an address, so the server
+runs on that session as it is.
+
+### More than one account
+
+All accounts run in the one process and log into the same tables.
+
+- **Sessions** are per account: the first uses the `session_*` / `peer_cache`
+  tables, an account named `work` gets `session_*_work` / `peer_cache_work`,
+  made on its first `setup`.
+- **New accounts start by themselves.** `setup <name>` records the account in
+  `accounts`; the running bot reads that table every minute and starts any
+  account it is not running yet.
+- **Channels and supergroups** give a message the same id for every member, so
+  every account receives the same updates. An in-process lock
+  (`src/state/claims.rs`) lets exactly one account write each event; a message
+  one of the accounts sent is always logged by that account.
+- **Private chats and basic groups** number messages per account, so the same
+  id in two accounts is two different messages. Their rows carry `account_id`
+  (migration 049): 0 for the first account, the user id for any other.
+  Channel rows are always 0.
 
 At startup, before anything is written, the bot applies any migrations in
 `migrations/` that `schema_migrations` doesn't list yet. The files are compiled

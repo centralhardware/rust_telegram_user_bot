@@ -13,15 +13,56 @@ use crate::db::session::ClickhouseSession;
 /// a message from has no other answer: the peer map only holds what an update
 /// carried, and listing dialogs cannot be done safely (grammers panics on a
 /// dialog whose peer the same response did not name).
+///
+/// The bot never logs in by itself: on a headless server there is no one to
+/// type the code. An empty session is an error pointing at `setup`.
 pub async fn connect(
     ch: clickhouse::Client,
+    account: &str,
 ) -> Result<(Client, Arc<ClickhouseSession>, UpdateStream)> {
+    let (client, session, updates) = open(ch, account).await?;
+
+    if !client.is_authorized().await? {
+        anyhow::bail!(
+            "account {account:?} is not logged in; run `telegram_user_bot setup {account}` \
+             from a machine with a terminal"
+        );
+    }
+
+    let updates = client
+        .stream_updates(updates, UpdatesConfiguration { catch_up: false })
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    Ok((client, session, updates))
+}
+
+/// Log the account in and leave the session in ClickHouse, for `setup`.
+/// Returns who is logged in. Asks nothing when the session already works.
+pub async fn login(ch: clickhouse::Client, account: &str) -> Result<grammers_client::peer::User> {
+    let (client, _session, _updates) = open(ch, account).await?;
+    if client.is_authorized().await? {
+        info!("This database already holds a logged-in session");
+    } else {
+        sign_in(&client).await?;
+    }
+    Ok(client.get_me().await?)
+}
+
+async fn open(
+    ch: clickhouse::Client,
+    account: &str,
+) -> Result<(
+    Client,
+    Arc<ClickhouseSession>,
+    tokio::sync::mpsc::Receiver<grammers_session::updates::UpdatesLike>,
+)> {
     let api_id = env::var("TG_ID")
         .expect("TG_ID not set")
         .parse()
         .expect("TG_ID invalid");
 
-    let session = Arc::new(ClickhouseSession::open(ch).await?);
+    let session = Arc::new(ClickhouseSession::open(ch, account).await?);
 
     let SenderPool {
         runner,
@@ -36,16 +77,6 @@ pub async fn connect(
         log::error!("sender pool stopped, exiting");
         std::process::exit(1);
     });
-
-    if !client.is_authorized().await? {
-        sign_in(&client).await?;
-    }
-
-    let updates = client
-        .stream_updates(updates, UpdatesConfiguration { catch_up: false })
-        .await
-        .map_err(|e| anyhow::anyhow!(e))?;
-
     Ok((client, session, updates))
 }
 
