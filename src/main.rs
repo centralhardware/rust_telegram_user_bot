@@ -7,6 +7,7 @@ mod render;
 mod s3;
 mod schedulers;
 mod session;
+mod setup;
 mod state;
 mod telegram;
 
@@ -48,6 +49,13 @@ async fn main() -> Result<()> {
         let backtrace = std::backtrace::Backtrace::force_capture();
         log::error!("{}\n{}", info, backtrace);
     }));
+
+    let args: Vec<String> = env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "setup") {
+        setup::run(&args[1..]).await?;
+        // The sender pool's task would otherwise keep the runtime alive.
+        std::process::exit(0);
+    }
 
     // Built now, so a missing setting stops the bot at startup rather than at
     // the first write.

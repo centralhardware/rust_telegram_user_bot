@@ -87,8 +87,34 @@ readers query the base tables, which are at most a minute behind.
 cargo run --release
 ```
 
-On the first run with an empty session it asks for a phone number and the login
-code in the terminal. After that, the session is kept in ClickHouse.
+The bot never logs in by itself: with an empty session it stops and says so.
+Logging in is done once, by `setup`, from any machine with a terminal, against
+the same ClickHouse (directly or through an SSH tunnel) and with the same
+`TG_*` / `CLICKHOUSE_*` settings the server uses:
+
+```sh
+cargo run --release -- setup
+```
+
+It asks for the phone number, the code and the 2FA password, writes the session
+to the `session_*` tables, and exits. The server then starts already logged in.
+
+### More than one account
+
+Each account is its own database and its own bot process (container). The
+schema, the session, the log, everything is per database, so accounts never
+share message ids or update positions. To add one:
+
+```sh
+# on your machine; the database must not exist yet
+CLICKHOUSE_DATABASE=telegram_user_bot_2 \
+  cargo run --release -- setup --schema-from telegram_user_bot
+```
+
+`--schema-from` copies every table, buffer and view of the existing database
+and its `schema_migrations` record (the migrations alone cannot build a
+database from nothing — see `src/db/clone_schema.rs`). Then run a second
+container of the same image with `CLICKHOUSE_DATABASE=telegram_user_bot_2`.
 
 At startup, before anything is written, the bot applies any migrations in
 `migrations/` that `schema_migrations` doesn't list yet. The files are compiled

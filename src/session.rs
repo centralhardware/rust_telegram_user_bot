@@ -13,9 +13,54 @@ use crate::db::session::ClickhouseSession;
 /// a message from has no other answer: the peer map only holds what an update
 /// carried, and listing dialogs cannot be done safely (grammers panics on a
 /// dialog whose peer the same response did not name).
+///
+/// The bot never logs in by itself: on a headless server there is no one to
+/// type the code. An empty session is an error pointing at `setup`.
 pub async fn connect(
     ch: clickhouse::Client,
 ) -> Result<(Client, Arc<ClickhouseSession>, UpdateStream)> {
+    let (client, session, updates) = open(ch).await?;
+
+    if !client.is_authorized().await? {
+        anyhow::bail!(
+            "the session in this database is not logged in; run `telegram_user_bot setup` \
+             against it from a machine with a terminal"
+        );
+    }
+
+    let updates = client
+        .stream_updates(updates, UpdatesConfiguration { catch_up: false })
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    Ok((client, session, updates))
+}
+
+/// Log the account in and leave the session in ClickHouse, for `setup`.
+/// Returns who is logged in. Asks nothing when the session already works.
+pub async fn login(ch: clickhouse::Client) -> Result<String> {
+    let (client, _session, _updates) = open(ch).await?;
+    if client.is_authorized().await? {
+        info!("This database already holds a logged-in session");
+    } else {
+        sign_in(&client).await?;
+    }
+    let me = client.get_me().await?;
+    Ok(format!(
+        "{} (id {}{})",
+        me.full_name(),
+        me.id().bare_id_unchecked(),
+        me.username().map(|u| format!(", @{u}")).unwrap_or_default()
+    ))
+}
+
+async fn open(
+    ch: clickhouse::Client,
+) -> Result<(
+    Client,
+    Arc<ClickhouseSession>,
+    tokio::sync::mpsc::Receiver<grammers_session::updates::UpdatesLike>,
+)> {
     let api_id = env::var("TG_ID")
         .expect("TG_ID not set")
         .parse()
@@ -36,16 +81,6 @@ pub async fn connect(
         log::error!("sender pool stopped, exiting");
         std::process::exit(1);
     });
-
-    if !client.is_authorized().await? {
-        sign_in(&client).await?;
-    }
-
-    let updates = client
-        .stream_updates(updates, UpdatesConfiguration { catch_up: false })
-        .await
-        .map_err(|e| anyhow::anyhow!(e))?;
-
     Ok((client, session, updates))
 }
 

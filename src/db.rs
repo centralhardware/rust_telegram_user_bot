@@ -11,6 +11,7 @@ use crate::state::peer_names::PeerNames;
 use crate::state::poll_info::PollInfo;
 
 pub mod ch;
+pub mod clone_schema;
 #[cfg(test)]
 pub mod fake;
 pub mod migrate;
