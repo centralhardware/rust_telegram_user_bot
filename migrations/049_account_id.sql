@@ -16,16 +16,21 @@
 -- A column added in the same ALTER may be appended to the sorting key, which
 -- is the one ORDER BY change ClickHouse allows without a rebuild -- as long as
 -- it has no DEFAULT expression (Code 36 otherwise). UInt64 is 0 when unset
--- anyway, which is the value every existing row needs. The Buffer is
--- dropped (which flushes it) and made again from the new table, as in 048.
-
-DROP TABLE IF EXISTS telegram_user_bot.events_log_buffer;
+-- anyway, which is the value every existing row needs. The Buffer is then
+-- dropped (which flushes it) and made again from the new table.
+--
+-- The ALTER comes first, unlike 048: if it fails, the Buffer the running bot
+-- writes to is still there and nothing is lost. Until the Buffer is remade it
+-- just lacks the new column, and its rows flush down with 0 in it -- right for
+-- the first account, the only one an older bot runs.
 
 ALTER TABLE telegram_user_bot.events_log
     ADD COLUMN IF NOT EXISTS account_id UInt64,
     MODIFY ORDER BY (chat_id, ephemeral, message_id, event, date_time, account_id);
 
-CREATE TABLE telegram_user_bot.events_log_buffer AS telegram_user_bot.events_log
+DROP TABLE IF EXISTS telegram_user_bot.events_log_buffer;
+
+CREATE TABLE IF NOT EXISTS telegram_user_bot.events_log_buffer AS telegram_user_bot.events_log
 ENGINE = Buffer(
     'telegram_user_bot',
     events_log,
