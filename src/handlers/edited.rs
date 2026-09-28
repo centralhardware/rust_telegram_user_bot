@@ -3,7 +3,8 @@ use grammers_client::update::Message;
 
 use crate::app::App;
 use crate::db::Event;
-use crate::events::LocationEvent;
+use crate::events::{LocationEvent, ServiceEvent};
+use grammers_client::tl::enums::MessageAction;
 
 pub async fn save_edited(app: &App, message: &Message) -> anyhow::Result<()> {
     let chat_id = message.peer_id().bare_id_unchecked();
@@ -11,6 +12,31 @@ pub async fn save_edited(app: &App, message: &Message) -> anyhow::Result<()> {
     let message_content = crate::render::format_entities::plain_text(message);
     let entities = crate::telegram::entities::of_message(message);
     let keyboard = crate::telegram::entities::keyboard_of_message(message);
+
+    // Clearing a private chat's history deletes every message but the newest,
+    // and Telegram turns that one into a `HistoryClear` service message under
+    // the same id. It arrives as an edit, but nothing was edited: it is logged
+    // as the service action it is, on that id, and the edit path never sees it.
+    if let Some(action @ MessageAction::HistoryClear) = message.action() {
+        let kind = crate::telegram::service_action::kind(action);
+        app.db
+            .log_event(Event::from(ServiceEvent {
+                date_time: edit_time(message),
+                chat_id,
+                message_id: msg_id,
+                service_message_id: msg_id,
+                action: kind,
+            }))
+            .await;
+        if !app.is_log_ignored(chat_id) {
+            let chat = crate::state::peer_info::chat_info(app, message).await;
+            LogLine::new(Tone::Action, "cleared", msg_id)
+                .chat(&chat.chat_title)
+                .body("[history cleared]")
+                .print();
+        }
+        return Ok(());
+    }
 
     // A live location reports each move as an edit of the same message, with
     // nothing else changed. Each position is a row of its own; the edit itself
