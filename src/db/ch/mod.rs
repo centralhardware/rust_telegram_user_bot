@@ -2,9 +2,12 @@
 //! file per table; the trait impl below only routes to them.
 
 use std::collections::HashSet;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use clickhouse::{Client, Row};
+use hyper_util::client::legacy::{Client as HyperClient, connect::HttpConnector};
+use hyper_util::rt::TokioExecutor;
 use log::{debug, error, warn};
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +17,14 @@ use super::{
 };
 use crate::state::peer_names::PeerNames;
 use crate::state::poll_info::PollInfo;
+
+/// How long an idle connection stays in the pool. The crate's own client
+/// drops it after 2s, so with one write every few seconds nearly every write
+/// opened a new connection. Kept just under the server's `keep_alive_timeout`
+/// (10s), so the pool never hands out a connection the server already closed.
+const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(9);
+/// Well inside [`POOL_IDLE_TIMEOUT`], so the connection never ages out.
+const KEEP_WARM: Duration = Duration::from_secs(5);
 
 pub struct ClickhouseDb {
     ch: Client,
@@ -35,7 +46,12 @@ impl ClickhouseDb {
     /// so a misconfigured bot stops at startup rather than at the first write.
     pub fn from_env() -> Self {
         let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} not set"));
-        let ch = Client::default()
+        let mut connector = HttpConnector::new();
+        connector.set_keepalive(Some(Duration::from_secs(60)));
+        let http = HyperClient::builder(TokioExecutor::new())
+            .pool_idle_timeout(POOL_IDLE_TIMEOUT)
+            .build(connector);
+        let ch = Client::with_http_client(http)
             .with_url(var("CLICKHOUSE_URL"))
             .with_user(var("CLICKHOUSE_USER"))
             .with_password(var("CLICKHOUSE_PASSWORD"))
@@ -51,6 +67,23 @@ impl ClickhouseDb {
             account: 0,
             channels: None,
         }
+    }
+
+    /// Keep the pooled connection from going idle long enough to be dropped:
+    /// a `SELECT 1` every [`KEEP_WARM`], so the writes between Telegram updates
+    /// reuse one connection instead of opening a new one each time.
+    pub fn keep_warm(&self) {
+        let ch = self.ch.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(KEEP_WARM);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                if let Err(e) = ch.query("SELECT 1").execute().await {
+                    debug!("clickhouse keep-warm ping failed: {e}");
+                }
+            }
+        });
     }
 
     /// The same database, for a later account: `account` is its user id,

@@ -63,6 +63,7 @@ async fn main() -> Result<()> {
     // Before the session store reads its tables and before any row is
     // written: the schema has to be the one this build expects.
     db::migrate::run(db.client()).await?;
+    db.keep_warm();
 
     let claims = Arc::new(state::claims::Claims::default());
     // An account whose connection is gone reports here, and the process exits

@@ -3154,6 +3154,7 @@ dependencies = [
  "grammers-client",
  "grammers-session",
  "grammers-tl-types",
+ "hyper-util",
  "log",
  "serde",
  "serde_json",
