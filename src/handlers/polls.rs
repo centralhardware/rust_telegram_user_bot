@@ -138,7 +138,7 @@ pub async fn save_poll(app: &App, update: &tl::types::UpdateMessagePoll) {
 const QUESTION_WIDTH: usize = 40;
 const OPTION_WIDTH: usize = 30;
 
-/// Last counts seen per poll, so a busy poll prints only what moved.
+/// Last counts seen per poll, so a vote's line can mark what moved.
 type Counts = Vec<(String, u32)>;
 
 #[derive(Default)]
@@ -169,8 +169,8 @@ fn clip(text: &str, width: usize) -> String {
     }
 }
 
-/// One "wording × voters (share)" line per changed option, the × column
-/// aligned and the leader starred. The results come in the poll's own answer
+/// One "wording × voters (share)" line per option, the × column aligned, the
+/// leader starred and the options this update moved marked with ▲. The results come in the poll's own answer
 /// order, so the wording lines up by position; an option whose wording is not
 /// known — a poll whose message was never seen — keeps its key.
 fn render_counts(
@@ -196,15 +196,19 @@ fn render_counts(
         .iter()
         .zip(&labels)
         .enumerate()
-        .filter(|(i, _)| changed.get(*i).copied().unwrap_or(true))
-        .map(|(_, ((_, voters), label))| {
+        .map(|(i, ((_, voters), label))| {
             let share = (voters * 100).checked_div(total).unwrap_or(0);
             let star = if top > 0 && *voters == top {
                 " ★"
             } else {
                 ""
             };
-            format!("{label:<pad$} × {voters} ({share}%){star}")
+            let moved = if changed.get(i).copied().unwrap_or(true) {
+                " ▲"
+            } else {
+                ""
+            };
+            format!("{label:<pad$} × {voters} ({share}%){star}{moved}")
         })
         .collect()
 }
@@ -242,7 +246,7 @@ mod tests {
         let options = vec!["Yes".to_string(), "No".to_string()];
         assert_eq!(
             render_counts(&counts(), &options, 18045, &[true, true]),
-            ["Yes × 8901 (49%)", "No  × 9144 (50%) ★"]
+            ["Yes × 8901 (49%) ▲", "No  × 9144 (50%) ★ ▲"]
         );
     }
 
@@ -251,17 +255,20 @@ mod tests {
         let partial = vec![String::new(), "No".to_string()];
         assert_eq!(
             render_counts(&counts(), &partial, 0, &[true, true]),
-            ["0  × 8901 (0%)", "No × 9144 (0%) ★"]
+            ["0  × 8901 (0%) ▲", "No × 9144 (0%) ★ ▲"]
         );
     }
 
     #[test]
-    fn only_changed_options_are_shown() {
+    fn every_option_is_shown_and_only_the_changed_ones_are_marked() {
         let polls = PollCounts::default();
         assert_eq!(changed_options(&polls, -1, &counts()), [true, true]);
         let next = vec![("0".into(), 8901), ("1".into(), 9145)];
         assert_eq!(changed_options(&polls, -1, &next), [false, true]);
-        assert_eq!(render_counts(&next, &[], 0, &[false, true]).len(), 1);
+        assert_eq!(
+            render_counts(&next, &[], 0, &[false, true]),
+            ["0 × 8901 (0%)", "1 × 9145 (0%) ★ ▲"]
+        );
     }
 
     #[test]
