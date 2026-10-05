@@ -26,14 +26,25 @@ impl ClickhouseDb {
         rows
     }
 
+    fn recent(&self) -> std::sync::MutexGuard<'_, super::recent::Recent> {
+        self.recent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     pub(super) async fn log_events(&self, events: &[Event]) {
-        let events = &self.scoped(events).await;
+        let scoped = self.scoped(events).await;
+        let events = &self.recent().fresh(scoped);
+        if events.is_empty() {
+            return;
+        }
         let mut delay = std::time::Duration::from_millis(500);
         for attempt in 1..=INSERT_ATTEMPTS {
             match insert_rows(&self.ch, EVENTS, events).await {
                 Ok(()) => return,
                 Err(e) if attempt == INSERT_ATTEMPTS => {
                     error!("insert into {EVENTS}: {e}");
+                    self.recent().forget(events);
                 }
                 Err(e) => {
                     warn!("insert into {EVENTS} (attempt {attempt}): {e}");
