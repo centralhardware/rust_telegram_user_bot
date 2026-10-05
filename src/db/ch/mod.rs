@@ -23,6 +23,9 @@ pub struct ClickhouseDb {
     /// For a later account, the chats known to be channels, and where to ask
     /// about the rest. See [`ClickhouseDb::scope`].
     channels: Option<Channels>,
+    /// What every account has just written, shared: in a channel the accounts
+    /// write each other's rows. See [`recent`].
+    recent: std::sync::Arc<std::sync::Mutex<recent::Recent>>,
 }
 
 struct Channels {
@@ -50,6 +53,7 @@ impl ClickhouseDb {
             ch,
             account: 0,
             channels: None,
+            recent: Default::default(),
         }
     }
 
@@ -62,6 +66,7 @@ impl ClickhouseDb {
                 ch: self.ch.clone(),
                 account: 0,
                 channels: None,
+                recent: self.recent.clone(),
             };
         }
         ClickhouseDb {
@@ -71,6 +76,7 @@ impl ClickhouseDb {
                 peer_cache: format!("peer_cache_buffer_{name}"),
                 known: Default::default(),
             }),
+            recent: self.recent.clone(),
         }
     }
 
@@ -171,6 +177,7 @@ mod admin_actions;
 mod events;
 mod media_files;
 mod peer_names;
+mod recent;
 mod user_sessions;
 
 #[async_trait]
