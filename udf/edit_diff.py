@@ -99,22 +99,13 @@ class Line:
         return self.out + close
 
 
-def is_cut(s, at):
-    """Whether a run may be opened at this point of a side: at either end of
-    it, or where a space or a newline stands."""
-    return at == 0 or at == len(s) or s[at].isspace() or s[at - 1].isspace()
-
-
 def shared_head(a, b):
-    """How much of a head the two sides share, cut back to a whitespace
-    boundary both of them have -- the end of a string counts as one."""
+    """How much of a head the two sides share, in characters."""
     head = 0
     for x, y in zip(a, b):
         if x != y:
             break
         head += 1
-    while head > 0 and not (is_cut(a, head) and is_cut(b, head)):
-        head -= 1
     return head
 
 
@@ -125,8 +116,6 @@ def shared_tail(a, b):
         if x != y:
             break
         tail += 1
-    while tail > 0 and not (is_cut(a, len(a) - tail) and is_cut(b, len(b) - tail)):
-        tail -= 1
     return tail
 
 
@@ -138,9 +127,8 @@ def refine(removed, added):
     `reduction\nPS:`, which no longer equals the old `reduction` and drags the
     untouched word into the marking. The two sides of a replacement are
     therefore compared once more, character by character, and the head and tail
-    they share are handed back plain -- but only when the cut falls on a
-    whitespace boundary in both, so `cou` -> `cpu` stays one changed word
-    rather than a marked `p` between a plain `c` and `u`.
+    they share are handed back plain, down to the character: `cou` -> `cpu`
+    marks only the `o` that went and the `p` that replaced it.
 
     `None` is a side the edit did not touch, or one the head and the tail
     turned out to account for entirely -- which is not the same as a side whose
@@ -213,7 +201,8 @@ def render(message, patch, mode):
             sep = sep_after
         if removed is not None:
             line.push(sep, f"<del>{escape_html(removed)}</del>")
-            sep = True
+            # Mid-word, the replacement follows the removal with no space.
+            sep = sep_after and sep_before
         if added is not None:
             line.push(sep, f"<ins>{escape_html(added)}</ins>")
         if suffix:
