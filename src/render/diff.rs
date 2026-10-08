@@ -182,7 +182,8 @@ fn flush(line: &mut Line, removed: &mut Vec<&str>, added: &mut Vec<&str>, style:
     }
     if let Some(text) = &run.del {
         line.push(sep, mark_text(text, &style.del, style));
-        sep = true;
+        // Mid-word, the replacement follows the removal with no space.
+        sep = run.sep_after_prefix && run.sep_before_suffix;
     }
     if let Some(text) = &run.ins {
         line.push(sep, mark_text(text, &style.ins, style));
@@ -199,9 +200,8 @@ fn flush(line: &mut Line, removed: &mut Vec<&str>, added: &mut Vec<&str>, style:
 /// `reduction\nPS:`, which no longer equals the old `reduction` and drags the
 /// untouched word into the marking. The two sides of a replacement are
 /// therefore compared once more, character by character, and the head and tail
-/// they share are handed back plain -- but only when the cut falls on a
-/// whitespace boundary in both, so `cou` -> `cpu` stays one changed word
-/// rather than a marked `p` between a plain `c` and `u`.
+/// they share are handed back plain, down to the character: `cou` -> `cpu`
+/// marks only the `o` that went and the `p` that replaced it.
 struct Refined {
     prefix: String,
     /// Whether the space that separated two tokens was consumed at the cut. It
@@ -268,8 +268,7 @@ fn refine(del: Option<String>, ins: Option<String>) -> Refined {
     }
 }
 
-/// How much of a head the two sides share, cut back to a whitespace boundary
-/// both of them have -- the end of a string counts as one.
+/// How much of a head the two sides share, in whole characters.
 fn shared_head(a: &str, b: &str) -> usize {
     let mut head = 0;
     for (x, y) in a.char_indices().zip(b.char_indices()) {
@@ -277,9 +276,6 @@ fn shared_head(a: &str, b: &str) -> usize {
             break;
         }
         head = x.0 + x.1.len_utf8();
-    }
-    while head > 0 && !(is_cut(a, head) && is_cut(b, head)) {
-        head = a[..head].char_indices().next_back().map_or(0, |(at, _)| at);
     }
     head
 }
@@ -293,22 +289,7 @@ fn shared_tail(a: &str, b: &str) -> usize {
         }
         tail += x.len_utf8();
     }
-    while tail > 0 && !(is_cut(a, a.len() - tail) && is_cut(b, b.len() - tail)) {
-        tail -= a[a.len() - tail..]
-            .chars()
-            .next()
-            .map_or(tail, char::len_utf8);
-    }
     tail
-}
-
-/// Whether a run may be opened at this point of a side: at either end of it,
-/// or where a space or a newline stands.
-fn is_cut(s: &str, at: usize) -> bool {
-    at == 0
-        || at == s.len()
-        || s[at..].starts_with(char::is_whitespace)
-        || s[..at].ends_with(char::is_whitespace)
 }
 
 /// The marking itself. The terminal one is applied per line: a strike-through
@@ -558,7 +539,7 @@ mod tests {
     fn marks_only_the_changed_word() {
         assert_eq!(
             plain(&inline_diff("meet at wensdey", "meet at Wensdey")),
-            "meet at [-wensdey| {+Wensdey|"
+            "meet at [-w|{+W|ensdey"
         );
     }
 
@@ -596,7 +577,7 @@ mod tests {
     fn html_marks_the_same_words_the_terminal_does() {
         assert_eq!(
             bare(&html_diff("meet at wensdey", "meet at Wensdey")),
-            "meet at <del>wensdey</del> <ins>Wensdey</ins>"
+            "meet at <del>w</del><ins>W</ins>ensdey"
         );
     }
 
@@ -759,13 +740,13 @@ mod tests {
         );
     }
 
-    /// The paring only ever cuts on whitespace, so a one-letter typo stays one
-    /// changed word instead of a marked letter between two plain ones.
+    /// The paring goes down to the character, so a one-letter typo marks the
+    /// letter, not the word.
     #[test]
-    fn a_typo_inside_a_word_is_not_pared_down_to_the_letter() {
+    fn a_typo_inside_a_word_is_pared_down_to_the_letter() {
         assert_eq!(
             bare(&html_diff("a graph of cou", "a graph of cpu")),
-            "a graph of <del>cou</del> <ins>cpu</ins>"
+            "a graph of c<del>o</del><ins>p</ins>u"
         );
     }
 
