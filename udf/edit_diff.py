@@ -28,6 +28,10 @@ import json
 import sys
 
 WRAPPER = ('<div style="white-space:pre-wrap">', "</div>")
+# Inline, because the cell has no stylesheet of ours. Rendered on read, so the
+# styles cost nothing in storage -- the reason #34 dropped them no longer holds.
+DEL = ('<del style="color:#f85149;background:rgba(248,81,73,0.20);text-decoration:line-through">', "</del>")
+INS = ('<ins style="color:#3fb950;background:rgba(46,160,67,0.20);text-decoration:none">', "</ins>")
 
 
 def unescape(payload):
@@ -200,11 +204,11 @@ def render(message, patch, mode):
             line.push(sep, escape_html(prefix))
             sep = sep_after
         if removed is not None:
-            line.push(sep, f"<del>{escape_html(removed)}</del>")
+            line.push(sep, f"{DEL[0]}{escape_html(removed)}{DEL[1]}")
             # Mid-word, the replacement follows the removal with no space.
             sep = sep_after and sep_before
         if added is not None:
-            line.push(sep, f"<ins>{escape_html(added)}</ins>")
+            line.push(sep, f"{INS[0]}{escape_html(added)}{INS[1]}")
         if suffix:
             line.push(sep_before, escape_html(suffix))
         cursor = hunk["at"] + hunk["added_len"]
