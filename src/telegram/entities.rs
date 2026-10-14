@@ -90,6 +90,7 @@ fn type_name(entity: &tl::enums::MessageEntity) -> &'static str {
         E::Underline(_) => "underline",
         E::Strike(_) => "strikethrough",
         E::BankCard(_) => "bank_card",
+        E::TonAddress(_) => "ton_address",
         E::Spoiler(_) => "spoiler",
         E::CustomEmoji(_) => "custom_emoji",
         E::Blockquote(_) => "blockquote",

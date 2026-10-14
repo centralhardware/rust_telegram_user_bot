@@ -182,6 +182,13 @@ pub fn format(
         MessageAction::GiftStars(a) => {
             format!("[gift {} stars, {} {}]", a.stars, a.amount, a.currency)
         }
+        MessageAction::GramTransfer(a) => {
+            format!("[TON transfer: {} nanotons, {}]", a.amount, a.peer_address)
+        }
+        MessageAction::WalletTonConnectRequest(a) => match &a.dapp_name {
+            Some(name) => format!("[TON Connect request from {name}]"),
+            None => "[TON Connect request]".into(),
+        },
         MessageAction::PrizeStars(a) => {
             format!(
                 "[prize {} stars, giveaway msg {}]",

@@ -298,6 +298,7 @@ fn render_text(text: &tl::enums::RichText) -> String {
         T::TextSuperscript(t) => render_text(&t.text),
         T::TextMention(t) => render_text(&t.text),
         T::TextMentionName(t) => render_text(&t.text),
+        T::TextTonAddress(t) => render_text(&t.text),
         T::TextHashtag(t) => render_text(&t.text),
         T::TextCashtag(t) => render_text(&t.text),
         T::TextBotCommand(t) => render_text(&t.text),
