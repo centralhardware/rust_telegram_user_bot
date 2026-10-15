@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::app::App;
 use crate::db::Event;
 use crate::events::DeleteEvent;
+use crate::state::peer_names::title_of;
 
 pub async fn save_deleted(app: &App, deletion: &MessageDeletion) -> anyhow::Result<()> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as u32;
@@ -28,6 +29,15 @@ pub async fn save_deleted(app: &App, deletion: &MessageDeletion) -> anyhow::Resu
             .collect(),
     };
 
+    // A message the log never saw brings no title with it, but Telegram named
+    // the chat: its stored name stands in, read once for the whole deletion.
+    let channel_title = match channel {
+        Some(chat_id) if !app.is_log_ignored(chat_id) => {
+            title_of(app, -1_000_000_000_000 - chat_id).await
+        }
+        _ => String::new(),
+    };
+
     let mut rows = Vec::with_capacity(ids.len());
     for msg_id in ids {
         let m = found.get(&msg_id);
@@ -43,10 +53,12 @@ pub async fn save_deleted(app: &App, deletion: &MessageDeletion) -> anyhow::Resu
                     m.chat_title.as_str(),
                 )
             });
-            let title = if title.is_empty() {
-                chat_id.to_string()
-            } else {
+            let title = if !title.is_empty() {
                 title.to_string()
+            } else if !channel_title.is_empty() {
+                channel_title.clone()
+            } else {
+                chat_id.to_string()
             };
             LogLine::new(Tone::Deleted, "deleted", msg_id)
                 .chat(&title)
