@@ -95,10 +95,10 @@ impl ClickhouseSession {
         let defaults = SessionData::default();
 
         let home_dc = ch
-            .query(&format!(
+            .query(
                 "SELECT dc_id, account FROM session_dc_home FINAL \
                  WHERE key = 1 AND account = ? LIMIT 1",
-            ))
+            )
             .bind(&account)
             .fetch_one::<DcHomeRow>()
             .await
@@ -109,10 +109,10 @@ impl ClickhouseSession {
         // Load dc_options
         let mut dc_options: HashMap<i32, DcOption> = defaults.dc_options;
         let rows: Vec<DcOptionRow> = ch
-            .query(&format!(
+            .query(
                 "SELECT dc_id, ipv4, ipv6, auth_key, account FROM session_dc_option FINAL \
                  WHERE account = ?",
-            ))
+            )
             .bind(&account)
             .fetch_all()
             .await
@@ -125,10 +125,10 @@ impl ClickhouseSession {
 
         // Load updates state
         let updates = ch
-            .query(&format!(
+            .query(
                 "SELECT pts, qts, date, seq, account FROM session_update_state FINAL \
                  WHERE key = 1 AND account = ? LIMIT 1",
-            ))
+            )
             .bind(&account)
             .fetch_one::<UpdateStateRow>()
             .await
@@ -143,10 +143,10 @@ impl ClickhouseSession {
             .unwrap_or_default();
 
         let channels: Vec<ChannelStateRow> = ch
-            .query(&format!(
+            .query(
                 "SELECT peer_id, pts, account FROM session_channel_state FINAL \
                  WHERE account = ?",
-            ))
+            )
             .bind(&account)
             .fetch_all()
             .await
