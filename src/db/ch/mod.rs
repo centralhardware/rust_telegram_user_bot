@@ -29,7 +29,8 @@ pub struct ClickhouseDb {
 }
 
 struct Channels {
-    peer_cache: String,
+    /// The account's name, what its rows in `peer_cache` carry.
+    name: String,
     known: std::sync::Mutex<HashSet<i64>>,
 }
 
@@ -58,7 +59,7 @@ impl ClickhouseDb {
     }
 
     /// The same database, for a later account: `account` is its user id,
-    /// `name` what its session tables are suffixed with.
+    /// `name` what its session rows carry in their `account` column.
     /// `""` is the first account, whose rows are all 0.
     pub fn for_account(&self, account: u64, name: &str) -> Self {
         if name.is_empty() {
@@ -73,7 +74,7 @@ impl ClickhouseDb {
             ch: self.ch.clone(),
             account,
             channels: Some(Channels {
-                peer_cache: format!("peer_cache_buffer_{name}"),
+                name: name.to_string(),
                 known: Default::default(),
             }),
             recent: self.recent.clone(),
@@ -106,11 +107,9 @@ impl ClickhouseDb {
         let cached = chat_id > 0
             && self
                 .ch
-                .query(&format!(
-                    "SELECT count() FROM {} WHERE peer_id = ?",
-                    channels.peer_cache
-                ))
+                .query("SELECT count() FROM peer_cache_buffer WHERE peer_id = ? AND account = ?")
                 .bind(dialog_id)
+                .bind(&channels.name)
                 .fetch_one::<u64>()
                 .await
                 .is_ok_and(|n| n > 0);

@@ -35,11 +35,13 @@ pub struct PeerRow {
     /// buffer has to carry a version the read can order by just as much as one
     /// already merged into the table.
     updated_at: u32,
+    account: String,
 }
 
 #[derive(Row, Serialize, Deserialize)]
 struct DcHomeRow {
     dc_id: i32,
+    account: String,
 }
 
 #[derive(Row, Serialize, Deserialize)]
@@ -48,6 +50,7 @@ struct DcOptionRow {
     ipv4: String,
     ipv6: String,
     auth_key: Option<String>,
+    account: String,
 }
 
 #[derive(Row, Serialize, Deserialize)]
@@ -56,12 +59,14 @@ struct UpdateStateRow {
     qts: i32,
     date: i32,
     seq: i32,
+    account: String,
 }
 
 #[derive(Row, Serialize, Deserialize)]
 struct ChannelStateRow {
     peer_id: i64,
     pts: i32,
+    account: String,
 }
 
 // ── In-memory cache ─────────────────────────────────────────────────
@@ -76,54 +81,25 @@ struct Cache {
 
 pub struct ClickhouseSession {
     ch: clickhouse::Client,
-    /// Appended to every table name: empty for the first account, `_<name>`
-    /// for a later one, each of which keeps its own DC keys, update positions
-    /// and access hashes (those are per account too).
-    suffix: String,
+    /// The `account` column of every row: empty for the first account, the
+    /// account's name for a later one. Each keeps its own DC keys, update
+    /// positions and access hashes in the shared tables (migration 051).
+    account: String,
     cache: Mutex<Cache>,
 }
 
-/// The session tables, each copied per account.
-const TABLES: &[&str] = &[
-    "session_dc_home",
-    "session_dc_option",
-    "session_update_state",
-    "session_channel_state",
-    "peer_cache",
-];
-
 impl ClickhouseSession {
-    /// The session of the account named `name`, `""` for the first one. A
-    /// later account's tables are made here the first time it is opened.
+    /// The session of the account named `name`, `""` for the first one.
     pub async fn open(ch: clickhouse::Client, name: &str) -> anyhow::Result<Self> {
-        let suffix = if name.is_empty() {
-            String::new()
-        } else {
-            format!("_{name}")
-        };
-        if !suffix.is_empty() {
-            for table in TABLES {
-                ch.query(&format!(
-                    "CREATE TABLE IF NOT EXISTS {table}{suffix} AS {table}"
-                ))
-                .execute()
-                .await?;
-            }
-            ch.query(&format!(
-                "CREATE TABLE IF NOT EXISTS peer_cache_buffer{suffix} AS peer_cache{suffix} \
-                 ENGINE = Buffer(currentDatabase(), peer_cache{suffix}, 1, 10, 60, 100, 10000, 65536, 4194304)"
-            ))
-            .execute()
-            .await?;
-        }
-        let t = |table: &str| format!("{table}{suffix}");
+        let account = name.to_string();
         let defaults = SessionData::default();
 
         let home_dc = ch
             .query(&format!(
-                "SELECT dc_id FROM {} FINAL WHERE key = 1 LIMIT 1",
-                t("session_dc_home")
+                "SELECT dc_id, account FROM session_dc_home FINAL \
+                 WHERE key = 1 AND account = ? LIMIT 1",
             ))
+            .bind(&account)
             .fetch_one::<DcHomeRow>()
             .await
             .ok()
@@ -134,9 +110,10 @@ impl ClickhouseSession {
         let mut dc_options: HashMap<i32, DcOption> = defaults.dc_options;
         let rows: Vec<DcOptionRow> = ch
             .query(&format!(
-                "SELECT dc_id, ipv4, ipv6, auth_key FROM {} FINAL",
-                t("session_dc_option")
+                "SELECT dc_id, ipv4, ipv6, auth_key, account FROM session_dc_option FINAL \
+                 WHERE account = ?",
             ))
+            .bind(&account)
             .fetch_all()
             .await
             .unwrap_or_default();
@@ -149,9 +126,10 @@ impl ClickhouseSession {
         // Load updates state
         let updates = ch
             .query(&format!(
-                "SELECT pts, qts, date, seq FROM {} FINAL WHERE key = 1 LIMIT 1",
-                t("session_update_state")
+                "SELECT pts, qts, date, seq, account FROM session_update_state FINAL \
+                 WHERE key = 1 AND account = ? LIMIT 1",
             ))
+            .bind(&account)
             .fetch_one::<UpdateStateRow>()
             .await
             .ok()
@@ -166,9 +144,10 @@ impl ClickhouseSession {
 
         let channels: Vec<ChannelStateRow> = ch
             .query(&format!(
-                "SELECT peer_id, pts FROM {} FINAL",
-                t("session_channel_state")
+                "SELECT peer_id, pts, account FROM session_channel_state FINAL \
+                 WHERE account = ?",
             ))
+            .bind(&account)
             .fetch_all()
             .await
             .unwrap_or_default();
@@ -186,7 +165,7 @@ impl ClickhouseSession {
 
         Ok(Self {
             ch,
-            suffix,
+            account,
             cache: Mutex::new(Cache {
                 home_dc,
                 dc_options,
@@ -229,12 +208,13 @@ fn encode_subtype(peer: &PeerInfo) -> Option<u8> {
     }
 }
 
-fn peer_to_row(peer: &PeerInfo) -> PeerRow {
+fn peer_to_row(peer: &PeerInfo, account: &str) -> PeerRow {
     PeerRow {
         peer_id: peer.id().bot_api_dialog_id_unchecked(),
         hash: peer.auth().map(|a| a.hash()),
         subtype: encode_subtype(peer),
         updated_at: now(),
+        account: account.to_string(),
     }
 }
 
@@ -285,12 +265,13 @@ fn auth_key_from_hex(hex: &str) -> Option<[u8; 256]> {
     Some(key)
 }
 
-fn dc_option_to_row(opt: &DcOption) -> DcOptionRow {
+fn dc_option_to_row(opt: &DcOption, account: &str) -> DcOptionRow {
     DcOptionRow {
         dc_id: opt.id,
         ipv4: opt.ipv4.to_string(),
         ipv6: opt.ipv6.to_string(),
         auth_key: opt.auth_key.as_ref().map(auth_key_to_hex),
+        account: account.to_string(),
     }
 }
 
@@ -314,17 +295,6 @@ fn dc_option_from_row(row: &DcOptionRow) -> Option<DcOption> {
 /// go into the Buffer, which is memory, and `ReplacingMergeTree` collapses them
 /// on the way down.
 const PEER_CACHE: &str = "peer_cache_buffer";
-
-impl ClickhouseSession {
-    fn t(&self, table: &str) -> String {
-        format!("{table}{}", self.suffix)
-    }
-
-    /// A peer query written against `peer_cache_buffer`, for this account.
-    fn peer_sql(&self, sql: &str) -> String {
-        sql.replace(PEER_CACHE, &self.t(PEER_CACHE))
-    }
-}
 
 // ── Session trait ───────────────────────────────────────────────────
 
@@ -350,7 +320,15 @@ impl Session for ClickhouseSession {
             .unwrap_or_else(PoisonError::into_inner)
             .home_dc = dc_id;
         Box::pin(async move {
-            persist(&self.ch, &self.t("session_dc_home"), DcHomeRow { dc_id }).await;
+            persist(
+                &self.ch,
+                "session_dc_home",
+                DcHomeRow {
+                    dc_id,
+                    account: self.account.clone(),
+                },
+            )
+            .await;
             Ok(())
         })
     }
@@ -372,9 +350,9 @@ impl Session for ClickhouseSession {
             .dc_options
             .insert(dc_option.id, dc_option.clone());
 
-        let row = dc_option_to_row(dc_option);
+        let row = dc_option_to_row(dc_option, &self.account);
         Box::pin(async move {
-            persist(&self.ch, &self.t("session_dc_option"), row).await;
+            persist(&self.ch, "session_dc_option", row).await;
             Ok(())
         })
     }
@@ -401,14 +379,16 @@ impl Session for ClickhouseSession {
                             // equal to the column it aggregates shadows it, and
                             // `argMax(hash, updated_at)` then reads the alias
                             // and is rejected as a nested aggregate (Code 184).
-                            &self.peer_sql("SELECT peer_id, \
+                            "SELECT peer_id, \
                                     argMax(peer_cache_buffer.hash, peer_cache_buffer.updated_at) AS hash, \
                                     argMax(peer_cache_buffer.subtype, peer_cache_buffer.updated_at) AS subtype, \
-                                    max(peer_cache_buffer.updated_at) AS updated_at \
-                             FROM peer_cache_buffer WHERE peer_id = ? \
-                             GROUP BY peer_id"),
+                                    max(peer_cache_buffer.updated_at) AS updated_at, \
+                                    account \
+                             FROM peer_cache_buffer WHERE peer_id = ? AND account = ? \
+                             GROUP BY peer_id, account",
                         )
                         .bind(dialog_id)
+                        .bind(&self.account)
                         .fetch_one::<PeerRow>()
                         .await
                 } else {
@@ -426,17 +406,20 @@ impl Session for ClickhouseSession {
                             // WHERE. The HAVING is deliberately NOT qualified:
                             // there it is the collapsed value that has to carry
                             // the bit.
-                            &self.peer_sql("SELECT peer_id, \
+                            "SELECT peer_id, \
                                     argMax(peer_cache_buffer.hash, peer_cache_buffer.updated_at) AS hash, \
                                     argMax(peer_cache_buffer.subtype, peer_cache_buffer.updated_at) AS subtype, \
-                                    max(peer_cache_buffer.updated_at) AS updated_at \
+                                    max(peer_cache_buffer.updated_at) AS updated_at, \
+                                    account \
                              FROM peer_cache_buffer \
-                             WHERE peer_cache_buffer.subtype IS NOT NULL \
+                             WHERE account = ? \
+                               AND peer_cache_buffer.subtype IS NOT NULL \
                                AND bitAnd(peer_cache_buffer.subtype, 1) = 1 \
-                             GROUP BY peer_id \
+                             GROUP BY peer_id, account \
                              HAVING bitAnd(subtype, 1) = 1 \
-                             LIMIT 1"),
+                             LIMIT 1",
                         )
+                        .bind(&self.account)
                         .fetch_one::<PeerRow>()
                         .await
                 };
@@ -483,11 +466,9 @@ impl Session for ClickhouseSession {
 
     fn cache_peer(&self, peer: PeerInfo) -> BoxFuture<'_, Result<(), Self::Error>> {
         Box::pin(async move {
-            let row = peer_to_row(&peer);
-            if let Err(e) =
-                insert_rows(&self.ch, &self.t(PEER_CACHE), std::slice::from_ref(&row)).await
-            {
-                error!("insert into {}: {e}", self.t(PEER_CACHE));
+            let row = peer_to_row(&peer, &self.account);
+            if let Err(e) = insert_rows(&self.ch, PEER_CACHE, std::slice::from_ref(&row)).await {
+                error!("insert into {}: {e}", PEER_CACHE);
             }
             Ok(())
         })
@@ -498,9 +479,12 @@ impl Session for ClickhouseSession {
     /// rather than a request per peer.
     fn cache_peers(&self, peers: Vec<PeerInfo>) -> BoxFuture<'_, Result<(), Self::Error>> {
         Box::pin(async move {
-            let rows: Vec<PeerRow> = peers.iter().map(peer_to_row).collect();
-            if let Err(e) = insert_rows(&self.ch, &self.t(PEER_CACHE), &rows).await {
-                error!("insert into {}: {e}", self.t(PEER_CACHE));
+            let rows: Vec<PeerRow> = peers
+                .iter()
+                .map(|p| peer_to_row(p, &self.account))
+                .collect();
+            if let Err(e) = insert_rows(&self.ch, PEER_CACHE, &rows).await {
+                error!("insert into {}: {e}", PEER_CACHE);
             }
             Ok(())
         })
@@ -553,23 +537,24 @@ impl Session for ClickhouseSession {
                     // Write full update_state
                     persist(
                         &self.ch,
-                        &self.t("session_update_state"),
+                        "session_update_state",
                         UpdateStateRow {
                             pts: state.pts,
                             qts: state.qts,
                             date: state.date,
                             seq: state.seq,
+                            account: self.account.clone(),
                         },
                     )
                     .await;
 
-                    // Replace all channel states: truncate + re-insert
+                    // Replace this account's channel states: delete + re-insert.
+                    // A lightweight DELETE rather than TRUNCATE, which would
+                    // take every other account's with it.
                     if let Err(e) = self
                         .ch
-                        .query(&format!(
-                            "TRUNCATE TABLE {}",
-                            self.t("session_channel_state")
-                        ))
+                        .query("DELETE FROM session_channel_state WHERE account = ?")
+                        .bind(&self.account)
                         .execute()
                         .await
                     {
@@ -583,11 +568,10 @@ impl Session for ClickhouseSession {
                         .map(|ch| ChannelStateRow {
                             peer_id: ch.id,
                             pts: ch.pts,
+                            account: self.account.clone(),
                         })
                         .collect();
-                    if let Err(e) =
-                        insert_rows(&self.ch, &self.t("session_channel_state"), &rows).await
-                    {
+                    if let Err(e) = insert_rows(&self.ch, "session_channel_state", &rows).await {
                         error!("failed to write session_channel_state: {e}");
                     }
                 }
@@ -599,9 +583,10 @@ impl Session for ClickhouseSession {
                             qts: cache.updates.qts,
                             date: *date,
                             seq: *seq,
+                            account: self.account.clone(),
                         }
                     };
-                    persist(&self.ch, &self.t("session_update_state"), row).await;
+                    persist(&self.ch, "session_update_state", row).await;
                 }
                 UpdateState::Secondary { qts } => {
                     let row = {
@@ -611,17 +596,19 @@ impl Session for ClickhouseSession {
                             qts: *qts,
                             date: cache.updates.date,
                             seq: cache.updates.seq,
+                            account: self.account.clone(),
                         }
                     };
-                    persist(&self.ch, &self.t("session_update_state"), row).await;
+                    persist(&self.ch, "session_update_state", row).await;
                 }
                 UpdateState::Channel { id, pts } => {
                     persist(
                         &self.ch,
-                        &self.t("session_channel_state"),
+                        "session_channel_state",
                         ChannelStateRow {
                             peer_id: *id,
                             pts: *pts,
+                            account: self.account.clone(),
                         },
                     )
                     .await;
