@@ -106,9 +106,9 @@ runs on that session as it is.
 
 All accounts run in the one process and log into the same tables.
 
-- **Sessions** are per account: the first uses the `session_*` / `peer_cache`
-  tables, an account named `work` gets `session_*_work` / `peer_cache_work`,
-  made on its first `setup`.
+- **Sessions** are per account, in the shared `session_*` / `peer_cache`
+  tables: every row carries the account's name in `account`, `''` for the
+  first one.
 - **New accounts start by themselves.** `setup <name>` records the account in
   `accounts`; the running bot reads that table every minute and starts any
   account it is not running yet.
