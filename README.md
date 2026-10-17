@@ -62,7 +62,7 @@ readers query the base tables, which are at most a minute behind.
 | `events_log` (+ `events_log_buffer`) | One row per event. The `event` column is `send`, `edit`, `delete`, `reaction`, `service`, `pin`, `unpin`, `poll`, `views` or `file_uploaded`. `raw` keeps the message as Telegram sent it. |
 | `peer_names` (+ buffer) | Display names and usernames for every peer seen, keyed by Bot API dialog id |
 | `media_files` | Which S3 object a Telegram photo or document is already stored as |
-| `admin_actions2` | Admin-log events of the chats the account administers |
+| `admin_actions` | Admin-log events of the chats the account administers |
 | `user_sessions` | The account's other sessions |
 | `accounts` | Accounts after the first, as `setup <name>` recorded them |
 | `peer_cache` (+ buffer), `session_*` | The grammers session: DC keys, update positions, peer access hashes |
