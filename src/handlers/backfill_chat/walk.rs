@@ -1,6 +1,8 @@
 //! Walking one chat's history and writing what the log is missing.
 
 use super::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio::sync::mpsc;
 
 /// What one segment of a walk read.
 #[derive(Default)]
@@ -79,8 +81,29 @@ pub(super) async fn walk(
     let mut resumed_at = 0i64;
 
     let mut read = Read::default();
-    let mut batch: Vec<Event> = Vec::with_capacity(BATCH);
     let mut pending: Vec<Message> = Vec::with_capacity(BATCH);
+
+    // Turning a batch into rows and inserting it is ClickHouse and lookups, not
+    // Telegram, so it runs beside the read instead of holding it up: the walk
+    // hands each full batch over and goes on paging. Two batches in flight at
+    // most, so a slow insert slows the read rather than piling history up in
+    // memory.
+    let progress = Arc::new(AtomicUsize::new(0));
+    let (to_writer, mut batches) = mpsc::channel::<Vec<Message>>(2);
+    let writer = {
+        let app = Arc::clone(app);
+        let progress = Arc::clone(&progress);
+        tokio::spawn(async move {
+            let mut batch: Vec<Event> = Vec::with_capacity(BATCH);
+            let mut done = 0usize;
+            while let Some(mut messages) = batches.recv().await {
+                convert(&app, chat_id, &mut messages, &mut batch).await;
+                flush(&app, &mut batch, &mut done).await;
+                progress.store(done, Ordering::Relaxed);
+            }
+            done
+        })
+    };
 
     loop {
         let message = match search.next().await {
@@ -155,8 +178,11 @@ pub(super) async fn walk(
         pending.push(message);
 
         if pending.len() >= BATCH {
-            convert(app, chat_id, &mut pending, &mut batch).await;
-            flush(app, &mut batch, written).await;
+            let full = std::mem::replace(&mut pending, Vec::with_capacity(BATCH));
+            if to_writer.send(full).await.is_err() {
+                warn!("backfill {chat_id}: the writer is gone, stopping the walk");
+                break;
+            }
         }
         // A page's worth read is a page's worth fetched: the next message asks
         // Telegram for the next one.
@@ -168,17 +194,24 @@ pub(super) async fn walk(
         {
             let _ = status
                 .edit(format!(
-                    "backfill {chat_id}: {}/{total} read, {written} written…",
-                    read.seen
+                    "backfill {chat_id}: {}/{total} read, {} written…",
+                    read.seen,
+                    *written + progress.load(Ordering::Relaxed)
                 ))
                 .await;
         }
     }
 
-    convert(app, chat_id, &mut pending, &mut batch).await;
     // Whatever is already in hand is worth keeping even when the segment ended
     // on a refusal.
-    flush(app, &mut batch, written).await;
+    if !pending.is_empty() {
+        let _ = to_writer.send(pending).await;
+    }
+    drop(to_writer);
+    match writer.await {
+        Ok(done) => *written += done,
+        Err(e) => warn!("backfill {chat_id}: the writer failed: {e}"),
+    }
     read
 }
 
