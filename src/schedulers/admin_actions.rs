@@ -7,14 +7,12 @@ use grammers_session::types::PeerRef;
 use grammers_tl_types as tl;
 use log::error;
 use std::collections::HashSet;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::db::AdminAction;
 use crate::telegram::dialogs::{ARCHIVE_FOLDER, MAIN_FOLDER, Pages};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(60);
-/// How often the dialog list is re-scanned for chats where we are an admin.
-const DISCOVERY_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 /// A chat we administer, along with everything needed to poll and annotate its admin log.
 struct AdminChat {
@@ -27,11 +25,11 @@ struct AdminChat {
 
 /// Discover the admin chats before returning, so the media archiver knows
 /// them from the first update on, then poll their admin logs in the
-/// background.
+/// background. The dialog list is walked again only when an update marks
+/// `admin_chats` stale (see `dispatch::AdminRights`) or the last walk failed.
 pub async fn start(app: Arc<App>) {
     let first = discover(&app).await;
-    // A failed first walk is tried again on the next tick, not an hour later.
-    let mut discovered_at = first.is_some().then(Instant::now);
+    let mut failed = first.is_none();
     let mut chats = first.unwrap_or_default();
 
     tokio::spawn(async move {
@@ -40,11 +38,14 @@ pub async fn start(app: Arc<App>) {
         loop {
             interval.tick().await;
 
-            if discovered_at.is_none_or(|at| at.elapsed() >= DISCOVERY_INTERVAL)
-                && let Some(found) = discover(&app).await
-            {
-                chats = found;
-                discovered_at = Some(Instant::now());
+            if app.admin_chats.take_stale() | failed {
+                match discover(&app).await {
+                    Some(found) => {
+                        chats = found;
+                        failed = false;
+                    }
+                    None => failed = true,
+                }
             }
 
             for chat in &chats {
