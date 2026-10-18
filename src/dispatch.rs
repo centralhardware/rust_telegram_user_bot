@@ -83,7 +83,7 @@ pub struct RawUpdate<'a> {
 }
 
 pub static RAW: &[&dyn for<'a> Handler<RawUpdate<'a>>] =
-    &[&Ephemeral, &Reactions, &Pins, &Polls, &Views];
+    &[&AdminRights, &Ephemeral, &Reactions, &Pins, &Polls, &Views];
 
 pub async fn handle(app: &Arc<App>, update: Update) {
     if let Some(key) = shared_key(&update) {
@@ -292,6 +292,28 @@ impl Handler<NewMessage> for BackfillCommand {
     fn handle<'a>(&'a self, m: &'a mut NewMessage) -> Step<'a, Flow> {
         Box::pin(async move {
             handlers::backfill_command(&m.app, &m.message).await;
+            Flow::Continue
+        })
+    }
+}
+
+/// Updates that can mean we gained or lost admin rights in a channel: Telegram
+/// sends `updateChannel` when our rights, membership or the channel itself
+/// change (including a group migrating to a megagroup we own), and
+/// `updateChannelParticipant` when someone promotes, demotes or removes us.
+/// Either flags the admin-chat set for a rediscovery on the scheduler's next tick.
+struct AdminRights;
+impl<'r> Handler<RawUpdate<'r>> for AdminRights {
+    fn handle<'a>(&'a self, raw: &'a mut RawUpdate<'r>) -> Step<'a, Flow> {
+        Box::pin(async move {
+            let app = raw.app;
+            match &raw.update {
+                tl::enums::Update::Channel(_) => app.admin_chats.mark_stale(),
+                tl::enums::Update::ChannelParticipant(u) if u.user_id as u64 == app.me => {
+                    app.admin_chats.mark_stale()
+                }
+                _ => {}
+            }
             Flow::Continue
         })
     }
