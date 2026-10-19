@@ -103,8 +103,9 @@ pub trait Db: Send + Sync {
 
     async fn write_peer_names(&self, names: &PeerNames);
 
-    /// The newest admin-log event already stored for a chat, 0 for none.
-    async fn last_admin_event_id(&self, chat_id: u64) -> u64;
+    /// The newest admin-log event already stored for a chat, 0 for none. An
+    /// error is not 0: polling from 0 refetches the chat's whole admin log.
+    async fn last_admin_event_id(&self, chat_id: u64) -> DbResult<u64>;
 
     async fn write_admin_actions(&self, actions: &[AdminAction]) -> DbResult<()>;
 

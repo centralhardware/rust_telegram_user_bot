@@ -3,13 +3,13 @@
 use super::*;
 
 impl ClickhouseDb {
-    pub(super) async fn last_admin_event_id(&self, chat_id: u64) -> u64 {
-        self.ch
+    pub(super) async fn last_admin_event_id(&self, chat_id: u64) -> DbResult<u64> {
+        Ok(self
+            .ch
             .query("SELECT max(event_id) FROM admin_actions WHERE chat_id = ?")
             .bind(chat_id)
             .fetch_one()
-            .await
-            .unwrap_or(0)
+            .await?)
     }
 
     pub(super) async fn write_admin_actions(&self, actions: &[AdminAction]) -> DbResult<()> {

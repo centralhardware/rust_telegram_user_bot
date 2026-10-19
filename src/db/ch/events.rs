@@ -5,7 +5,7 @@ use super::*;
 
 impl ClickhouseDb {
     /// The rows with the `account_id` their chat gives them.
-    async fn scoped(&self, events: &[Event]) -> Vec<Event> {
+    async fn scoped(&self, events: &[Event]) -> DbResult<Vec<Event>> {
         // A backfill batch is one chat a thousand times over: one lookup each.
         let mut scopes = std::collections::HashMap::new();
         let mut rows = Vec::with_capacity(events.len());
@@ -13,7 +13,7 @@ impl ClickhouseDb {
             let account_id = match scopes.get(&e.chat_id) {
                 Some(&scope) => scope,
                 None => {
-                    let scope = self.scope(e.chat_id).await;
+                    let scope = self.scope(e.chat_id).await?;
                     scopes.insert(e.chat_id, scope);
                     scope
                 }
@@ -23,7 +23,7 @@ impl ClickhouseDb {
                 ..e.clone()
             });
         }
-        rows
+        Ok(rows)
     }
 
     fn recent(&self) -> std::sync::MutexGuard<'_, super::recent::Recent> {
@@ -33,7 +33,16 @@ impl ClickhouseDb {
     }
 
     pub(super) async fn log_events(&self, events: &[Event]) {
-        let scoped = self.scoped(events).await;
+        let scoped = match self.scoped(events).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                error!(
+                    "insert into {EVENTS}: {e:#}; {} row(s) not written",
+                    events.len()
+                );
+                return;
+            }
+        };
         let events = &self.recent().fresh(scoped);
         if events.is_empty() {
             return;
@@ -56,7 +65,7 @@ impl ClickhouseDb {
     }
 
     pub(super) async fn write_backfill(&self, events: &[Event]) -> DbResult<()> {
-        Ok(insert_rows(&self.ch, "events_log", &self.scoped(events).await).await?)
+        Ok(insert_rows(&self.ch, "events_log", &self.scoped(events).await?).await?)
     }
 
     pub(super) async fn find_message(&self, chat_id: i64, message_id: i64) -> MessageInfo {
@@ -68,7 +77,7 @@ impl ClickhouseDb {
                  ORDER BY event = ? DESC, date_time DESC LIMIT 1",
             )
             .bind(chat_id)
-            .bind(self.scope(chat_id).await)
+            .bind(self.read_scope(chat_id).await)
             .bind(message_id)
             .bind(EventKind::Send)
             .bind(EventKind::Edit)
@@ -86,7 +95,7 @@ impl ClickhouseDb {
                  ORDER BY date_time DESC LIMIT 1",
             )
             .bind(chat_id)
-            .bind(self.scope(chat_id).await)
+            .bind(self.read_scope(chat_id).await)
             .bind(EventKind::Send)
             .fetch_one::<String>()
             .await
@@ -166,7 +175,7 @@ impl ClickhouseDb {
                  ORDER BY date_time DESC LIMIT 1",
             )
             .bind(chat_id)
-            .bind(self.scope(chat_id).await)
+            .bind(self.read_scope(chat_id).await)
             .bind(message_id)
             .bind(EventKind::Send)
             .fetch_one::<(u64, bool)>()
@@ -184,7 +193,7 @@ impl ClickhouseDb {
                  ORDER BY date_time DESC LIMIT 1",
             )
             .bind(chat_id)
-            .bind(self.scope(chat_id).await)
+            .bind(self.read_scope(chat_id).await)
             .bind(message_id)
             .bind(EventKind::Send)
             .fetch_one::<ReplyRow>()
@@ -199,7 +208,7 @@ impl ClickhouseDb {
                  WHERE chat_id = ? AND account_id = ? AND message_id = ? AND event IN (?, ?) AND NOT ephemeral",
             )
             .bind(chat_id)
-            .bind(self.scope(chat_id).await)
+            .bind(self.read_scope(chat_id).await)
             .bind(message_id)
             .bind(EventKind::Send)
             .bind(EventKind::Service)
@@ -217,7 +226,7 @@ impl ClickhouseDb {
                  AND has(?, message_id)"
             ))
             .bind(chat_id)
-            .bind(self.scope(chat_id).await)
+            .bind(self.read_scope(chat_id).await)
             .bind(EventKind::Send)
             .bind(EventKind::Service)
             .bind(ids)
@@ -234,7 +243,7 @@ impl ClickhouseDb {
                 "SELECT min(message_id) FROM {EVENTS} WHERE chat_id = ? AND account_id = ? AND event = ?"
             ))
             .bind(chat_id)
-            .bind(self.scope(chat_id).await)
+            .bind(self.read_scope(chat_id).await)
             .bind(EventKind::Send)
             .fetch_one::<i64>()
             .await?)
@@ -264,7 +273,7 @@ impl ClickhouseDb {
                  WHERE chat_id = ? AND account_id = ? AND event = ? AND chat_title != ''",
             )
             .bind(chat_id)
-            .bind(self.scope(chat_id).await)
+            .bind(self.read_scope(chat_id).await)
             .bind(EventKind::Send)
             .fetch_one::<LastChatRow>()
             .await
