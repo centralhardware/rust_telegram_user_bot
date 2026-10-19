@@ -6,7 +6,7 @@ use crate::render::console::{LogLine, Tone};
 use grammers_session::types::PeerRef;
 use grammers_tl_types as tl;
 use log::error;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use crate::db::AdminAction;
@@ -31,6 +31,10 @@ pub async fn start(app: Arc<App>) {
     let first = discover(&app).await;
     let mut failed = first.is_none();
     let mut chats = first.unwrap_or_default();
+    // The newest event id fetched per chat. An async insert is not visible to
+    // the next `max(event_id)` read straight away; this keeps a tick from
+    // refetching what the previous one just wrote. Survives rediscovery.
+    let mut seen: HashMap<u64, u64> = HashMap::new();
 
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(POLL_INTERVAL);
@@ -49,7 +53,7 @@ pub async fn start(app: Arc<App>) {
             }
 
             for chat in &chats {
-                if let Err(e) = log_admin_actions(&app, chat).await {
+                if let Err(e) = log_admin_actions(&app, chat, &mut seen).await {
                     error!("Failed to fetch admin actions for {}: {e:#}", chat.title);
                 }
             }
@@ -667,8 +671,14 @@ fn extract_user_info(users: &[tl::enums::User], user_id: i64) -> (String, Vec<St
     (String::new(), Vec::new())
 }
 
-async fn log_admin_actions(app: &App, chat: &AdminChat) -> anyhow::Result<()> {
-    let min_id = app.db.last_admin_event_id(chat.chat_id).await as i64;
+async fn log_admin_actions(
+    app: &App,
+    chat: &AdminChat,
+    seen: &mut HashMap<u64, u64>,
+) -> anyhow::Result<()> {
+    // A failed read skips the chat for this tick rather than starting from 0.
+    let stored = app.db.last_admin_event_id(chat.chat_id).await?;
+    let min_id = stored.max(seen.get(&chat.chat_id).copied().unwrap_or(0)) as i64;
     let mut max_id: i64 = 0;
     let mut total_inserted: usize = 0;
     let mut new_last_id: u64 = 0;
@@ -751,6 +761,8 @@ async fn log_admin_actions(app: &App, chat: &AdminChat) -> anyhow::Result<()> {
         if batch_max > new_last_id {
             new_last_id = batch_max;
         }
+        let last = seen.entry(chat.chat_id).or_default();
+        *last = (*last).max(new_last_id);
 
         if result.events.len() < 100 {
             break;
@@ -767,4 +779,86 @@ async fn log_admin_actions(app: &App, chat: &AdminChat) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tl::enums::ChannelAdminLogEventAction as A;
+
+    fn title(prev: &str, new: &str) -> A {
+        A::ChangeTitle(tl::types::ChannelAdminLogEventActionChangeTitle {
+            prev_value: prev.into(),
+            new_value: new.into(),
+        })
+    }
+
+    fn pinned(id: i32) -> A {
+        A::UpdatePinned(tl::types::ChannelAdminLogEventActionUpdatePinned {
+            message: tl::enums::Message::Empty(tl::types::MessageEmpty { id, peer_id: None }),
+        })
+    }
+
+    fn rank(user_id: i64) -> A {
+        A::ParticipantEditRank(tl::types::ChannelAdminLogEventActionParticipantEditRank {
+            user_id,
+            prev_rank: "mod".into(),
+            new_rank: "boss".into(),
+        })
+    }
+
+    fn invites(on: bool) -> A {
+        A::ToggleInvites(tl::types::ChannelAdminLogEventActionToggleInvites { new_value: on })
+    }
+
+    #[test]
+    fn title_change() {
+        let a = title("Old", "New");
+        assert_eq!(action_type_name(&a), "ChangeTitle");
+        assert_eq!(action_values(&a), ("Old".into(), "New".into()));
+        assert_eq!(target_user_id(&a), None);
+        assert_eq!(action_message_id(&a), 0);
+        assert_eq!(format_log_output(&a, "", &[], false), "title: Old -> New");
+    }
+
+    #[test]
+    fn pin_points_at_the_message() {
+        let a = pinned(42);
+        assert_eq!(action_type_name(&a), "UpdatePinned");
+        assert_eq!(action_message_id(&a), 42);
+        assert_eq!(action_values(&a), (String::new(), String::new()));
+    }
+
+    #[test]
+    fn rank_edit_targets_the_user() {
+        let a = rank(7);
+        assert_eq!(action_type_name(&a), "ParticipantEditRank");
+        assert_eq!(target_user_id(&a), Some(7));
+        assert_eq!(action_values(&a), ("mod".into(), "boss".into()));
+    }
+
+    #[test]
+    fn toggle_stores_the_new_state() {
+        assert_eq!(
+            action_values(&invites(true)),
+            (String::new(), "true".into())
+        );
+        assert_eq!(
+            format_log_output(&invites(false), "", &[], false),
+            "invites: disabled"
+        );
+    }
+
+    #[test]
+    fn join_and_leave_name_the_actor() {
+        assert_eq!(
+            format_log_output(&A::ParticipantJoin, "Ann", &[], false),
+            "Ann joined"
+        );
+        assert_eq!(
+            format_log_output(&A::ParticipantLeave, "Ann", &[], false),
+            "Ann left"
+        );
+        assert_eq!(target_user_id(&A::ParticipantJoin), None);
+    }
 }

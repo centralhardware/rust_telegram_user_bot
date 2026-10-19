@@ -1,7 +1,8 @@
+use anyhow::Context;
 use grammers_client::client::UpdateStream;
 use grammers_client::sender::UpdatesConfiguration;
 use grammers_client::{Client, SenderPool, SignInError};
-use log::info;
+use log::{info, warn};
 use std::env;
 use std::sync::Arc;
 
@@ -58,9 +59,9 @@ async fn open(
     tokio::sync::mpsc::Receiver<grammers_session::updates::UpdatesLike>,
 )> {
     let api_id = env::var("TG_ID")
-        .expect("TG_ID not set")
+        .context("TG_ID not set")?
         .parse()
-        .expect("TG_ID invalid");
+        .context("TG_ID invalid")?;
 
     let session = Arc::new(ClickhouseSession::open(ch, account).await?);
 
@@ -80,17 +81,30 @@ async fn open(
     Ok((client, session, updates))
 }
 
+/// Codes accepted before `setup` gives up.
+const CODE_ATTEMPTS: u32 = 3;
+
 async fn sign_in(client: &Client) -> Result<()> {
     info!("Signing in...");
     let phone: String = dialoguer::Input::new()
         .with_prompt("Enter your phone number (international format)")
         .interact_text()?;
-    let api_hash = env::var("TG_HASH").expect("TG_HASH not set");
+    let api_hash = env::var("TG_HASH").context("TG_HASH not set")?;
     let token = client.request_login_code(&phone, &api_hash).await?;
-    let code: String = dialoguer::Input::new()
-        .with_prompt("Enter the code you received")
-        .interact_text()?;
-    let signed_in = client.sign_in(&token, &code).await;
+    // A typo must not cost the code: requesting another one is rate-limited.
+    let mut attempt = 1;
+    let signed_in = loop {
+        let code: String = dialoguer::Input::new()
+            .with_prompt("Enter the code you received")
+            .interact_text()?;
+        match client.sign_in(&token, code.trim()).await {
+            Err(SignInError::InvalidCode) if attempt < CODE_ATTEMPTS => {
+                warn!("Invalid code, try again ({attempt}/{CODE_ATTEMPTS})");
+                attempt += 1;
+            }
+            other => break other,
+        }
+    };
     match signed_in {
         Err(SignInError::PasswordRequired(password_token)) => {
             let prompt_message = match password_token.hint() {
@@ -103,10 +117,11 @@ async fn sign_in(client: &Client) -> Result<()> {
 
             client
                 .check_password(password_token, password.trim())
-                .await?;
+                .await
+                .context("password check failed")?;
         }
         Ok(_) => (),
-        Err(e) => panic!("{}", e),
+        Err(e) => anyhow::bail!("sign-in failed: {e}"),
     };
     info!("Signed in!");
     Ok(())

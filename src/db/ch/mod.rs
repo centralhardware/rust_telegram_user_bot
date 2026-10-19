@@ -90,9 +90,13 @@ impl ClickhouseDb {
     /// channel the account has had an update from, under its `-100…` id,
     /// before any handler runs. Only a yes is remembered: a chat not cached
     /// yet may be by the next lookup.
-    async fn scope(&self, chat_id: i64) -> u64 {
+    ///
+    /// A failed lookup is retried and then reported, never read as "not a
+    /// channel": a row filed under the wrong scope is never collapsed with the
+    /// copy the other account writes, and nothing repairs it afterwards.
+    async fn scope(&self, chat_id: i64) -> DbResult<u64> {
         let Some(channels) = &self.channels else {
-            return 0;
+            return Ok(0);
         };
         let dialog_id = -1_000_000_000_000 - chat_id;
         if chat_id > 0
@@ -102,27 +106,53 @@ impl ClickhouseDb {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .contains(&chat_id)
         {
-            return 0;
+            return Ok(0);
         }
-        let cached = chat_id > 0
-            && self
+        if chat_id <= 0 {
+            return Ok(self.account);
+        }
+        let mut delay = std::time::Duration::from_millis(200);
+        let mut attempt = 1;
+        let cached = loop {
+            match self
                 .ch
                 .query("SELECT count() FROM peer_cache_buffer WHERE peer_id = ? AND account = ?")
                 .bind(dialog_id)
                 .bind(&channels.name)
                 .fetch_one::<u64>()
                 .await
-                .is_ok_and(|n| n > 0);
+            {
+                Ok(n) => break n > 0,
+                Err(e) if attempt == SCOPE_ATTEMPTS => {
+                    return Err(anyhow::anyhow!("peer_cache lookup for chat {chat_id}: {e}"));
+                }
+                Err(e) => {
+                    warn!("peer_cache lookup for chat {chat_id} (attempt {attempt}): {e}");
+                    tokio::time::sleep(delay).await;
+                    delay *= 2;
+                    attempt += 1;
+                }
+            }
+        };
         if cached {
             channels
                 .known
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .insert(chat_id);
-            0
+            Ok(0)
         } else {
-            self.account
+            Ok(self.account)
         }
+    }
+
+    /// The scope for a read. A failed lookup only costs this one read, so it
+    /// falls back to the account's own scope instead of failing the caller.
+    async fn read_scope(&self, chat_id: i64) -> u64 {
+        self.scope(chat_id).await.unwrap_or_else(|e| {
+            warn!("{e:#}");
+            self.account
+        })
     }
 
     /// The raw client, for the session store, which is infrastructure rather
@@ -157,6 +187,8 @@ pub fn is_channel(chat_id: i64) -> bool {
 }
 
 const INSERT_ATTEMPTS: u32 = 3;
+/// Tries of the `peer_cache` lookup that decides a row's scope.
+const SCOPE_ATTEMPTS: u32 = 3;
 
 /// The body of a message as the log has it, read back for an edit.
 #[derive(Row, Deserialize, Default)]
@@ -245,7 +277,7 @@ impl Db for ClickhouseDb {
         ClickhouseDb::write_peer_names(self, names).await
     }
 
-    async fn last_admin_event_id(&self, chat_id: u64) -> u64 {
+    async fn last_admin_event_id(&self, chat_id: u64) -> DbResult<u64> {
         ClickhouseDb::last_admin_event_id(self, chat_id).await
     }
 

@@ -12,13 +12,18 @@ use sha2::{Digest, Sha256};
 use std::sync::{Arc, OnceLock};
 
 use crate::app::App;
-use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::{Sender, channel, error::TrySendError};
 
 use crate::db::Event;
 
 /// Waited out between downloads so a busy chat cannot turn into a burst of
 /// `upload.getFile` calls.
 const DOWNLOAD_GAP: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Jobs waiting for the worker. Past this the archiver is not keeping up (a
+/// burst, or S3 down and every job sitting in retries), and new files are
+/// dropped with a warning rather than piling up in memory.
+const QUEUE_CAPACITY: usize = 500;
 
 pub struct Job {
     media: Media,
@@ -31,7 +36,7 @@ pub struct Job {
 /// The download worker's queue, set once the worker is running. Empty when S3
 /// is not configured, in which case `save_media` is a no-op.
 #[derive(Default)]
-pub struct MediaQueue(OnceLock<UnboundedSender<Job>>);
+pub struct MediaQueue(OnceLock<Sender<Job>>);
 
 /// Spawns the single download worker. Does nothing when S3 is unconfigured, in
 /// which case `save_media` degrades to a no-op.
@@ -46,7 +51,7 @@ pub fn start(app: Arc<App>) {
         storage.max_bytes / 1024 / 1024
     );
 
-    let (tx, mut rx) = unbounded_channel::<Job>();
+    let (tx, mut rx) = channel::<Job>(QUEUE_CAPACITY);
     if app.media.0.set(tx).is_err() {
         return;
     }
@@ -83,10 +88,21 @@ pub async fn save_media(app: &App, message: &Message, event: &Event) {
         return;
     }
 
-    let _ = queue.send(Job {
+    let job = Job {
         media,
         event: event.clone(),
-    });
+    };
+    match queue.try_send(job) {
+        Ok(()) => {}
+        Err(TrySendError::Full(job)) => warn!(
+            "media archive: queue full ({QUEUE_CAPACITY}), not archiving chat {} message {}",
+            job.event.chat_id, job.event.message_id
+        ),
+        Err(TrySendError::Closed(job)) => error!(
+            "media archive: worker gone, not archiving chat {} message {}",
+            job.event.chat_id, job.event.message_id
+        ),
+    }
 }
 
 /// Stickers and custom emoji are the same handful of files over and over, and the
@@ -269,4 +285,53 @@ fn ext_from_mime(mime: &str) -> Option<&'static str> {
         "application/pdf" => "pdf",
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SHA: &str = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+
+    #[test]
+    fn key_layout() {
+        let base = format!("ab/cd/{SHA}");
+        assert_eq!(sha256_prefix(SHA), base);
+        for (name, mime, want) in [
+            (Some("photo.JPG"), None, format!("{base}.jpg")),
+            (Some("archive.tar.GZ"), None, format!("{base}.gz")),
+            (Some("noext"), Some("image/png"), format!("{base}.png")),
+            (
+                Some("x.verylongext"),
+                Some("video/mp4"),
+                format!("{base}.mp4"),
+            ),
+            (
+                Some("file.\u{444}"),
+                Some("application/pdf"),
+                format!("{base}.pdf"),
+            ),
+            (Some("a.b-c"), None, base.clone()),
+            (None, Some("image/webp"), format!("{base}.webp")),
+            (None, Some("application/x-unknown"), base.clone()),
+            (None, None, base.clone()),
+        ] {
+            let key = object_key(SHA, name, mime);
+            assert_eq!(key, want, "{name:?} {mime:?}");
+            assert!(key.starts_with(&sha256_prefix(SHA)));
+        }
+    }
+
+    #[test]
+    fn mime_fallback() {
+        assert_eq!(ext_from_mime("image/jpeg"), Some("jpg"));
+        assert_eq!(ext_from_mime("audio/mpeg"), Some("mp3"));
+        assert_eq!(ext_from_mime("text/plain"), None);
+    }
+
+    #[test]
+    fn hex_is_lowercase_and_padded() {
+        assert_eq!(hex(&[0x00, 0x0f, 0xab, 0xff]), "000fabff");
+        assert_eq!(hex(&[]), "");
+    }
 }

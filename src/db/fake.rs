@@ -224,15 +224,16 @@ impl Db for FakeDb {
             .insert(names.peer_id, names.clone());
     }
 
-    async fn last_admin_event_id(&self, chat_id: u64) -> u64 {
-        self.admin_actions
+    async fn last_admin_event_id(&self, chat_id: u64) -> DbResult<u64> {
+        Ok(self
+            .admin_actions
             .lock()
             .unwrap()
             .iter()
             .filter(|a| a.chat_id == chat_id)
             .map(|a| a.event_id)
             .max()
-            .unwrap_or(0)
+            .unwrap_or(0))
     }
 
     async fn write_admin_actions(&self, actions: &[AdminAction]) -> DbResult<()> {
