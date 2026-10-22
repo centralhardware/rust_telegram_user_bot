@@ -79,7 +79,7 @@ pub(super) async fn walk(
     let mut resumed_at = 0i64;
 
     let mut read = Read::default();
-    let mut batch: Vec<Event> = Vec::with_capacity(BATCH);
+    let mut batch: Vec<Event> = Vec::with_capacity(WRITE_BATCH);
     let mut pending: Vec<Message> = Vec::with_capacity(BATCH);
 
     loop {
@@ -156,7 +156,9 @@ pub(super) async fn walk(
 
         if pending.len() >= BATCH {
             convert(app, chat_id, &mut pending, &mut batch).await;
-            flush(app, &mut batch, written).await;
+            if batch.len() >= WRITE_BATCH {
+                flush(app, &mut batch, written).await;
+            }
         }
         // A page's worth read is a page's worth fetched: the next message asks
         // Telegram for the next one.
