@@ -70,11 +70,13 @@ mod walk;
 use new::*;
 use walk::*;
 
-/// Rows per ClickHouse insert. A backfill is thousands of messages at once, and
-/// a batch that size is a part `events_log` can take directly — the Buffer in
-/// front of it is there to spare it the one-row inserts of live traffic, and
-/// pushing a whole history through memory would be the one thing it is not for.
+/// Messages turned into rows at a time.
 pub(super) const BATCH: usize = 1_000;
+/// Rows per ClickHouse insert. A backfill bypasses the Buffer and writes
+/// `events_log` directly, and every insert is a part there and one more in each
+/// of the four materialized views behind it. At 1,000 rows a walk running at
+/// ~8 s per batch made ~40 parts a minute; this keeps it to a few.
+pub(super) const WRITE_BATCH: usize = 20_000;
 /// How many chats a dry run names in its message, before the rest is left to
 /// the log. A Telegram message is 4096 characters and a report that does not fit
 /// is not sent at all.
