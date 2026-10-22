@@ -1,6 +1,7 @@
 //! Walking one chat's history and writing what the log is missing.
 
 use super::*;
+use std::time::Instant;
 
 /// What one segment of a walk read.
 #[derive(Default)]
@@ -78,6 +79,7 @@ pub(super) async fn walk(
     // where it started is taken as the end rather than re-anchored for ever.
     let mut resumed_at = 0i64;
 
+    let started = Instant::now();
     let mut read = Read::default();
     let mut batch: Vec<Event> = Vec::with_capacity(WRITE_BATCH);
     let mut pending: Vec<Message> = Vec::with_capacity(BATCH);
@@ -109,7 +111,7 @@ pub(super) async fn walk(
                     break;
                 }
                 resumed_at = anchor;
-                debug!("backfill {chat_id}: search ran out at {anchor}, looking under it");
+                info!("backfill {chat_id}: search ran out at {anchor}, looking under it");
                 tokio::time::sleep(REQUEST_GAP).await;
                 if read.lowest > 0 {
                     search = anchored(anchor);
@@ -119,17 +121,24 @@ pub(super) async fn walk(
                     // `offset_id` is exclusive, so the search is anchored one
                     // above the id it must read first.
                     Some(next) if floor == 0 || next > floor => {
-                        debug!(
+                        info!(
                             "backfill {chat_id}: nothing under {anchor} in search, \
                              resuming at {next}"
                         );
                         search = anchored(next + 1);
                         continue;
                     }
-                    _ => break,
+                    _ => {
+                        info!("backfill {chat_id}: nothing under {anchor}, at the start");
+                        break;
+                    }
                 }
             }
             Err(e) => {
+                warn!(
+                    "backfill {chat_id}: Telegram refused after {} read: {e}",
+                    read.seen
+                );
                 read.error = Some(e.to_string());
                 break;
             }
@@ -164,6 +173,18 @@ pub(super) async fn walk(
         // Telegram for the next one.
         if read.seen % SEARCH_PAGE == 0 {
             tokio::time::sleep(REQUEST_GAP).await;
+        }
+        if read.seen % LOG_EVERY == 0 {
+            let secs = started.elapsed().as_secs_f64();
+            info!(
+                "backfill {chat_id}: {}/{total} read, {written} written, {} pending, \
+                 at id {}, {:.0}s, {:.0} msg/s",
+                read.seen,
+                pending.len() + batch.len(),
+                read.lowest,
+                secs,
+                read.seen as f64 / secs.max(0.001)
+            );
         }
         if read.seen % PROGRESS_EVERY == 0
             && let Some(status) = status
@@ -212,6 +233,17 @@ pub(super) async fn walk_chat(
         counter = counter.sent_by_self();
     }
     let total = counter.total().await.unwrap_or(0);
+    let whose = if mine_only { "mine" } else { "all" };
+    info!(
+        "backfill {chat_id}: starting — {total} messages ({whose}), from {}{}",
+        if offset > 0 {
+            offset.to_string()
+        } else {
+            "the newest".into()
+        },
+        if bot_chat { ", bot chat" } else { "" }
+    );
+    let started = Instant::now();
 
     let mut written = 0usize;
     let read = walk(
@@ -228,6 +260,10 @@ pub(super) async fn walk_chat(
     )
     .await;
     let seen = read.seen;
+    info!(
+        "backfill {chat_id}: walk ended — {seen} read, {written} written in {:.0}s",
+        started.elapsed().as_secs_f64()
+    );
     let pinged = read.pinged;
     let error = read.error;
 
@@ -378,7 +414,10 @@ pub(super) async fn flush(app: &App, batch: &mut Vec<Event>, written: &mut usize
         return;
     }
     match app.db.write_backfill(batch).await {
-        Ok(()) => *written += batch.len(),
+        Ok(()) => {
+            *written += batch.len();
+            info!("backfill: inserted {} rows, {written} so far", batch.len());
+        }
         Err(e) => warn!("backfill: insert: {e}"),
     }
     batch.clear();

@@ -54,7 +54,7 @@ use grammers_client::message::Message;
 use grammers_session::Session;
 use grammers_session::types::{PeerId, PeerInfo, PeerRef};
 use grammers_tl_types as tl;
-use log::{debug, warn};
+use log::{info, warn};
 use std::collections::HashSet;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -83,6 +83,8 @@ pub(super) const WRITE_BATCH: usize = 20_000;
 pub(super) const DRY_RUN_NAMES: usize = 50;
 /// How often the status message is rewritten, in messages seen.
 pub(super) const PROGRESS_EVERY: usize = 2_000;
+/// How often a progress line goes to the container log, in messages seen.
+pub(super) const LOG_EVERY: usize = 500;
 /// How many messages are turned into rows at once. Building a row is mostly
 /// waiting — on the reply target's lookup, on a name, now and then on Telegram
 /// for a topic title — and done one after another that wait is the whole

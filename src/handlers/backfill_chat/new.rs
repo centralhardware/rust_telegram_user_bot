@@ -124,6 +124,12 @@ pub(super) async fn run_new(
             skipped += 1;
             continue;
         }
+        info!(
+            "backfill new: {}/{total} — {} ({}), {written} written so far",
+            done + 1,
+            dialog.title,
+            dialog.chat_id
+        );
         if let Some(status) = status {
             let _ = status
                 .edit(format!(
