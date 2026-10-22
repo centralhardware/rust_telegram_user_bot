@@ -28,6 +28,8 @@ on:
 permissions:
   contents: read
   packages: write
+  pull-requests: read
+  checks: read
 
 jobs:
   build:
@@ -36,21 +38,51 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # A push to main that is a PR's head tree unchanged, with that head's
+      # build already green, was tested there: skip the checks, keep the image.
+      - name: Already tested in a PR?
+        id: tested
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          head=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+            --jq '[.[] | select(.merged_at != null)][0].head.sha // empty')
+          [[ -n "$head" ]] || { echo "No merged PR for this commit"; exit 0; }
+          ours=$(git rev-parse 'HEAD^{tree}')
+          theirs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head" --jq .commit.tree.sha)
+          [[ "$ours" == "$theirs" ]] || { echo "Tree differs from PR head $head"; exit 0; }
+          ok=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head/check-runs?check_name=build" \
+            --jq '[.check_runs[] | select(.conclusion == "success")] | length')
+          if [[ "$ok" -gt 0 ]]; then
+            echo "PR head $head passed with the same tree, skipping checks"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "PR head $head has no green build"
+          fi
+
       - name: Set up Rust
+        if: steps.tested.outputs.skip != 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
 
       - name: Cache cargo
+        if: steps.tested.outputs.skip != 'true'
         uses: Swatinem/rust-cache@v2
 
       - name: Format
+        if: steps.tested.outputs.skip != 'true'
         run: cargo fmt --check
 
       - name: Clippy
+        if: steps.tested.outputs.skip != 'true'
         run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: Test
+        if: steps.tested.outputs.skip != 'true'
         run: cargo test --locked
 
       - name: Set up Docker Buildx
