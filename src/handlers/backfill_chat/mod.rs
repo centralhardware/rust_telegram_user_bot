@@ -56,6 +56,7 @@ use grammers_session::types::{PeerId, PeerInfo, PeerRef};
 use grammers_tl_types as tl;
 use log::{info, warn};
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
@@ -98,6 +99,49 @@ pub(super) const REQUEST_GAP: Duration = Duration::from_millis(500);
 /// How many messages `messages.Search` answers with at once. Every this many
 /// read is one round trip made, and one gap owed.
 pub(super) const SEARCH_PAGE: usize = 100;
+
+/// Set on SIGINT/SIGTERM: every walk stops reading and writes what it holds.
+static STOPPING: AtomicBool = AtomicBool::new(false);
+/// Walks still running, so the shutdown can wait for their last write.
+static ACTIVE: AtomicUsize = AtomicUsize::new(0);
+
+/// Tell every running backfill to stop, and wait — up to `limit` — for each to
+/// write the rows it has in memory. Without this a shutdown loses up to a whole
+/// write batch per chat.
+pub async fn stop(limit: Duration) {
+    STOPPING.store(true, Ordering::SeqCst);
+    let deadline = tokio::time::Instant::now() + limit;
+    while ACTIVE.load(Ordering::SeqCst) > 0 {
+        if tokio::time::Instant::now() >= deadline {
+            warn!(
+                "backfill: {} still writing at shutdown, giving up on them",
+                ACTIVE.load(Ordering::SeqCst)
+            );
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Counts a walk in `ACTIVE` for as long as it is alive.
+pub(super) struct Active;
+
+impl Active {
+    pub(super) fn new() -> Self {
+        ACTIVE.fetch_add(1, Ordering::SeqCst);
+        Active
+    }
+}
+
+impl Drop for Active {
+    fn drop(&mut self) {
+        ACTIVE.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+pub(super) fn stopping() -> bool {
+    STOPPING.load(Ordering::SeqCst)
+}
 
 /// Chats a backfill is running for. One at a time per chat: two walks of the
 /// same history would only write each other's rows again.
