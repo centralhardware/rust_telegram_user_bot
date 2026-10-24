@@ -56,6 +56,7 @@ pub(super) async fn walk(
     app: &Arc<App>,
     peer: PeerRef,
     chat_id: i64,
+    name: &str,
     mine_only: bool,
     bot_chat: bool,
     offset_id: i64,
@@ -177,9 +178,10 @@ pub(super) async fn walk(
         if read.seen % LOG_EVERY == 0 {
             let secs = started.elapsed().as_secs_f64();
             info!(
-                "backfill {chat_id}: {}/{total} read, {written} written, {} pending, \
+                "backfill {name}: {}/{total} read ({}), {written} written, {} pending, \
                  at id {}, {:.0}s, {:.0} msg/s",
                 read.seen,
+                percent(read.seen, total),
                 pending.len() + batch.len(),
                 read.lowest,
                 secs,
@@ -191,8 +193,9 @@ pub(super) async fn walk(
         {
             let _ = status
                 .edit(format!(
-                    "backfill {chat_id}: {}/{total} read, {written} written…",
-                    read.seen
+                    "backfill {name}: {}/{total} read ({}), {written} written…",
+                    read.seen,
+                    percent(read.seen, total)
                 ))
                 .await;
         }
@@ -203,6 +206,25 @@ pub(super) async fn walk(
     // on a refusal.
     flush(app, &mut batch, written).await;
     read
+}
+
+/// How far through `total` the walk is, as a whole percent. Telegram's total is
+/// an estimate, so it is capped rather than shown past 100.
+fn percent(seen: usize, total: usize) -> String {
+    if total == 0 {
+        return "?%".into();
+    }
+    format!("{}%", (seen * 100 / total).min(100))
+}
+
+/// What to call a chat in the progress lines: its @username out of the log,
+/// else its title, else the bare id.
+async fn chat_name(app: &App, chat_id: i64) -> String {
+    match app.db.last_chat_name(chat_id).await {
+        Some((_, usernames)) if !usernames.is_empty() => format!("@{}", usernames[0]),
+        Some((title, _)) if !title.is_empty() => title,
+        _ => chat_id.to_string(),
+    }
 }
 
 /// Walk one chat's history, writing every message the log is missing. Returns
@@ -245,11 +267,13 @@ pub(super) async fn walk_chat(
     );
     let started = Instant::now();
 
+    let name = chat_name(app, chat_id).await;
     let mut written = 0usize;
     let read = walk(
         app,
         peer,
         chat_id,
+        &name,
         mine_only,
         bot_chat,
         offset,
