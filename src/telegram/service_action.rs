@@ -338,6 +338,7 @@ pub fn format(
             Some(id) => format!("[community changed: {}]", id),
             None => "[community changed]".into(),
         },
+        MessageAction::NoPaidMessagesTokenUsed => "[no-paid-messages token used]".into(),
     }
 }
 
