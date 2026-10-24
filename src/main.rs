@@ -75,10 +75,10 @@ async fn main() -> Result<()> {
     tokio::spawn(watch_accounts(Arc::clone(&db), ignored, claims, failed));
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    // Nothing to flush on the way out any more: every row is written as it
-    // happens, so a shutdown — or a crash, which never got to run this —
-    // leaves nothing behind in memory.
-    tokio::select! {
+    // Live rows are written as they happen; only a running backfill holds rows
+    // in memory, and it is given a moment to write them. A crash still loses
+    // them — the next `last` run reads them again.
+    let result = tokio::select! {
         Some(e) = failures.recv() => Err(e),
         _ = tokio::signal::ctrl_c() => {
             log::info!("SIGINT received, shutting down");
@@ -88,7 +88,10 @@ async fn main() -> Result<()> {
             log::info!("SIGTERM received, shutting down");
             Ok(())
         }
-    }
+    };
+    // Under Docker's 10 s grace before SIGKILL.
+    handlers::backfill_chat::stop(std::time::Duration::from_secs(8)).await;
+    result
 }
 
 /// An account, connected, with its `App` built and its schedulers running,

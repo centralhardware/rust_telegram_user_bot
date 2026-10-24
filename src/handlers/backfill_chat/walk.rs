@@ -80,12 +80,20 @@ pub(super) async fn walk(
     // where it started is taken as the end rather than re-anchored for ever.
     let mut resumed_at = 0i64;
 
+    let _active = Active::new();
     let started = Instant::now();
     let mut read = Read::default();
     let mut batch: Vec<Event> = Vec::with_capacity(WRITE_BATCH);
     let mut pending: Vec<Message> = Vec::with_capacity(BATCH);
 
     loop {
+        // Ended like a refusal, so the range is not taken for complete and a
+        // later `last` run carries on from here.
+        if stopping() {
+            info!("backfill {chat_id}: shutting down, writing what is in hand");
+            read.error = Some("the bot shut down".into());
+            break;
+        }
         let message = match search.next().await {
             Ok(Some(message)) => message,
             // The search says it is out of messages, which is not the same as
