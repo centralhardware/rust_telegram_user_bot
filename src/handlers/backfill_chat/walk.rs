@@ -229,6 +229,10 @@ fn percent(seen: usize, total: usize) -> String {
 /// whole history when it starts at the newest. A walk carrying on from `last`
 /// or `from <id>` never reads what is above its start, so counting that too
 /// left the percent stuck short of 100 and the total too big.
+///
+/// Telegram ignores `max_id` in the count it answers with, so the total is the
+/// whole chat's and what lies above `offset` comes off it: anchored at `offset`,
+/// the answer's `offset_id_offset` is how many messages are newer than it.
 async fn count_below(app: &App, peer: PeerRef, mine_only: bool, offset: i64) -> usize {
     let count = app
         .tg
@@ -242,24 +246,32 @@ async fn count_below(app: &App, peer: PeerRef, mine_only: bool, offset: i64) -> 
             filter: tl::enums::MessagesFilter::InputMessagesFilterEmpty,
             min_date: 0,
             max_date: 0,
-            offset_id: 0,
+            offset_id: offset.max(0) as i32,
             add_offset: 0,
-            limit: 0,
-            max_id: offset.max(0) as i32,
+            limit: 1,
+            max_id: 0,
             min_id: 0,
             hash: 0,
         })
         .await;
     match count {
         Ok(tl::enums::messages::Messages::Messages(m)) => m.messages.len(),
-        Ok(tl::enums::messages::Messages::Slice(m)) => m.count as usize,
-        Ok(tl::enums::messages::Messages::ChannelMessages(m)) => m.count as usize,
+        Ok(tl::enums::messages::Messages::Slice(m)) => remaining(m.count, m.offset_id_offset),
+        Ok(tl::enums::messages::Messages::ChannelMessages(m)) => {
+            remaining(m.count, m.offset_id_offset)
+        }
         Ok(tl::enums::messages::Messages::NotModified(m)) => m.count as usize,
         Err(e) => {
             warn!("backfill: could not count the messages under {offset}: {e}");
             0
         }
     }
+}
+
+/// What is left of `count` once the `above` messages newer than the start are
+/// taken off.
+fn remaining(count: i32, above: Option<i32>) -> usize {
+    (count - above.unwrap_or(0)).max(0) as usize
 }
 
 /// What to call a chat in the progress lines: its @username out of the log,
