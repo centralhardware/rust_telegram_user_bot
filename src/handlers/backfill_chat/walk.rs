@@ -225,6 +225,43 @@ fn percent(seen: usize, total: usize) -> String {
     format!("{}%", (seen * 100 / total).min(100))
 }
 
+/// How many messages the walk has ahead of it: the ones under `offset`, or the
+/// whole history when it starts at the newest. A walk carrying on from `last`
+/// or `from <id>` never reads what is above its start, so counting that too
+/// left the percent stuck short of 100 and the total too big.
+async fn count_below(app: &App, peer: PeerRef, mine_only: bool, offset: i64) -> usize {
+    let count = app
+        .tg
+        .invoke(&tl::functions::messages::Search {
+            peer: peer.into(),
+            q: String::new(),
+            from_id: mine_only.then_some(tl::enums::InputPeer::PeerSelf),
+            saved_peer_id: None,
+            saved_reaction: None,
+            top_msg_id: None,
+            filter: tl::enums::MessagesFilter::InputMessagesFilterEmpty,
+            min_date: 0,
+            max_date: 0,
+            offset_id: 0,
+            add_offset: 0,
+            limit: 0,
+            max_id: offset.max(0) as i32,
+            min_id: 0,
+            hash: 0,
+        })
+        .await;
+    match count {
+        Ok(tl::enums::messages::Messages::Messages(m)) => m.messages.len(),
+        Ok(tl::enums::messages::Messages::Slice(m)) => m.count as usize,
+        Ok(tl::enums::messages::Messages::ChannelMessages(m)) => m.count as usize,
+        Ok(tl::enums::messages::Messages::NotModified(m)) => m.count as usize,
+        Err(e) => {
+            warn!("backfill: could not count the messages under {offset}: {e}");
+            0
+        }
+    }
+}
+
 /// What to call a chat in the progress lines: its @username out of the log,
 /// else its title, else the bare id.
 async fn chat_name(app: &App, chat_id: i64) -> String {
@@ -258,11 +295,7 @@ pub(super) async fn walk_chat(
         Start::From(id) => id,
     };
 
-    let mut counter = app.tg.search_messages(peer);
-    if mine_only {
-        counter = counter.sent_by_self();
-    }
-    let total = counter.total().await.unwrap_or(0);
+    let total = count_below(app, peer, mine_only, offset).await;
     let whose = if mine_only { "mine" } else { "all" };
     info!(
         "backfill {chat_id}: starting — {total} messages ({whose}), from {}{}",
