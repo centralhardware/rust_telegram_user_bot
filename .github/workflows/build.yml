@@ -36,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # A push to main that is a PR's head tree unchanged, with that head's
       # build already green, was tested there: skip the checks, keep the image.
