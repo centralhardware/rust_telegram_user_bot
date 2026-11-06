@@ -115,7 +115,36 @@ pub fn describe_media(media: &tl::enums::MessageMedia) -> String {
         }
         tl::enums::MessageMedia::ToDo(_) => "[todo list]".into(),
         tl::enums::MessageMedia::VideoStream(_) => "[video stream]".into(),
+        tl::enums::MessageMedia::Widget(w) => describe_widget(w),
     }
+}
+
+/// The payload's format is undocumented, so only its size is shown; the bytes
+/// themselves stay in the `raw` column.
+fn describe_widget(widget: &tl::types::MessageMediaWidget) -> String {
+    let mut head = format!(
+        "[widget, {}x{}, {} bytes",
+        widget.width,
+        widget.height,
+        widget.payload.len()
+    );
+    if let Some(id) = widget.widget_id {
+        head.push_str(&format!(", id {id}"));
+    }
+    if widget.is_copy {
+        head.push_str(", copy");
+    }
+    head.push(']');
+
+    let data = [
+        ("public", widget.public_data.as_deref()),
+        ("chat", widget.chat_data.as_deref()),
+    ];
+    data.into_iter()
+        .filter_map(|(label, value)| value.filter(|v| !v.is_empty()).map(|v| (label, v)))
+        .fold(head, |text, (label, value)| {
+            format!("{text}\n{label}: {value}")
+        })
 }
 
 fn describe_document(media: &tl::types::MessageMediaDocument) -> String {
@@ -422,5 +451,46 @@ fn kind_of(media: &tl::enums::MessageMedia) -> &'static str {
         tl::enums::MessageMedia::PaidMedia(_) => "paid_media",
         tl::enums::MessageMedia::ToDo(_) => "todo",
         tl::enums::MessageMedia::VideoStream(_) => "video_stream",
+        tl::enums::MessageMedia::Widget(_) => "widget",
+    }
+}
+
+#[cfg(test)]
+mod widget_tests {
+    use super::*;
+
+    fn widget() -> tl::types::MessageMediaWidget {
+        tl::types::MessageMediaWidget {
+            is_copy: false,
+            can_query: false,
+            background_query: false,
+            width: 320,
+            height: 200,
+            payload: vec![0; 12],
+            public_data: None,
+            public_data_hash: None,
+            chat_data: None,
+            widget_id: None,
+        }
+    }
+
+    #[test]
+    fn a_bare_widget_shows_its_size_and_payload_length() {
+        assert_eq!(describe_widget(&widget()), "[widget, 320x200, 12 bytes]");
+    }
+
+    #[test]
+    fn a_widget_lists_its_id_and_data() {
+        let w = tl::types::MessageMediaWidget {
+            is_copy: true,
+            widget_id: Some(7),
+            public_data: Some("score=3".into()),
+            chat_data: Some("turn=me".into()),
+            ..widget()
+        };
+        assert_eq!(
+            describe_widget(&w),
+            "[widget, 320x200, 12 bytes, id 7, copy]\npublic: score=3\nchat: turn=me"
+        );
     }
 }
