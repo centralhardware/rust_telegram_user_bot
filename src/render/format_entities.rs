@@ -88,7 +88,8 @@ fn entity_markers(entity: &tl::enums::MessageEntity) -> Option<(i32, i32, String
         }
         tl::enums::MessageEntity::Code(e) => Some((e.offset, e.length, "`".into(), "`".into(), 70)),
         tl::enums::MessageEntity::Pre(e) => {
-            Some((e.offset, e.length, "```\n".into(), "\n```".into(), 80))
+            let open = format!("```{}\n", e.language);
+            Some((e.offset, e.length, open, "\n```".into(), 80))
         }
         _ => None,
     }
@@ -196,6 +197,31 @@ mod tests {
 
     fn underline_entity(offset: i32, length: i32) -> tl::enums::MessageEntity {
         tl::types::MessageEntityUnderline { offset, length }.into()
+    }
+
+    fn pre_entity(offset: i32, length: i32, language: &str) -> tl::enums::MessageEntity {
+        tl::types::MessageEntityPre {
+            offset,
+            length,
+            language: language.into(),
+        }
+        .into()
+    }
+
+    #[test]
+    fn pre_block_carries_its_language() {
+        assert_eq!(
+            render("x = 1", Some(&[pre_entity(0, 5, "python")])),
+            "```python\nx = 1\n```"
+        );
+    }
+
+    #[test]
+    fn pre_block_without_a_language_stays_bare() {
+        assert_eq!(
+            render("x = 1", Some(&[pre_entity(0, 5, "")])),
+            "```\nx = 1\n```"
+        );
     }
 
     #[test]
