@@ -115,6 +115,7 @@ pub fn describe_media(media: &tl::enums::MessageMedia) -> String {
         }
         tl::enums::MessageMedia::ToDo(_) => "[todo list]".into(),
         tl::enums::MessageMedia::VideoStream(_) => "[video stream]".into(),
+        tl::enums::MessageMedia::Widget(_) => "[widget]".into(),
     }
 }
 
@@ -422,5 +423,6 @@ fn kind_of(media: &tl::enums::MessageMedia) -> &'static str {
         tl::enums::MessageMedia::PaidMedia(_) => "paid_media",
         tl::enums::MessageMedia::ToDo(_) => "todo",
         tl::enums::MessageMedia::VideoStream(_) => "video_stream",
+        tl::enums::MessageMedia::Widget(_) => "widget",
     }
 }
