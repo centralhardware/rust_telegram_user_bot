@@ -254,6 +254,11 @@ pub struct Event {
     /// The message this one replies to, and who sent that message.
     pub reply_to: u64,
     pub reply_to_user_id: u64,
+    /// Who the message @mentions: the usernames typed as `@name` (lowercased,
+    /// without the `@`) and the accounts linked by a text mention, which have
+    /// no username to type. Filled on send and edit rows.
+    pub mentions: Vec<String>,
+    pub mentioned_user_ids: Vec<u64>,
     /// The chat `reply_to` belongs to, 0 when that is this chat — every ordinary
     /// reply. Telegram also lets a message quote one from *another* chat, and
     /// then `reply_to` is an id over there: joining it onto this chat's messages

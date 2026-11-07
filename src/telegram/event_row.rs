@@ -59,13 +59,17 @@ pub fn build(message: &tl::enums::Message, cx: Context) -> Event {
         crate::telegram::media_description::describe_of(message).unwrap_or_default()
     };
 
+    let entities = crate::telegram::entities::of_raw(message);
+    let (mentions, mentioned_user_ids) = crate::telegram::entities::mentions(&content, &entities);
     let meta = crate::telegram::media_description::media_meta_of(message).unwrap_or_default();
     let meta_msg = crate::telegram::message_meta::of(message);
 
     Event {
         date_time: date as u32,
         message: content,
-        entities: crate::telegram::entities::of_raw(message),
+        entities,
+        mentions,
+        mentioned_user_ids,
         keyboard: crate::telegram::entities::keyboard_of_raw(message),
         chat_title: cx.chat.chat_title,
         chat_id,

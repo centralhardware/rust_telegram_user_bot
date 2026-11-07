@@ -58,6 +58,41 @@ pub fn of_raw(message: &tl::enums::Message) -> Vec<Entity> {
     }
 }
 
+/// Who a message mentions, read off its text and entities: the `@usernames`
+/// it types, lowercased and without the `@`, and the user ids its text
+/// mentions link to. Each listed once, in the order they first appear.
+/// Offsets are UTF-16 code units, so the text is sliced in those.
+pub fn mentions(text: &str, entities: &[Entity]) -> (Vec<String>, Vec<u64>) {
+    let utf16: Vec<u16> = text.encode_utf16().collect();
+    let mut names = Vec::new();
+    let mut ids = Vec::new();
+    for (kind, offset, length, payload) in entities {
+        match kind.as_str() {
+            "mention" => {
+                let (start, end) = (*offset as usize, (*offset + *length) as usize);
+                let Some(span) = utf16.get(start..end) else {
+                    continue;
+                };
+                let name = String::from_utf16_lossy(span)
+                    .trim_start_matches('@')
+                    .to_lowercase();
+                if !name.is_empty() && !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+            "text_mention" => {
+                if let Ok(id) = payload.parse::<u64>() {
+                    if !ids.contains(&id) {
+                        ids.push(id);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    (names, ids)
+}
+
 fn payload(entity: &tl::enums::MessageEntity) -> String {
     use tl::enums::MessageEntity as E;
     match entity {
@@ -270,5 +305,36 @@ mod tests {
                 (1, "Nope".to_string(), "callback".to_string(), String::new()),
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod mention_tests {
+    use super::mentions;
+
+    fn e(kind: &str, offset: u32, length: u32, payload: &str) -> super::Entity {
+        (kind.into(), offset, length, payload.into())
+    }
+
+    #[test]
+    fn usernames_and_text_mentions_are_both_collected() {
+        // "😀" is two UTF-16 units, so the mention after it starts at 3.
+        let text = "😀 @Alice and Bob, @alice again";
+        let (names, ids) = mentions(
+            text,
+            &[
+                e("mention", 3, 6, ""),
+                e("text_mention", 14, 3, "42"),
+                e("mention", 19, 6, ""),
+                e("bold", 0, 2, ""),
+            ],
+        );
+        assert_eq!(names, ["alice"]);
+        assert_eq!(ids, [42]);
+    }
+
+    #[test]
+    fn an_entity_past_the_text_is_skipped() {
+        assert_eq!(mentions("hi", &[e("mention", 5, 4, "")]), (vec![], vec![]));
     }
 }

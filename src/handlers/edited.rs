@@ -146,6 +146,8 @@ pub async fn save_edited(app: &App, message: &Message) -> anyhow::Result<()> {
     // Everything else is fixed when the message is sent and already on its send
     // row.
     let meta = crate::telegram::media_description::media_meta(message).unwrap_or_default();
+    let (mentions, mentioned_user_ids) =
+        crate::telegram::entities::mentions(&message_content, &entities);
 
     app.db
         .log_event(Event {
@@ -154,6 +156,8 @@ pub async fn save_edited(app: &App, message: &Message) -> anyhow::Result<()> {
             message_id: msg_id,
             message: message_content,
             entities,
+            mentions,
+            mentioned_user_ids,
             keyboard,
             diff,
             raw: serde_json::to_string(&std::ops::Deref::deref(message).raw).unwrap_or_default(),
