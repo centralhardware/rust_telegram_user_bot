@@ -81,10 +81,10 @@ pub fn mentions(text: &str, entities: &[Entity]) -> (Vec<String>, Vec<u64>) {
                 }
             }
             "text_mention" => {
-                if let Ok(id) = payload.parse::<u64>() {
-                    if !ids.contains(&id) {
-                        ids.push(id);
-                    }
+                if let Ok(id) = payload.parse::<u64>()
+                    && !ids.contains(&id)
+                {
+                    ids.push(id);
                 }
             }
             _ => {}
