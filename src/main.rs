@@ -3,6 +3,7 @@ mod db;
 mod dispatch;
 mod events;
 mod handlers;
+mod lols;
 mod render;
 mod s3;
 mod schedulers;
@@ -70,9 +71,18 @@ async fn main() -> Result<()> {
     let (failed, mut failures) = mpsc::channel::<anyhow::Error>(1);
 
     // The first account is not optional: without it there is nothing to run.
-    let first = connect_account(&db, "", &ignored, &claims).await?;
+    // One checker for every account: the spam banlist is about users, not
+    // about whichever account saw them.
+    let lols = lols::Lols::start(Arc::clone(&db)).await;
+    let first = connect_account(&db, "", &ignored, &claims, &lols).await?;
     spawn_account(first, failed.clone());
-    tokio::spawn(watch_accounts(Arc::clone(&db), ignored, claims, failed));
+    tokio::spawn(watch_accounts(
+        Arc::clone(&db),
+        ignored,
+        claims,
+        lols,
+        failed,
+    ));
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     // Live rows are written as they happen; only a running backfill holds rows
@@ -101,6 +111,7 @@ async fn connect_account(
     name: &str,
     ignored: &Arc<state::log_ignore::LogIgnore>,
     claims: &Arc<state::claims::Claims>,
+    lols: &Arc<lols::Lols>,
 ) -> Result<(Arc<App>, grammers_client::client::UpdateStream)> {
     let (client, session, updates) = session::connect(db.client().clone(), name).await?;
     let me = client.get_me().await?.id().bare_id().unwrap() as u64;
@@ -113,15 +124,18 @@ async fn connect_account(
             name
         }
     );
-    let app = Arc::new(App::new(
-        client,
-        Arc::new(db.for_account(me, name)),
-        s3::Storage::from_env(),
-        Some(session),
-        me,
-        Arc::clone(ignored),
-        Arc::clone(claims),
-    ));
+    let app = Arc::new(
+        App::new(
+            client,
+            Arc::new(db.for_account(me, name)),
+            s3::Storage::from_env(),
+            Some(session),
+            me,
+            Arc::clone(ignored),
+            Arc::clone(claims),
+        )
+        .with_lols(Arc::clone(lols)),
+    );
     handlers::start_media(Arc::clone(&app));
     // Before any update is handled: until the admin chats are known, media
     // posted in them would not be archived, and nothing catches up on it.
@@ -146,6 +160,7 @@ async fn watch_accounts(
     db: Arc<db::ch::ClickhouseDb>,
     ignored: Arc<state::log_ignore::LogIgnore>,
     claims: Arc<state::claims::Claims>,
+    lols: Arc<lols::Lols>,
     failed: mpsc::Sender<anyhow::Error>,
 ) {
     let mut running = std::collections::HashSet::new();
@@ -168,7 +183,7 @@ async fn watch_accounts(
             if running.contains(&name) || !setup::valid_name(&name) {
                 continue;
             }
-            match connect_account(&db, &name, &ignored, &claims).await {
+            match connect_account(&db, &name, &ignored, &claims, &lols).await {
                 Ok(account) => {
                     spawn_account(account, failed.clone());
                     running.insert(name);

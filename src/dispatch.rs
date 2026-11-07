@@ -66,6 +66,8 @@ pub static NEW_MESSAGE: &[&dyn Handler<NewMessage>] = &[
     // After the save: the archiver writes the same row again once the file is
     // in S3, so it needs the row as it was logged.
     &Media,
+    // After the save, and only for a message that was logged.
+    &SpamCheck,
     &AutoCat,
     // After the save: `!backfill` is a message like any other, and belongs in
     // the log with the rest.
@@ -269,6 +271,20 @@ impl Handler<NewMessage> for Media {
         Box::pin(async move {
             if let Some(event) = &m.event {
                 handlers::save_media(&m.app, &m.message, event).await;
+            }
+            Flow::Continue
+        })
+    }
+}
+
+/// Checks the sender against the lols.bot banlist. Never waits: the check
+/// runs on a task of its own.
+struct SpamCheck;
+impl Handler<NewMessage> for SpamCheck {
+    fn handle<'a>(&'a self, m: &'a mut NewMessage) -> Step<'a, Flow> {
+        Box::pin(async move {
+            if let Some(event) = &m.event {
+                m.app.lols.on_message(event.user_id);
             }
             Flow::Continue
         })

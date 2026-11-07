@@ -206,6 +206,7 @@ struct LastChatRow {
 
 mod admin_actions;
 mod events;
+mod lols;
 mod media_files;
 mod peer_names;
 mod recent;

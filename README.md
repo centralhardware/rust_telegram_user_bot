@@ -43,6 +43,13 @@ Telegram ──MTProto──▶ grammers UpdateStream
   - `user_sessions` records the account's other logged-in sessions.
   - `admin_actions` finds the chats the account administers and polls their
     admin logs. Its first scan runs before any update is handled.
+- **Spam check** (`src/lols.rs`): every logged message hands its sender to
+  one checker shared by all accounts, which runs off the message path. The
+  sender is matched against lols.bot's hourly banlist dump first: it is kept in
+  memory and downloaded again when its ETag changes. Only a sender missing from
+  the dump goes to `api.lols.bot/account`, one request at a time. A banned user
+  is never checked again. A clean one is matched against every new dump and
+  asked about again after a week.
 - **Console:** every event prints one coloured line through
   `render::console::LogLine`.
 
@@ -62,6 +69,7 @@ readers query the base tables, which are at most a minute behind.
 | `events_log` (+ `events_log_buffer`) | One row per event. The `event` column is `send`, `edit`, `delete`, `reaction`, `service`, `pin`, `unpin`, `poll`, `views` or `file_uploaded`. `raw` keeps the message as Telegram sent it. |
 | `peer_names` (+ buffer) | Display names and usernames for every peer seen, keyed by Bot API dialog id |
 | `media_files` | Which S3 object a Telegram photo or document is already stored as |
+| `lols_status` | Whether a message sender is on the [lols.bot](https://lols.bot) spam banlist, one row per check (`src/lols.rs`) |
 | `admin_actions` | Admin-log events of the chats the account administers |
 | `user_sessions` | The account's other sessions |
 | `accounts` | Accounts after the first, as `setup <name>` recorded them |

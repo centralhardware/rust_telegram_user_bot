@@ -13,6 +13,7 @@ use crate::db::session::ClickhouseSession;
 use crate::handlers::backfill_chat::RunningBackfills;
 use crate::handlers::media::MediaQueue;
 use crate::handlers::polls::PollCounts;
+use crate::lols::Lols;
 use crate::s3::Storage;
 use crate::state::admin_chats::AdminChats;
 use crate::state::claims::Claims;
@@ -35,6 +36,8 @@ pub struct App {
     pub ignored: Arc<LogIgnore>,
     /// Which account writes an event every account sees. Shared by all of them.
     pub claims: Arc<Claims>,
+    /// The lols.bot spam check of message senders. Shared by all of them.
+    pub lols: Arc<Lols>,
     pub admin_chats: AdminChats,
     pub media: MediaQueue,
     pub topics: TopicNames,
@@ -61,6 +64,7 @@ impl App {
             me,
             ignored,
             claims,
+            lols: Arc::new(Lols::disabled()),
             admin_chats: AdminChats::default(),
             media: MediaQueue::default(),
             topics: TopicNames::default(),
@@ -68,6 +72,13 @@ impl App {
             polls: PollCounts::default(),
             backfills: RunningBackfills::default(),
         }
+    }
+
+    /// The spam checker every account shares, in place of the one that does
+    /// nothing.
+    pub fn with_lols(mut self, lols: Arc<Lols>) -> Self {
+        self.lols = lols;
+        self
     }
 
     /// Whether a chat is kept out of the console.
