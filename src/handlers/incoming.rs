@@ -36,12 +36,19 @@ pub async fn save_incoming(app: &App, message: &Message) -> anyhow::Result<Event
         .await;
     }
 
+    let lols = app.lols.check(sender.user_id).await;
     let event = Event {
         username: sender.username,
         first_name: sender.first_name,
         second_name: sender.second_name,
         user_id: sender.user_id,
-        sender_spam: app.lols.is_spam(sender.user_id).await,
+        lols_banned: lols.banned,
+        lols_source: lols.source,
+        lols_when: lols.when,
+        lols_offenses: lols.offenses,
+        lols_spam_factor: lols.spam_factor,
+        lols_scammer: lols.scammer,
+        lols_scamrsalert: lols.scamrsalert,
         community_tag: extract_community_tag_from_update(&message.raw),
         ..super::send::event(app, message, &body, chat).await
     };

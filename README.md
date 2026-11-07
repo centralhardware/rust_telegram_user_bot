@@ -45,7 +45,7 @@ Telegram ──MTProto──▶ grammers UpdateStream
     admin logs. Its first scan runs before any update is handled.
 - **Spam check** (`src/lols.rs`): before an incoming message is saved, its
   sender is checked against the [lols.bot](https://lols.bot) spam banlist and
-  the answer goes into the row's `sender_spam`. The hourly banlist dump is
+  everything it answers goes into the row's `lols_*` columns. The hourly banlist dump is
   looked at first, kept in memory and downloaded again when its ETag changes.
   Then the in-memory cache of earlier API answers. Only then
   `api.lols.bot/account`, and only for up to 2 s, so a slow API delays a save

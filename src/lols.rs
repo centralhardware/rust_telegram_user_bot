@@ -1,15 +1,16 @@
 //! Whether the sender of an incoming message is on the lols.bot spam banlist
-//! (<https://lols.bot>). Asked before the message is saved; the answer is
-//! the row's `sender_spam` column (migration 054).
+//! (<https://lols.bot>). Asked before the message is saved; every field of the
+//! answer goes into the row's `lols_*` columns (migration 054).
 //!
-//! [`Lols::is_spam`] answers from, in order:
+//! [`Lols::check`] answers from, in order:
 //!
 //! 1. The hourly dump (`banlist.txt`, one id per line), held in memory as a
 //!    sorted `Vec` and downloaded again whenever its ETag changes.
 //! 2. The cache of earlier API answers: a spammer for the life of the process,
 //!    a clean user for [`CLEAN_FOR`].
 //! 3. `api.lols.bot/account`, given [`API_TIMEOUT`] at most, since the save is
-//!    waiting. A failure or a timeout answers "not spam" and is not cached.
+//!    waiting. A failure or a timeout answers an empty [`Verdict`] and is not
+//!    cached.
 //!
 //! One checker serves every account: it is about users, not about which
 //! account saw them.
@@ -35,11 +36,59 @@ const CLEAN_FOR: u32 = 24 * 3600;
 /// The cache starts over past this, the way `WrittenNames` does.
 const CACHE_LIMIT: usize = 1_000_000;
 
-/// `api.lols.bot/account`'s answer, only the fields used here.
+/// `api.lols.bot/account`'s answer. Everything past `banned` may be absent.
 #[derive(Deserialize, Debug)]
 struct Account {
     ok: bool,
     banned: bool,
+    /// "2024-06-28 17:18:05 UTC"
+    when: Option<String>,
+    offenses: Option<u32>,
+    spam_factor: Option<f32>,
+    #[serde(default)]
+    scammer: bool,
+    scamrsalert: Option<u32>,
+}
+
+/// What lols.bot said about a user, as the row stores it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Verdict {
+    pub banned: bool,
+    /// `""` not checked, `"dump"` or `"api"`.
+    pub source: &'static str,
+    pub when: Option<u32>,
+    pub offenses: Option<u32>,
+    pub spam_factor: Option<f32>,
+    pub scammer: bool,
+    pub scamrsalert: Option<u32>,
+}
+
+impl Verdict {
+    fn from_dump() -> Self {
+        Verdict {
+            banned: true,
+            source: "dump",
+            ..Default::default()
+        }
+    }
+}
+
+impl From<Account> for Verdict {
+    fn from(a: Account) -> Self {
+        Verdict {
+            banned: a.banned,
+            source: "api",
+            when: a.when.as_deref().and_then(|w| {
+                chrono::NaiveDateTime::parse_from_str(w, "%Y-%m-%d %H:%M:%S UTC")
+                    .ok()
+                    .map(|t| t.and_utc().timestamp() as u32)
+            }),
+            offenses: a.offenses,
+            spam_factor: a.spam_factor,
+            scammer: a.scammer,
+            scamrsalert: a.scamrsalert,
+        }
+    }
 }
 
 /// The banlist dump: user ids, sorted for binary search. Channel ids
@@ -63,21 +112,18 @@ fn parse_dump(text: &str) -> Vec<i64> {
     ids
 }
 
-/// A cached API answer.
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Cached {
-    Spammer,
-    /// Clean as of this time.
-    Clean(u32),
+/// A cached API answer and when it was given.
+#[derive(Clone, Debug, PartialEq)]
+struct Cached {
+    verdict: Verdict,
+    at: u32,
 }
 
-/// What the cache says about a user, `None` when it has to be asked.
-fn cached_answer(entry: Option<Cached>, at: u32) -> Option<bool> {
-    match entry? {
-        Cached::Spammer => Some(true),
-        Cached::Clean(since) if at.saturating_sub(since) < CLEAN_FOR => Some(false),
-        Cached::Clean(_) => None,
-    }
+/// What the cache says about a user, `None` when it has to be asked. A ban
+/// stands for good, a clean answer for [`CLEAN_FOR`].
+fn cached_answer(entry: Option<&Cached>, at: u32) -> Option<Verdict> {
+    let entry = entry?;
+    (entry.verdict.banned || at.saturating_sub(entry.at) < CLEAN_FOR).then(|| entry.verdict.clone())
 }
 
 pub struct Lols {
@@ -124,44 +170,43 @@ impl Lols {
         lols
     }
 
-    /// Whether `user_id` is on the banlist. 0 is no user (a channel post, an
-    /// anonymous admin) and is never spam.
-    pub async fn is_spam(&self, user_id: u64) -> bool {
+    /// What lols.bot says about `user_id`. 0 is no user (a channel post, an
+    /// anonymous admin) and is never checked.
+    pub async fn check(&self, user_id: u64) -> Verdict {
         let Ok(user_id) = i64::try_from(user_id) else {
-            return false;
+            return Verdict::default();
         };
         if !self.enabled || user_id <= 0 {
-            return false;
+            return Verdict::default();
         }
         if self.dump.read().unwrap().contains(user_id) {
-            return true;
+            return Verdict::from_dump();
         }
         let at = now();
-        if let Some(answer) = cached_answer(self.cache.lock().unwrap().get(&user_id).copied(), at) {
-            return answer;
+        if let Some(v) = cached_answer(self.cache.lock().unwrap().get(&user_id), at) {
+            return v;
         }
-        match check(&self.http, user_id).await {
-            Ok(banned) => {
+        match ask(&self.http, user_id).await {
+            Ok(verdict) => {
+                if verdict.banned {
+                    info!("lols: {user_id} is on the spam banlist (api)");
+                }
                 let mut cache = self.cache.lock().unwrap();
                 if cache.len() >= CACHE_LIMIT {
                     cache.clear();
                 }
                 cache.insert(
                     user_id,
-                    if banned {
-                        Cached::Spammer
-                    } else {
-                        Cached::Clean(at)
+                    Cached {
+                        verdict: verdict.clone(),
+                        at,
                     },
                 );
-                if banned {
-                    info!("lols: {user_id} is on the spam banlist (api)");
-                }
-                banned
+                verdict
             }
             Err(e) => {
                 warn!("lols: API check of {user_id}: {e:#}");
-                false
+                Verdict::default()
             }
         }
     }
@@ -192,7 +237,7 @@ impl Lols {
     }
 }
 
-async fn check(http: &reqwest::Client, user_id: i64) -> Result<bool> {
+async fn ask(http: &reqwest::Client, user_id: i64) -> Result<Verdict> {
     let account: Account = http
         .get(API_URL)
         .query(&[("id", user_id)])
@@ -205,7 +250,7 @@ async fn check(http: &reqwest::Client, user_id: i64) -> Result<bool> {
     if !account.ok {
         bail!("api answered ok=false");
     }
-    Ok(account.banned)
+    Ok(account.into())
 }
 
 #[cfg(test)]
@@ -224,26 +269,63 @@ mod tests {
     #[test]
     fn what_the_cache_answers() {
         let at = 10_000_000;
+        let banned = Verdict {
+            banned: true,
+            source: "api",
+            ..Default::default()
+        };
+        let clean = Verdict {
+            source: "api",
+            ..Default::default()
+        };
+        let entry = |verdict: &Verdict, age| Cached {
+            verdict: verdict.clone(),
+            at: at - age,
+        };
         assert_eq!(cached_answer(None, at), None);
-        assert_eq!(cached_answer(Some(Cached::Spammer), at), Some(true));
-        assert_eq!(cached_answer(Some(Cached::Clean(at - 60)), at), Some(false));
-        assert_eq!(cached_answer(Some(Cached::Clean(at - CLEAN_FOR)), at), None);
+        assert_eq!(
+            cached_answer(Some(&entry(&banned, 10 * CLEAN_FOR)), at),
+            Some(banned)
+        );
+        assert_eq!(
+            cached_answer(Some(&entry(&clean, 60)), at),
+            Some(clean.clone())
+        );
+        assert_eq!(cached_answer(Some(&entry(&clean, CLEAN_FOR)), at), None);
     }
 
     #[tokio::test]
-    async fn a_disabled_checker_says_not_spam() {
-        assert!(!Lols::disabled().is_spam(42).await);
+    async fn a_disabled_checker_checks_nothing() {
+        assert_eq!(Lols::disabled().check(42).await, Verdict::default());
     }
 
     #[test]
-    fn the_api_answer_parses() {
+    fn every_api_field_reaches_the_verdict() {
         let a: Account = serde_json::from_str(
-            r#"{"ok":true,"user_id":7,"banned":true,"when":"2024-06-28 17:18:05 UTC","offenses":3}"#,
+            r#"{"ok":true,"user_id":7,"banned":true,"when":"2024-06-28 17:18:05 UTC","offenses":3,"spam_factor":55.5,"scammer":true,"scamrsalert":1460}"#,
         )
         .unwrap();
-        assert!(a.ok && a.banned);
+        let v = Verdict::from(a);
+        assert_eq!(
+            v,
+            Verdict {
+                banned: true,
+                source: "api",
+                when: Some(1_719_595_085),
+                offenses: Some(3),
+                spam_factor: Some(55.5),
+                scammer: true,
+                scamrsalert: Some(1460),
+            }
+        );
         let clean: Account =
             serde_json::from_str(r#"{"ok":true,"user_id":7,"banned":false}"#).unwrap();
-        assert!(!clean.banned);
+        assert_eq!(
+            Verdict::from(clean),
+            Verdict {
+                source: "api",
+                ..Default::default()
+            }
+        );
     }
 }
