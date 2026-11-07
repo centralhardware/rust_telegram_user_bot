@@ -84,6 +84,7 @@ pub fn build(message: &tl::enums::Message, cx: Context) -> Event {
         file_name: meta.file_name,
         mime_type: meta.mime_type,
         size: meta.size,
+        file_dc_id: meta.dc_id,
         duration: meta.duration,
         width: meta.width,
         height: meta.height,
