@@ -37,7 +37,9 @@ pub async fn save_incoming(app: &App, message: &Message) -> anyhow::Result<Event
     }
 
     let lols = app.lols.check(sender.user_id).await;
+    let sender_dc_id = message.sender().map(avatar_dc).unwrap_or(0);
     let event = Event {
+        sender_dc_id,
         username: sender.username,
         first_name: sender.first_name,
         second_name: sender.second_name,
@@ -54,4 +56,19 @@ pub async fn save_incoming(app: &App, message: &Message) -> anyhow::Result<Event
     app.db.log_event(event.clone()).await;
 
     Ok(event)
+}
+
+/// The data center of a user's profile photo, 0 for no photo, a hidden one,
+/// or a sender that is not a user.
+fn avatar_dc(peer: &grammers_client::peer::Peer) -> u8 {
+    let grammers_client::peer::Peer::User(user) = peer else {
+        return 0;
+    };
+    let grammers_tl_types::enums::User::User(raw) = &user.raw else {
+        return 0;
+    };
+    match &raw.photo {
+        Some(grammers_tl_types::enums::UserProfilePhoto::Photo(p)) => p.dc_id.clamp(0, 255) as u8,
+        _ => 0,
+    }
 }

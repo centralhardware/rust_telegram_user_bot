@@ -308,6 +308,9 @@ pub struct MediaMeta {
     /// Telegram's id for the poll, which is what a later results update names it
     /// by when it names no message.
     pub poll_id: i64,
+    /// The data center a photo or document is stored in, 0 for other media.
+    /// Telegram sends it with the message, so no download is needed.
+    pub dc_id: u8,
 }
 
 /// What a message without text says it carries — "[photo]", "[voice, 0:12]" —
@@ -344,6 +347,7 @@ fn meta_of(media: &tl::enums::MessageMedia) -> MediaMeta {
             // The sizes are the same image at several resolutions; the largest is
             // the one the message actually shows.
             if let Some(tl::enums::Photo::Photo(photo)) = p.photo.as_ref() {
+                meta.dc_id = photo.dc_id.clamp(0, 255) as u8;
                 for size in &photo.sizes {
                     if let tl::enums::PhotoSize::Size(s) = size
                         && (s.w as u32) > meta.width
@@ -391,6 +395,7 @@ fn meta_of(media: &tl::enums::MessageMedia) -> MediaMeta {
         tl::enums::MessageMedia::Document(d) => {
             if let Some(tl::enums::Document::Document(doc)) = d.document.as_ref() {
                 meta.mime_type = doc.mime_type.clone();
+                meta.dc_id = doc.dc_id.clamp(0, 255) as u8;
                 meta.size = doc.size.max(0) as u64;
                 for attr in &doc.attributes {
                     match attr {

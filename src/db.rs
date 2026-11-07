@@ -332,6 +332,13 @@ pub struct Event {
     pub file_name: String,
     pub mime_type: String,
     pub size: u64,
+    /// The data center the message's photo or document is stored in, 0 for
+    /// none. See `MediaMeta::dc_id`.
+    pub file_dc_id: u8,
+    /// The data center of the sender's profile photo, 0 when they have none or
+    /// it is hidden. A user's photo is kept on their home DC, so this is a good
+    /// guess at which DC the account lives on. Set on incoming live messages.
+    pub sender_dc_id: u8,
     pub duration: u32,
     pub width: u32,
     pub height: u32,
