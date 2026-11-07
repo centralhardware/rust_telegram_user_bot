@@ -49,8 +49,7 @@ Telegram ──MTProto──▶ grammers UpdateStream
   looked at first, kept in memory and downloaded again when its ETag changes.
   Then the in-memory cache of earlier API answers. Only then
   `api.lols.bot/account`, and only for up to 2 s, so a slow API delays a save
-  by at most that. `lols_source` records who answered (`dump`, `cache`, `api`,
-  `error`), so the `api` and `error` rows count the requests made to lols.bot. A spammer stays cached for the life of the process, a clean
+  by at most that. A spammer stays cached for the life of the process, a clean
   answer for a day. One checker serves every account.
 - **Console:** every event prints one coloured line through
   `render::console::LogLine`.

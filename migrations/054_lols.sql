@@ -2,12 +2,8 @@
 -- message when it was logged. Set by `src/lols.rs`. lols.bot folds combot
 -- (CAS) bans into its own `banned`, and does not say which list a ban is from.
 --
--- `lols_source` says who answered: '' nothing was checked (outgoing messages,
--- backfills, channel posts), `dump` the hourly banlist, `cache` an earlier API
--- answer held in memory, `api` a request made for this message, `error` a
--- request that failed or timed out. Each `api` / `error` row is one request to
--- api.lols.bot, so counting them is counting the API's use. The details
--- (`lols_offenses` and on) come only from the API, so `api` and `cache` rows.
+-- The details (`lols_offenses` and on) come only from the API; a sender
+-- found in the hourly banlist dump gets the ban alone.
 --
 -- Added the way 048 added sender_chat_id: the Buffer is a copy of the table's
 -- columns, so it is dropped and created again around the ALTER.
@@ -16,8 +12,7 @@ DROP TABLE IF EXISTS telegram_user_bot.events_log_buffer;
 
 ALTER TABLE telegram_user_bot.events_log
     ADD COLUMN IF NOT EXISTS lols_banned Bool DEFAULT false COMMENT 'Sender is on the lols.bot banlist (combot/CAS bans included).' AFTER sender_chat_id,
-    ADD COLUMN IF NOT EXISTS lols_source LowCardinality(String) COMMENT 'Who answered: \'\' not checked, dump, cache, api (one request), error (request failed or timed out).' AFTER lols_banned,
-    ADD COLUMN IF NOT EXISTS lols_offenses Nullable(UInt32) COMMENT 'Spam messages lols.bot recorded from the sender. NULL when the API omits it.' AFTER lols_source,
+    ADD COLUMN IF NOT EXISTS lols_offenses Nullable(UInt32) COMMENT 'Spam messages lols.bot recorded from the sender. NULL when the API omits it.' AFTER lols_banned,
     ADD COLUMN IF NOT EXISTS lols_spam_factor Nullable(Float32) COMMENT 'Share of the sender\'s messages that were spam, percent 0-100. NULL when the API omits it.' AFTER lols_offenses,
     ADD COLUMN IF NOT EXISTS lols_scammer Bool DEFAULT false COMMENT 'lols.bot lists the sender as a verified scammer.' AFTER lols_spam_factor,
     ADD COLUMN IF NOT EXISTS lols_scamrsalert Nullable(UInt32) COMMENT 'Post id about the sender in t.me/scamrsalert. NULL when there is none.' AFTER lols_scammer;

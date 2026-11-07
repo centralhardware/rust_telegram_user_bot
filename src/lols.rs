@@ -9,8 +9,7 @@
 //! 2. The cache of earlier API answers: a spammer for the life of the process,
 //!    a clean user for [`CLEAN_FOR`].
 //! 3. `api.lols.bot/account`, given [`API_TIMEOUT`] at most, since the save is
-//!    waiting. A failure or a timeout answers "not banned" with source
-//!    `error`, and is not cached.
+//!    waiting. A failure or a timeout answers "not banned" and is not cached.
 //!
 //! One checker serves every account: it is about users, not about which
 //! account saw them.
@@ -52,11 +51,6 @@ struct Account {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Verdict {
     pub banned: bool,
-    /// Who answered: `""` nothing was checked, `"dump"` the banlist,
-    /// `"cache"` an earlier API answer, `"api"` a request made for this
-    /// message, `"error"` a request that failed or timed out. Every `api` and
-    /// `error` row is one request, which is how the API's use is counted.
-    pub source: &'static str,
     pub offenses: Option<u32>,
     pub spam_factor: Option<f32>,
     pub scammer: bool,
@@ -67,7 +61,6 @@ impl Verdict {
     fn from_dump() -> Self {
         Verdict {
             banned: true,
-            source: "dump",
             ..Default::default()
         }
     }
@@ -77,7 +70,6 @@ impl From<Account> for Verdict {
     fn from(a: Account) -> Self {
         Verdict {
             banned: a.banned,
-            source: "api",
             offenses: a.offenses,
             spam_factor: a.spam_factor,
             scammer: a.scammer,
@@ -118,10 +110,7 @@ struct Cached {
 /// stands for good, a clean answer for [`CLEAN_FOR`].
 fn cached_answer(entry: Option<&Cached>, at: u32) -> Option<Verdict> {
     let entry = entry?;
-    (entry.verdict.banned || at.saturating_sub(entry.at) < CLEAN_FOR).then(|| Verdict {
-        source: "cache",
-        ..entry.verdict.clone()
-    })
+    (entry.verdict.banned || at.saturating_sub(entry.at) < CLEAN_FOR).then(|| entry.verdict.clone())
 }
 
 pub struct Lols {
@@ -204,10 +193,7 @@ impl Lols {
             }
             Err(e) => {
                 warn!("lols: API check of {user_id}: {e:#}");
-                Verdict {
-                    source: "error",
-                    ..Default::default()
-                }
+                Verdict::default()
             }
         }
     }
@@ -272,11 +258,9 @@ mod tests {
         let at = 10_000_000;
         let banned = Verdict {
             banned: true,
-            source: "api",
             ..Default::default()
         };
         let clean = Verdict {
-            source: "api",
             ..Default::default()
         };
         let entry = |verdict: &Verdict, age| Cached {
@@ -286,17 +270,11 @@ mod tests {
         assert_eq!(cached_answer(None, at), None);
         assert_eq!(
             cached_answer(Some(&entry(&banned, 10 * CLEAN_FOR)), at),
-            Some(Verdict {
-                source: "cache",
-                ..banned
-            })
+            Some(banned)
         );
         assert_eq!(
             cached_answer(Some(&entry(&clean, 60)), at),
-            Some(Verdict {
-                source: "cache",
-                ..clean.clone()
-            })
+            Some(clean.clone())
         );
         assert_eq!(cached_answer(Some(&entry(&clean, CLEAN_FOR)), at), None);
     }
@@ -317,7 +295,6 @@ mod tests {
             v,
             Verdict {
                 banned: true,
-                source: "api",
                 offenses: Some(3),
                 spam_factor: Some(55.5),
                 scammer: true,
@@ -329,7 +306,6 @@ mod tests {
         assert_eq!(
             Verdict::from(clean),
             Verdict {
-                source: "api",
                 ..Default::default()
             }
         );
