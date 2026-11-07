@@ -41,6 +41,7 @@ pub async fn save_incoming(app: &App, message: &Message) -> anyhow::Result<Event
         first_name: sender.first_name,
         second_name: sender.second_name,
         user_id: sender.user_id,
+        sender_spam: app.lols.is_spam(sender.user_id).await,
         community_tag: extract_community_tag_from_update(&message.raw),
         ..super::send::event(app, message, &body, chat).await
     };

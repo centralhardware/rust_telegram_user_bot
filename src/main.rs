@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
     // The first account is not optional: without it there is nothing to run.
     // One checker for every account: the spam banlist is about users, not
     // about whichever account saw them.
-    let lols = lols::Lols::start(Arc::clone(&db)).await;
+    let lols = lols::Lols::start();
     let first = connect_account(&db, "", &ignored, &claims, &lols).await?;
     spawn_account(first, failed.clone());
     tokio::spawn(watch_accounts(
