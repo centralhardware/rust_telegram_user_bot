@@ -9,8 +9,8 @@
 //! 2. The cache of earlier API answers: a spammer for the life of the process,
 //!    a clean user for [`CLEAN_FOR`].
 //! 3. `api.lols.bot/account`, given [`API_TIMEOUT`] at most, since the save is
-//!    waiting. A failure or a timeout answers an empty [`Verdict`] and is not
-//!    cached.
+//!    waiting. A failure or a timeout answers "not banned" with source
+//!    `error`, and is not cached.
 //!
 //! One checker serves every account: it is about users, not about which
 //! account saw them.
@@ -54,7 +54,10 @@ struct Account {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Verdict {
     pub banned: bool,
-    /// `""` not checked, `"dump"` or `"api"`.
+    /// Who answered: `""` nothing was checked, `"dump"` the banlist,
+    /// `"cache"` an earlier API answer, `"api"` a request made for this
+    /// message, `"error"` a request that failed or timed out. Every `api` and
+    /// `error` row is one request, which is how the API's use is counted.
     pub source: &'static str,
     pub when: Option<u32>,
     pub offenses: Option<u32>,
@@ -123,7 +126,10 @@ struct Cached {
 /// stands for good, a clean answer for [`CLEAN_FOR`].
 fn cached_answer(entry: Option<&Cached>, at: u32) -> Option<Verdict> {
     let entry = entry?;
-    (entry.verdict.banned || at.saturating_sub(entry.at) < CLEAN_FOR).then(|| entry.verdict.clone())
+    (entry.verdict.banned || at.saturating_sub(entry.at) < CLEAN_FOR).then(|| Verdict {
+        source: "cache",
+        ..entry.verdict.clone()
+    })
 }
 
 pub struct Lols {
@@ -206,7 +212,10 @@ impl Lols {
             }
             Err(e) => {
                 warn!("lols: API check of {user_id}: {e:#}");
-                Verdict::default()
+                Verdict {
+                    source: "error",
+                    ..Default::default()
+                }
             }
         }
     }
@@ -285,11 +294,17 @@ mod tests {
         assert_eq!(cached_answer(None, at), None);
         assert_eq!(
             cached_answer(Some(&entry(&banned, 10 * CLEAN_FOR)), at),
-            Some(banned)
+            Some(Verdict {
+                source: "cache",
+                ..banned
+            })
         );
         assert_eq!(
             cached_answer(Some(&entry(&clean, 60)), at),
-            Some(clean.clone())
+            Some(Verdict {
+                source: "cache",
+                ..clean.clone()
+            })
         );
         assert_eq!(cached_answer(Some(&entry(&clean, CLEAN_FOR)), at), None);
     }

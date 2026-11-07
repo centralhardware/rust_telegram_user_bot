@@ -2,10 +2,12 @@
 -- message when it was logged. Set by `src/lols.rs`. lols.bot folds combot
 -- (CAS) bans into its own `banned`, and does not say which list a ban is from.
 --
--- `lols_source` is '' when nothing was checked (outgoing messages, backfills,
--- channel posts, an API failure or timeout), `dump` when the hourly banlist
--- answered, `api` when api.lols.bot/account did. Only `api` carries the details;
--- a cached API answer is written as `api` too.
+-- `lols_source` says who answered: '' nothing was checked (outgoing messages,
+-- backfills, channel posts), `dump` the hourly banlist, `cache` an earlier API
+-- answer held in memory, `api` a request made for this message, `error` a
+-- request that failed or timed out. Each `api` / `error` row is one request to
+-- api.lols.bot, so counting them is counting the API's use. The details
+-- (`lols_when` and on) come only from the API, so `api` and `cache` rows.
 --
 -- Added the way 048 added sender_chat_id: the Buffer is a copy of the table's
 -- columns, so it is dropped and created again around the ALTER.
