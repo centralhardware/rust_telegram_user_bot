@@ -28,6 +28,9 @@ Three modes, one per function:
     text      the text with the entities that carry a payload spelled out --
               a link's target, a mention's id -- and the rest dropped, for a
               panel that prints no markup
+    mentions  who the message mentions, as an array: each `@username` it
+              types, lowercased and without the `@`, then the user id of each
+              text mention (an account linked by name). Each listed once
 
 ClickHouse speaks to this over stdin/stdout in JSONEachRow: one object per row
 in, one object per row out, flushed as it goes because the pool keeps the
@@ -201,6 +204,25 @@ def usable(value, fields):
     return rows
 
 
+def mentions(text, entities):
+    """Usernames typed as @name, sliced in UTF-16 units, then the ids text
+    mentions link to -- each once, in the order they first appear."""
+    body = units(text)
+    names, ids = [], []
+    for e in entities:
+        if e["type"] == "mention":
+            end = e["offset"] + e["length"]
+            if end > len(body):
+                continue
+            name = join(body[e["offset"] : end]).lstrip("@").lower()
+            if name and name not in names:
+                names.append(name)
+        elif e["type"] == "text_mention" and e.get("payload", "").isdigit():
+            if e["payload"] not in ids:
+                ids.append(e["payload"])
+    return names + ids
+
+
 def render(row, mode):
     if mode == "keyboard":
         return render_keyboard(usable(row.get("keyboard"), BUTTON_FIELDS))
@@ -211,6 +233,8 @@ def render(row, mode):
         if isinstance(e.get("offset"), int) and isinstance(e.get("length"), int)
     ]
     entities.sort(key=lambda e: (e["offset"], -e["length"]))
+    if mode == "mentions":
+        return mentions(text, entities)
     if mode == "text":
         return render_text(text, entities)
     return render_html(text, entities)

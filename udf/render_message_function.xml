@@ -4,7 +4,8 @@
      the text and its entities back together as HTML, the way a client draws it;
      `render_message_text` spells out only what the entities add that the text
      does not already say, for a panel that prints no markup; and
-     `render_keyboard_html` draws the buttons underneath. See
+     `render_keyboard_html` draws the buttons underneath. `message_mentions`
+     lists who the message mentions: the usernames, then text-mention ids. See
      udf/render_message.py.
 
      `executable_pool` keeps a process alive between calls rather than starting
@@ -38,6 +39,25 @@
         </argument>
         <format>JSONEachRow</format>
         <command>render_message.py html</command>
+        <pool_size>4</pool_size>
+        <command_read_timeout>10000</command_read_timeout>
+        <command_write_timeout>10000</command_write_timeout>
+    </function>
+    <function>
+        <type>executable_pool</type>
+        <name>message_mentions</name>
+        <return_type>Array(String)</return_type>
+        <return_name>result</return_name>
+        <argument>
+            <type>String</type>
+            <name>message</name>
+        </argument>
+        <argument>
+            <type>Array(Tuple(String, UInt32, UInt32, String))</type>
+            <name>entities</name>
+        </argument>
+        <format>JSONEachRow</format>
+        <command>render_message.py mentions</command>
         <pool_size>4</pool_size>
         <command_read_timeout>10000</command_read_timeout>
         <command_write_timeout>10000</command_write_timeout>

@@ -120,6 +120,25 @@ class TupleShapeTest(unittest.TestCase):
         self.assertEqual(render({"message": "hi", "entities": [["bold", 0]]}, "html"), "hi")
 
 
+class MentionsTest(unittest.TestCase):
+    def test_usernames_then_text_mention_ids_each_once(self):
+        # The emoji is two UTF-16 units, so the first mention starts at 3.
+        row = {
+            "message": "😀 @Alice and Bob, @alice again",
+            "entities": [
+                ["mention", 3, 6, ""],
+                ["text_mention", 14, 3, "42"],
+                ["mention", 19, 6, ""],
+                ["bold", 0, 2, ""],
+            ],
+        }
+        self.assertEqual(render(row, "mentions"), ["alice", "42"])
+
+    def test_an_entity_past_the_text_is_skipped(self):
+        row = {"message": "hi", "entities": [["mention", 5, 4, ""]]}
+        self.assertEqual(render(row, "mentions"), [])
+
+
 class DeclarationTest(unittest.TestCase):
     """The XML the server reads, parsed the way the server parses it -- a double
     hyphen inside a comment is enough for it to refuse the whole file."""
@@ -128,7 +147,13 @@ class DeclarationTest(unittest.TestCase):
         root = ET.parse(HERE / "render_message_function.xml").getroot()
         names = {f.findtext("name") for f in root.findall("function")}
         self.assertEqual(
-            names, {"render_message_html", "render_message_text", "render_keyboard_html"}
+            names,
+            {
+                "render_message_html",
+                "render_message_text",
+                "render_keyboard_html",
+                "message_mentions",
+            },
         )
 
 
