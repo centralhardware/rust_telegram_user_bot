@@ -41,8 +41,6 @@ const CACHE_LIMIT: usize = 1_000_000;
 struct Account {
     ok: bool,
     banned: bool,
-    /// "2024-06-28 17:18:05 UTC"
-    when: Option<String>,
     offenses: Option<u32>,
     spam_factor: Option<f32>,
     #[serde(default)]
@@ -59,7 +57,6 @@ pub struct Verdict {
     /// message, `"error"` a request that failed or timed out. Every `api` and
     /// `error` row is one request, which is how the API's use is counted.
     pub source: &'static str,
-    pub when: Option<u32>,
     pub offenses: Option<u32>,
     pub spam_factor: Option<f32>,
     pub scammer: bool,
@@ -81,11 +78,6 @@ impl From<Account> for Verdict {
         Verdict {
             banned: a.banned,
             source: "api",
-            when: a.when.as_deref().and_then(|w| {
-                chrono::NaiveDateTime::parse_from_str(w, "%Y-%m-%d %H:%M:%S UTC")
-                    .ok()
-                    .map(|t| t.and_utc().timestamp() as u32)
-            }),
             offenses: a.offenses,
             spam_factor: a.spam_factor,
             scammer: a.scammer,
@@ -326,7 +318,6 @@ mod tests {
             Verdict {
                 banned: true,
                 source: "api",
-                when: Some(1_719_595_085),
                 offenses: Some(3),
                 spam_factor: Some(55.5),
                 scammer: true,

@@ -44,7 +44,6 @@ pub async fn save_incoming(app: &App, message: &Message) -> anyhow::Result<Event
         user_id: sender.user_id,
         lols_banned: lols.banned,
         lols_source: lols.source,
-        lols_when: lols.when,
         lols_offenses: lols.offenses,
         lols_spam_factor: lols.spam_factor,
         lols_scammer: lols.scammer,

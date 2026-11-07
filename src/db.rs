@@ -312,7 +312,6 @@ pub struct Event {
     /// incoming live messages are checked; see `crate::lols` and migration 054.
     pub lols_banned: bool,
     pub lols_source: &'static str,
-    pub lols_when: Option<u32>,
     pub lols_offenses: Option<u32>,
     pub lols_spam_factor: Option<f32>,
     pub lols_scammer: bool,
