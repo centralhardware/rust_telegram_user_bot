@@ -55,7 +55,8 @@ struct Account {
 pub struct Verdict {
     pub banned: bool,
     pub offenses: Option<u32>,
-    pub spam_factor: Option<f32>,
+    /// Percent 0-100, rounded: a byte is all it needs.
+    pub spam_factor: Option<u8>,
     pub scammer: bool,
     pub scamrsalert: Option<u32>,
 }
@@ -74,7 +75,7 @@ impl From<Account> for Verdict {
         Verdict {
             banned: a.banned,
             offenses: a.offenses,
-            spam_factor: a.spam_factor,
+            spam_factor: a.spam_factor.map(|f| f.round().clamp(0.0, 100.0) as u8),
             scammer: a.scammer,
             scamrsalert: a.scamrsalert,
         }
@@ -383,7 +384,7 @@ mod tests {
             Verdict {
                 banned: true,
                 offenses: Some(3),
-                spam_factor: Some(55.5),
+                spam_factor: Some(56),
                 scammer: true,
                 scamrsalert: Some(1460),
             }
