@@ -19,8 +19,11 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use anyhow::{Result, bail};
+use clickhouse::Row;
 use log::{info, warn};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+use crate::db::ch::ClickhouseDb;
 
 use crate::db::now;
 
@@ -113,9 +116,32 @@ fn cached_answer(entry: Option<&Cached>, at: u32) -> Option<Verdict> {
     (entry.verdict.banned || at.saturating_sub(entry.at) < CLEAN_FOR).then(|| entry.verdict.clone())
 }
 
+/// One HTTP request to lols.bot, for `lols_requests` (migration 054). A log of
+/// its own, kept apart from the message tables: it says how much the bot leans
+/// on lols.bot, not anything about a message.
+#[derive(Row, Serialize, Debug, Clone)]
+pub struct LolsRequest {
+    pub ts: u32,
+    /// `account` (api.lols.bot/account) or `banlist` (the dump).
+    pub endpoint: &'static str,
+    /// The user asked about; 0 for the dump.
+    pub user_id: i64,
+    /// HTTP status, 0 when no response came (timeout, connection error).
+    pub status: u16,
+    pub success: bool,
+    pub error: String,
+    pub duration_ms: u32,
+    /// The API's `banned`, `None` for the dump or a failed request.
+    pub banned: Option<bool>,
+    /// Ids in a downloaded dump, 0 otherwise (and for a 304).
+    pub ids: u32,
+}
+
 pub struct Lols {
     /// Off in tests: every answer is "not spam" and nothing goes out.
     enabled: bool,
+    /// Where `lols_requests` goes. `None` in tests.
+    db: Option<Arc<ClickhouseDb>>,
     http: reqwest::Client,
     dump: RwLock<Dump>,
     cache: Mutex<HashMap<i64, Cached>>,
@@ -125,12 +151,13 @@ impl Lols {
     /// A checker that does nothing: what an `App` starts with, and what tests
     /// run on.
     pub fn disabled() -> Self {
-        Self::new(false)
+        Self::new(None)
     }
 
-    fn new(enabled: bool) -> Self {
+    fn new(db: Option<Arc<ClickhouseDb>>) -> Self {
         Lols {
-            enabled,
+            enabled: db.is_some(),
+            db,
             http: reqwest::Client::builder()
                 .user_agent("rust_telegram_user_bot")
                 .timeout(Duration::from_secs(120))
@@ -142,8 +169,8 @@ impl Lols {
     }
 
     /// The checker, with the dump kept fresh in the background from now on.
-    pub fn start() -> Arc<Self> {
-        let lols = Arc::new(Self::new(true));
+    pub fn start(db: Arc<ClickhouseDb>) -> Arc<Self> {
+        let lols = Arc::new(Self::new(Some(db)));
         let refresher = Arc::clone(&lols);
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(DUMP_EVERY);
@@ -173,7 +200,24 @@ impl Lols {
         if let Some(v) = cached_answer(self.cache.lock().unwrap().get(&user_id), at) {
             return v;
         }
-        match ask(&self.http, user_id).await {
+        let started = std::time::Instant::now();
+        let (result, status) = ask(&self.http, user_id).await;
+        self.log(LolsRequest {
+            ts: at,
+            endpoint: "account",
+            user_id,
+            status,
+            success: result.is_ok(),
+            error: result
+                .as_ref()
+                .err()
+                .map(|e| format!("{e:#}"))
+                .unwrap_or_default(),
+            duration_ms: started.elapsed().as_millis() as u32,
+            banned: result.as_ref().ok().map(|v| v.banned),
+            ids: 0,
+        });
+        match result {
             Ok(verdict) => {
                 if verdict.banned {
                     info!("lols: {user_id} is on the spam banlist (api)");
@@ -198,15 +242,49 @@ impl Lols {
         }
     }
 
-    /// Downloads the dump when it has changed.
+    /// Writes a request to `lols_requests`, without waiting on it.
+    fn log(&self, row: LolsRequest) {
+        let Some(db) = self.db.clone() else { return };
+        tokio::spawn(async move {
+            if let Err(e) = db.write_lols_request(&row).await {
+                warn!("lols: logging a request: {e:#}");
+            }
+        });
+    }
+
+    /// Downloads the dump when it has changed, and logs the request.
     async fn refresh_dump(&self) -> Result<()> {
+        let started = std::time::Instant::now();
+        let mut status = 0;
+        let result = self.download_dump(&mut status).await;
+        self.log(LolsRequest {
+            ts: now(),
+            endpoint: "banlist",
+            user_id: 0,
+            status,
+            success: result.is_ok(),
+            error: result
+                .as_ref()
+                .err()
+                .map(|e| format!("{e:#}"))
+                .unwrap_or_default(),
+            duration_ms: started.elapsed().as_millis() as u32,
+            banned: None,
+            ids: *result.as_ref().unwrap_or(&0) as u32,
+        });
+        result.map(|_| ())
+    }
+
+    /// The dump download itself: how many ids it loaded, 0 for a 304.
+    async fn download_dump(&self, status: &mut u16) -> Result<usize> {
         let mut req = self.http.get(DUMP_URL);
         if let Some(etag) = self.dump.read().unwrap().etag.clone() {
             req = req.header(reqwest::header::IF_NONE_MATCH, etag);
         }
         let resp = req.send().await?;
+        *status = resp.status().as_u16();
         if resp.status() == reqwest::StatusCode::NOT_MODIFIED {
-            return Ok(());
+            return Ok(0);
         }
         let resp = resp.error_for_status()?;
         let etag = resp
@@ -218,26 +296,35 @@ impl Lols {
         if ids.is_empty() {
             bail!("banlist is empty");
         }
-        info!("lols: banlist loaded, {} ids", ids.len());
+        let count = ids.len();
+        info!("lols: banlist loaded, {count} ids");
         *self.dump.write().unwrap() = Dump { ids, etag };
-        Ok(())
+        Ok(count)
     }
 }
 
-async fn ask(http: &reqwest::Client, user_id: i64) -> Result<Verdict> {
-    let account: Account = http
+/// One API request, and the HTTP status it got (0 for none).
+async fn ask(http: &reqwest::Client, user_id: i64) -> (Result<Verdict>, u16) {
+    let resp = match http
         .get(API_URL)
         .query(&[("id", user_id)])
         .timeout(API_TIMEOUT)
         .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    if !account.ok {
-        bail!("api answered ok=false");
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) => return (Err(e.into()), 0),
+    };
+    let status = resp.status().as_u16();
+    let result = async {
+        let account: Account = resp.error_for_status()?.json().await?;
+        if !account.ok {
+            bail!("api answered ok=false");
+        }
+        Ok(account.into())
     }
-    Ok(account.into())
+    .await;
+    (result, status)
 }
 
 #[cfg(test)]
