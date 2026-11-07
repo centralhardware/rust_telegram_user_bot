@@ -308,6 +308,13 @@ pub struct Event {
     /// The channel the message was sent as, when `user_id` is 0 because no
     /// user is named -- "send as", an anonymous admin, a channel post.
     pub sender_chat_id: i64,
+    /// What lols.bot said about the sender when the message was logged. Only
+    /// incoming live messages are checked; see `crate::lols` and migration 054.
+    pub lols_banned: bool,
+    pub lols_offenses: Option<u32>,
+    pub lols_spam_factor: Option<f32>,
+    pub lols_scammer: bool,
+    pub lols_scamrsalert: Option<u32>,
     pub post_author: String,
     /// Telegram's own flags. `ttl_period` is the self-destruct timer in seconds.
     pub pinned: bool,

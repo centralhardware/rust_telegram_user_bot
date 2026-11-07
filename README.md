@@ -43,6 +43,15 @@ Telegram ──MTProto──▶ grammers UpdateStream
   - `user_sessions` records the account's other logged-in sessions.
   - `admin_actions` finds the chats the account administers and polls their
     admin logs. Its first scan runs before any update is handled.
+- **Spam check** (`src/lols.rs`): before an incoming message is saved, its
+  sender is checked against the [lols.bot](https://lols.bot) spam banlist and
+  everything it answers goes into the row's `lols_*` columns. The hourly banlist dump is
+  looked at first, kept in memory and downloaded again when its ETag changes.
+  Then the in-memory cache of earlier API answers. Only then
+  `api.lols.bot/account`, and only for up to 2 s, so a slow API delays a save
+  by at most that. A spammer stays cached for the life of the process, a clean
+  answer for a day. Every request to lols.bot is logged to `lols_requests`,
+  apart from the message tables. One checker serves every account.
 - **Console:** every event prints one coloured line through
   `render::console::LogLine`.
 
@@ -62,6 +71,7 @@ readers query the base tables, which are at most a minute behind.
 | `events_log` (+ `events_log_buffer`) | One row per event. The `event` column is `send`, `edit`, `delete`, `reaction`, `service`, `pin`, `unpin`, `poll`, `views` or `file_uploaded`. `raw` keeps the message as Telegram sent it. |
 | `peer_names` (+ buffer) | Display names and usernames for every peer seen, keyed by Bot API dialog id |
 | `media_files` | Which S3 object a Telegram photo or document is already stored as |
+| `lols_requests` | Every HTTP request the spam check makes to lols.bot (API and banlist), kept 90 days |
 | `admin_actions` | Admin-log events of the chats the account administers |
 | `user_sessions` | The account's other sessions |
 | `accounts` | Accounts after the first, as `setup <name>` recorded them |
