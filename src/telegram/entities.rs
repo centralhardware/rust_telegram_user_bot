@@ -272,3 +272,57 @@ mod tests {
         );
     }
 }
+
+/// A stored entity back as the TL object, so text logged earlier can be
+/// rendered with its formatting again. Entities the console does not draw, and
+/// a `text_mention` (whose access hash is not stored), come back as `None`.
+pub fn to_tl((kind, offset, length, payload): &Entity) -> Option<tl::enums::MessageEntity> {
+    use tl::enums::MessageEntity as E;
+    use tl::types as t;
+    let (offset, length) = (*offset as i32, *length as i32);
+    Some(match kind.as_str() {
+        "bold" => E::Bold(t::MessageEntityBold { offset, length }),
+        "italic" => E::Italic(t::MessageEntityItalic { offset, length }),
+        "code" => E::Code(t::MessageEntityCode { offset, length }),
+        "pre" => E::Pre(t::MessageEntityPre {
+            offset,
+            length,
+            language: payload.clone(),
+        }),
+        "text_link" => E::TextUrl(t::MessageEntityTextUrl {
+            offset,
+            length,
+            url: payload.clone(),
+        }),
+        "underline" => E::Underline(t::MessageEntityUnderline { offset, length }),
+        "strikethrough" => E::Strike(t::MessageEntityStrike { offset, length }),
+        "spoiler" => E::Spoiler(t::MessageEntitySpoiler { offset, length }),
+        "blockquote" => E::Blockquote(t::MessageEntityBlockquote {
+            collapsed: payload == "collapsed",
+            offset,
+            length,
+        }),
+        _ => return None,
+    })
+}
+
+/// [`to_tl`] over a stored list.
+pub fn list_to_tl(entities: &[Entity]) -> Vec<tl::enums::MessageEntity> {
+    entities.iter().filter_map(to_tl).collect()
+}
+
+#[cfg(test)]
+mod to_tl_tests {
+    use super::*;
+
+    #[test]
+    fn stored_link_renders_back_as_markdown_link() {
+        let stored = vec![("text_link".to_string(), 0, 12, "https://x.y".to_string())];
+        let tl = list_to_tl(&stored);
+        assert_eq!(
+            crate::render::format_entities::render("KL bird park #Malaysia", Some(&tl)),
+            "[KL bird park](https://x.y) #Malaysia"
+        );
+        assert_eq!(entities(Some(&tl)), stored);
+    }
+}
