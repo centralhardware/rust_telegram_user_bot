@@ -77,13 +77,11 @@ jobs:
         if: steps.tested.outputs.skip != 'true'
         run: cargo fmt --check
 
+      # Tests run inside the image build (Dockerfile), on the same release
+      # dependencies the binary is built from: one codegen build, not two.
       - name: Clippy
         if: steps.tested.outputs.skip != 'true'
         run: cargo clippy --all-targets --locked -- -D warnings
-
-      - name: Test
-        if: steps.tested.outputs.skip != 'true'
-        run: cargo test --locked
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -120,6 +118,7 @@ jobs:
           context: .
           push: false
           cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Build and push image
         if: github.event_name != 'pull_request'

@@ -15,9 +15,13 @@ FROM chef AS builder
 # Build the dependencies alone. This layer is reused for every source-only
 # change, which is what keeps the image build off the full grammers rebuild.
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
+# --all-targets also builds what the test binaries need, with the same release
+# profile, so the tests below reuse these dependencies instead of a second
+# (debug) build of them.
+RUN cargo chef cook --release --all-targets --recipe-path recipe.json
 COPY . .
-RUN cargo build --release && ls -la /app/target/release/telegram*
+RUN cargo test --release --locked
+RUN cargo build --release --locked && ls -la /app/target/release/telegram*
 
 FROM debian:trixie-slim
 
