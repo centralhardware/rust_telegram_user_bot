@@ -93,7 +93,6 @@ pub async fn save_edited(app: &App, message: &Message) -> anyhow::Result<()> {
     // against: the edit is logged with the text as it now stands and an empty
     // patch, rather than one claiming every word is new.
     let keyboard_changed = original.keyboard != keyboard;
-    let entities_changed = original.entities != entities;
     let original_keyboard = original.keyboard;
     let original_text = before.unwrap_or_default().to_string();
     let diff = match before {
@@ -111,9 +110,21 @@ pub async fn save_edited(app: &App, message: &Message) -> anyhow::Result<()> {
         format!("{} {}", sender.first_name, sender.second_name)
     };
     if !app.is_log_ignored(chat_id) {
-        let mut colored = crate::render::diff::inline_diff(&original_text, &message_content);
-        // An edit that touches only the buttons or the formatting leaves the
-        // text diff empty; say what did change instead of printing nothing.
+        // Both sides are drawn with their formatting, so a link or a bold word
+        // added by the edit shows up in the diff like any changed word.
+        let before_entities = if before == Some("") {
+            Vec::new()
+        } else {
+            crate::telegram::entities::list_to_tl(&original.entities)
+        };
+        let after_entities = crate::telegram::entities::list_to_tl(&entities);
+        let before_fmt =
+            crate::render::format_entities::render(&original_text, Some(&before_entities));
+        let after_fmt =
+            crate::render::format_entities::render(&message_content, Some(&after_entities));
+        let mut colored = crate::render::diff::inline_diff(&before_fmt, &after_fmt);
+        // An edit that touches only the buttons leaves the text diff empty;
+        // say what did change instead of printing nothing.
         if keyboard_changed {
             let before = crate::render::inline_buttons::format_stored(&original_keyboard);
             let after = crate::render::inline_buttons::format_stored(&keyboard);
@@ -122,15 +133,6 @@ pub async fn save_edited(app: &App, message: &Message) -> anyhow::Result<()> {
                 colored.push('\n');
             }
             colored.push_str(&format!("buttons: {buttons}"));
-        } else if entities_changed && original_text == message_content {
-            let changes = crate::render::entity_diff::describe(
-                &message_content,
-                &original.entities,
-                &entities,
-            );
-            colored = format!("{colored} [formatting: {changes}]")
-                .trim()
-                .to_string();
         }
         LogLine::new(Tone::Edited, "edited", message.id())
             .chat(&chat_name)
