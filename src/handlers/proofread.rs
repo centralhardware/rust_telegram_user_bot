@@ -8,8 +8,10 @@
 //! same order. No word may be added, dropped, merged, split or swapped for
 //! another, and no sentence rephrased.
 //!
-//! Off unless `ANTHROPIC_API_KEY` is set. It runs in the background, so a
-//! message is saved without waiting on the model.
+//! The model runs behind a small HTTP service (`PROOFREAD_URL`, in dotclaude:
+//! `scripts/system/proofread-server.py`) that drives headless Claude Code on the
+//! Pro subscription, so there is no API key here. Off unless `PROOFREAD_URL`
+//! is set. It runs in the background, so a message is saved without waiting.
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -18,26 +20,15 @@ use grammers_client::update::Message;
 use log::{info, warn};
 use serde::Deserialize;
 
-const API_URL: &str = "https://api.anthropic.com/v1/messages";
-const DEFAULT_MODEL: &str = "claude-haiku-5-5";
-const TIMEOUT: Duration = Duration::from_secs(30);
+const TIMEOUT: Duration = Duration::from_secs(60);
 /// Too short to be worth a call.
 const MIN_CHARS: usize = 3;
 /// Long texts are rarely typed by hand, and the call costs more.
 const MAX_CHARS: usize = 4000;
 
-const SYSTEM: &str = "You are a proofreader. The user message is a chat message someone just sent. \
-Fix ONLY: typos, misspelled words, misspelled names/titles/brands, wrong letter case of proper names, \
-and missing or wrong punctuation. Do NOT rephrase, do NOT change word order, do NOT add, remove, \
-merge, split or replace words, do NOT fix grammar beyond a single word's spelling or ending, \
-do NOT change style, slang, swearing, emoji, links, code or formatting, do NOT translate. \
-Casual chat style is fine: do not add a final period, and do not capitalize the first letter \
-if the author did not. If nothing needs fixing, return the text unchanged. \
-Reply with the corrected text only, no quotes, no comments.";
-
 struct Config {
-    key: String,
-    model: String,
+    url: String,
+    token: String,
     skip_chats: Vec<i64>,
     http: reqwest::Client,
 }
@@ -46,21 +37,20 @@ fn config() -> Option<&'static Config> {
     static CONFIG: OnceLock<Option<Config>> = OnceLock::new();
     CONFIG
         .get_or_init(|| {
-            let key = std::env::var("ANTHROPIC_API_KEY")
+            let url = std::env::var("PROOFREAD_URL")
                 .ok()
-                .filter(|k| !k.is_empty())?;
-            let model =
-                std::env::var("PROOFREAD_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
+                .filter(|u| !u.is_empty())?;
+            let token = std::env::var("PROOFREAD_TOKEN").unwrap_or_default();
             let skip_chats = std::env::var("PROOFREAD_SKIP_CHATS")
                 .unwrap_or_default()
                 .split(',')
                 .filter_map(|s| s.trim().parse().ok())
                 .collect();
             let http = reqwest::Client::builder().timeout(TIMEOUT).build().ok()?;
-            info!("Proofreading outgoing messages with {model}");
+            info!("Proofreading outgoing messages via {url}");
             Some(Config {
-                key,
-                model,
+                url,
+                token,
                 skip_chats,
                 http,
             })
@@ -109,35 +99,21 @@ pub fn proofread_outgoing(message: &Message) {
 
 #[derive(Deserialize)]
 struct Response {
-    content: Vec<Block>,
-}
-
-#[derive(Deserialize)]
-struct Block {
-    #[serde(default)]
     text: String,
 }
 
 async fn ask(cfg: &Config, text: &str) -> anyhow::Result<String> {
-    let body = serde_json::json!({
-        "model": cfg.model,
-        "max_tokens": 4096,
-        "system": SYSTEM,
-        "messages": [{ "role": "user", "content": text }],
-    });
     let response: Response = cfg
         .http
-        .post(API_URL)
-        .header("x-api-key", &cfg.key)
-        .header("anthropic-version", "2023-06-01")
-        .json(&body)
+        .post(&cfg.url)
+        .bearer_auth(&cfg.token)
+        .json(&serde_json::json!({ "text": text }))
         .send()
         .await?
         .error_for_status()?
         .json()
         .await?;
-    let fixed: String = response.content.into_iter().map(|b| b.text).collect();
-    let fixed = fixed.trim();
+    let fixed = response.text.trim();
     Ok(if fixed.is_empty() { text } else { fixed }.to_string())
 }
 
