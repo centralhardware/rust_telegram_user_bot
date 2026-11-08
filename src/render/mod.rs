@@ -3,6 +3,7 @@
 
 pub mod console;
 pub mod diff;
+pub mod entity_diff;
 pub mod format_entities;
 pub mod inline_buttons;
 pub mod reply_preview;

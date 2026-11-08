@@ -123,7 +123,14 @@ pub async fn save_edited(app: &App, message: &Message) -> anyhow::Result<()> {
             }
             colored.push_str(&format!("buttons: {buttons}"));
         } else if entities_changed && original_text == message_content {
-            colored = format!("{colored} [formatting changed]").trim().to_string();
+            let changes = crate::render::entity_diff::describe(
+                &message_content,
+                &original.entities,
+                &entities,
+            );
+            colored = format!("{colored} [formatting: {changes}]")
+                .trim()
+                .to_string();
         }
         LogLine::new(Tone::Edited, "edited", message.id())
             .chat(&chat_name)
