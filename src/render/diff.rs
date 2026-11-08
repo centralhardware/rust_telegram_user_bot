@@ -255,8 +255,8 @@ fn refine(del: Option<String>, ins: Option<String>) -> Refined {
     // consumed there) is the change itself when nothing else is left: removing
     // the space in `word ?` -> `word?` must not be taken for a separator twice
     // and leave nothing marked.
-    let only_space_left = !sep_after_prefix
-        && ((d == " " && i.is_empty()) || (i == " " && d.is_empty()));
+    let only_space_left =
+        !sep_after_prefix && ((d == " " && i.is_empty()) || (i == " " && d.is_empty()));
     if tail > 0 && only_space_left {
         sep_before_suffix = false;
     } else if tail > 0 {
