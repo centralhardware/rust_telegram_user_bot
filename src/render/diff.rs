@@ -251,7 +251,15 @@ fn refine(del: Option<String>, ins: Option<String>) -> Refined {
     let suffix = &d[d.len() - tail..];
     let (mut d, mut i) = (&d[..d.len() - tail], &i[..i.len() - tail]);
     let mut sep_before_suffix = true;
-    if tail > 0 {
+    // A space the head already kept as part of the change (no separator was
+    // consumed there) is the change itself when nothing else is left: removing
+    // the space in `word ?` -> `word?` must not be taken for a separator twice
+    // and leave nothing marked.
+    let only_space_left = !sep_after_prefix
+        && ((d == " " && i.is_empty()) || (i == " " && d.is_empty()));
+    if tail > 0 && only_space_left {
+        sep_before_suffix = false;
+    } else if tail > 0 {
         match (d.strip_suffix(' '), i.strip_suffix(' ')) {
             (Some(rest_d), Some(rest_i)) => (d, i) = (rest_d, rest_i),
             (Some(rest_d), None) if i.is_empty() => d = rest_d,
@@ -542,6 +550,18 @@ mod tests {
         assert_eq!(
             plain(&inline_diff("meet at wensdey", "meet at Wensdey")),
             "meet at [-w|{+W|ensdey"
+        );
+    }
+
+    #[test]
+    fn marks_a_removed_or_added_space() {
+        assert_eq!(
+            plain(&inline_diff("what did I add ?", "what did I add?")),
+            "what did I add[- |?"
+        );
+        assert_eq!(
+            plain(&inline_diff("what did I add?", "what did I add ?")),
+            "what did I add{+ |?"
         );
     }
 
