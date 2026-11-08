@@ -90,7 +90,6 @@ readers query the base tables, which are at most a minute behind.
 | `MEDIA_MAX_MB` | no | Largest file to archive. Default 20. |
 | `LOG_IGNORE_CHATS` | no | Comma-separated chat ids to keep out of the console. They are still logged to the database. |
 | `PROOFREAD_URL` | no | Turns on proofreading (e.g. `http://10.168.0.55:8787/proofread`, the headless-Claude service in dotclaude): outgoing text messages are checked by Claude and edited in place to fix typos, misspelled words and names, and punctuation. A fix that changes more than single words' spelling (rephrasing, adding or dropping words) is rejected in code. Messages with formatting, forwards and commands are skipped. |
-| `PROOFREAD_TOKEN` | no | Bearer token for `PROOFREAD_URL` |
 | `PROOFREAD_SKIP_CHATS` | no | Comma-separated chat ids never to proofread |
 | `TZ` | no | Timezone of the console timestamps. Default UTC. |
 | `RUST_LOG` | no | Log filter, as in `env_logger` |

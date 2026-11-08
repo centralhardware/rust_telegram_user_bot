@@ -28,7 +28,6 @@ const MAX_CHARS: usize = 4000;
 
 struct Config {
     url: String,
-    token: String,
     skip_chats: Vec<i64>,
     http: reqwest::Client,
 }
@@ -40,7 +39,6 @@ fn config() -> Option<&'static Config> {
             let url = std::env::var("PROOFREAD_URL")
                 .ok()
                 .filter(|u| !u.is_empty())?;
-            let token = std::env::var("PROOFREAD_TOKEN").unwrap_or_default();
             let skip_chats = std::env::var("PROOFREAD_SKIP_CHATS")
                 .unwrap_or_default()
                 .split(',')
@@ -50,7 +48,6 @@ fn config() -> Option<&'static Config> {
             info!("Proofreading outgoing messages via {url}");
             Some(Config {
                 url,
-                token,
                 skip_chats,
                 http,
             })
@@ -106,7 +103,6 @@ async fn ask(cfg: &Config, text: &str) -> anyhow::Result<String> {
     let response: Response = cfg
         .http
         .post(&cfg.url)
-        .bearer_auth(&cfg.token)
         .json(&serde_json::json!({ "text": text }))
         .send()
         .await?
