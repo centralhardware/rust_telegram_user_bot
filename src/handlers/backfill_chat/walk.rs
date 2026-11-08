@@ -360,10 +360,10 @@ pub(super) async fn walk_chat(
         // walk cut short: a left chat it will not answer for, a chat this
         // account was thrown out of since the list was read.
         let line = if seen == 0 {
-            format!("backfill {chat_id}: Telegram would not answer for it — {e}")
+            format!("backfill {name}: Telegram would not answer for it — {e}")
         } else {
             format!(
-                "backfill {chat_id}: stopped after {seen} of {total} — {e}. \
+                "backfill {name}: stopped after {seen} of {total} — {e}. \
                  Run it again to carry on."
             )
         };
@@ -377,7 +377,7 @@ pub(super) async fn walk_chat(
     Outcome {
         written,
         refused: false,
-        line: format!("backfill {chat_id}: done — {seen} read, {written} written{health}{jumped}"),
+        line: format!("backfill {name}: done — {seen} read, {written} written{health}{jumped}"),
     }
 }
 
