@@ -89,6 +89,9 @@ readers query the base tables, which are at most a minute behind.
 | `S3_REGION` | no | Default `garage` (path-style addressing is always on) |
 | `MEDIA_MAX_MB` | no | Largest file to archive. Default 20. |
 | `LOG_IGNORE_CHATS` | no | Comma-separated chat ids to keep out of the console. They are still logged to the database. |
+| `ANTHROPIC_API_KEY` | no | Turns on proofreading: outgoing text messages are checked by Claude and edited in place to fix typos, misspelled words and names, and punctuation. A fix that changes more than single words' spelling (rephrasing, adding or dropping words) is rejected in code. Messages with formatting, forwards and commands are skipped. |
+| `PROOFREAD_MODEL` | no | Default `claude-haiku-5-5` |
+| `PROOFREAD_SKIP_CHATS` | no | Comma-separated chat ids never to proofread |
 | `TZ` | no | Timezone of the console timestamps. Default UTC. |
 | `RUST_LOG` | no | Log filter, as in `env_logger` |
 
