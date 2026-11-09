@@ -123,8 +123,9 @@ fn core(token: &str) -> String {
 /// at most a couple of letters differently.
 pub fn is_minor_fix(original: &str, fixed: &str) -> bool {
     // Tokens that are only punctuation (a dash, an ellipsis) may come and go.
+    // Hyphens split words too, so "кто то" → "кто-то" keeps both halves.
     let words = |s: &str| -> Vec<String> {
-        s.split_whitespace()
+        s.split(|c: char| c.is_whitespace() || matches!(c, '-' | '‐' | '‑'))
             .map(core)
             .filter(|w| !w.is_empty())
             .collect()
@@ -185,6 +186,10 @@ mod tests {
         ));
         assert!(is_minor_fix("првиет мир", "привет мир"));
         assert!(is_minor_fix("ну да а что", "ну да — а что?"));
+        assert!(is_minor_fix(
+            "кто то пользуется study russian bot ?",
+            "кто-то пользуется Study Russian Bot?"
+        ));
     }
 
     #[test]
