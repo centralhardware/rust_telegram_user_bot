@@ -1,12 +1,12 @@
 [
   {
-    "html": "<div style=\"white-space:pre-wrap\">meet at <del style=\"color:#f85149;background:rgba(248,81,73,0.20);text-decoration:line-through\">w</del><ins style=\"color:#3fb950;background:rgba(46,160,67,0.20);text-decoration:none\">W</ins>ensdey</div>",
+    "html": "<div style=\"white-space:pre-wrap\">meet at <del style=\"color:#f85149;background:rgba(248,81,73,0.20);text-decoration:line-through\">w</del>ensdey\nmeet at <ins style=\"color:#3fb950;background:rgba(46,160,67,0.20);text-decoration:none\">W</ins>ensdey</div>",
     "message": "meet at Wensdey",
     "original": "meet at wensdey",
     "patch": "@@ -3 +3 @@\n-wensdey\n+Wensdey\n"
   },
   {
-    "html": "<div style=\"white-space:pre-wrap\"><del style=\"color:#f85149;background:rgba(248,81,73,0.20);text-decoration:line-through\">one</del> <ins style=\"color:#3fb950;background:rgba(46,160,67,0.20);text-decoration:none\">1</ins> two three <del style=\"color:#f85149;background:rgba(248,81,73,0.20);text-decoration:line-through\">four</del> <ins style=\"color:#3fb950;background:rgba(46,160,67,0.20);text-decoration:none\">4</ins></div>",
+    "html": "<div style=\"white-space:pre-wrap\"><del style=\"color:#f85149;background:rgba(248,81,73,0.20);text-decoration:line-through\">one</del> two three <del style=\"color:#f85149;background:rgba(248,81,73,0.20);text-decoration:line-through\">four</del>\n<ins style=\"color:#3fb950;background:rgba(46,160,67,0.20);text-decoration:none\">1</ins> two three <ins style=\"color:#3fb950;background:rgba(46,160,67,0.20);text-decoration:none\">4</ins></div>",
     "message": "1 two three 4",
     "original": "one two three four",
     "patch": "@@ -1 +1 @@\n-one\n+1\n@@ -4 +4 @@\n-four\n+4\n"
@@ -24,13 +24,13 @@
     "patch": "@@ -2 +1,0 @@\n-b\n"
   },
   {
-    "html": "<div style=\"white-space:pre-wrap\">&lt;b&gt;a&lt;/b&gt; &amp; <del style=\"color:#f85149;background:rgba(248,81,73,0.20);text-decoration:line-through\">c</del> <ins style=\"color:#3fb950;background:rgba(46,160,67,0.20);text-decoration:none\">d</ins></div>",
+    "html": "<div style=\"white-space:pre-wrap\">&lt;b&gt;a&lt;/b&gt; &amp; <del style=\"color:#f85149;background:rgba(248,81,73,0.20);text-decoration:line-through\">c</del>\n&lt;b&gt;a&lt;/b&gt; &amp; <ins style=\"color:#3fb950;background:rgba(46,160,67,0.20);text-decoration:none\">d</ins></div>",
     "message": "<b>a</b> & d",
     "original": "<b>a</b> & c",
     "patch": "@@ -3 +3 @@\n-c\n+d\n"
   },
   {
-    "html": "<div style=\"white-space:pre-wrap\">hello <del style=\"color:#f85149;background:rgba(248,81,73,0.20);text-decoration:line-through\">world</del><ins style=\"color:#3fb950;background:rgba(46,160,67,0.20);text-decoration:none\">there</ins>\nsecond line here</div>",
+    "html": "<div style=\"white-space:pre-wrap\">hello <del style=\"color:#f85149;background:rgba(248,81,73,0.20);text-decoration:line-through\">world</del>\nhello <ins style=\"color:#3fb950;background:rgba(46,160,67,0.20);text-decoration:none\">there</ins>\nsecond line here</div>",
     "message": "hello there\nsecond line here",
     "original": "hello world\nsecond line here",
     "patch": "@@ -2 +2 @@\n-world\\nsecond\n+there\\nsecond\n"
@@ -42,7 +42,7 @@
     "patch": "@@ -2,0 +3 @@\n+line\\nthird\n"
   },
   {
-    "html": "<div style=\"white-space:pre-wrap\">double  spaced <del style=\"color:#f85149;background:rgba(248,81,73,0.20);text-decoration:line-through\">text</del> <ins style=\"color:#3fb950;background:rgba(46,160,67,0.20);text-decoration:none\">words</ins></div>",
+    "html": "<div style=\"white-space:pre-wrap\">double  spaced <del style=\"color:#f85149;background:rgba(248,81,73,0.20);text-decoration:line-through\">text</del>\ndouble  spaced <ins style=\"color:#3fb950;background:rgba(46,160,67,0.20);text-decoration:none\">words</ins></div>",
     "message": "double  spaced words",
     "original": "double  spaced text",
     "patch": "@@ -4 +4 @@\n-text\n+words\n"
@@ -66,7 +66,7 @@
     "patch": "@@ -1 +1,4 @@\n-\n+now it has text\n"
   },
   {
-    "html": "<div style=\"white-space:pre-wrap\"><del style=\"color:#f85149;background:rgba(248,81,73,0.20);text-decoration:line-through\">all of it goes</del> <ins style=\"color:#3fb950;background:rgba(46,160,67,0.20);text-decoration:none\">replaced entirely</ins></div>",
+    "html": "<div style=\"white-space:pre-wrap\"><del style=\"color:#f85149;background:rgba(248,81,73,0.20);text-decoration:line-through\">all of it goes</del>\n<ins style=\"color:#3fb950;background:rgba(46,160,67,0.20);text-decoration:none\">replaced entirely</ins></div>",
     "message": "replaced entirely",
     "original": "all of it goes",
     "patch": "@@ -1,4 +1,2 @@\n-all of it goes\n+replaced entirely\n"
