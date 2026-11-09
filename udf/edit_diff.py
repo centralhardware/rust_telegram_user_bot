@@ -87,20 +87,90 @@ class Line:
     """The diff as it is put back together. A piece is normally separated from
     the one before it by the single space that stood between two tokens -- but
     a changed run can be cut open *inside* a token, at a newline, and there the
-    whitespace is already part of the piece and no space is added."""
+    whitespace is already part of the piece and no space is added.
 
-    def __init__(self, open_):
-        self.out = open_
-        self.empty = True
+    The pieces stay raw until the end, so a line with a replacement in it can
+    be printed as its two versions -- the same pass as `before_after` in
+    `src/render/diff.rs`."""
 
-    def push(self, sep, text):
-        if sep and not self.empty:
-            self.out += " "
-        self.out += text
-        self.empty = False
+    def __init__(self):
+        self.segs = []
 
-    def finish(self, close):
-        return self.out + close
+    def push(self, sep, kind, text):
+        if sep and self.segs:
+            self.segs.append(("sep", " "))
+        self.segs.append((kind, text))
+
+    def finish(self):
+        out = WRAPPER[0]
+        for kind, text in merge(before_after(self.segs)):
+            if kind == "del":
+                out += f"{DEL[0]}{escape_html(text)}{DEL[1]}"
+            elif kind == "ins":
+                out += f"{INS[0]}{escape_html(text)}{INS[1]}"
+            else:
+                out += escape_html(text)
+        return out + WRAPPER[1]
+
+
+def replaces(line):
+    """Whether a line both loses and gains text."""
+    has = lambda kind: any(k == kind and t.strip() for k, t in line)  # noqa: E731
+    return has("del") and has("ins")
+
+
+def version(line, keep):
+    """One version of a line: the plain text with one side's changes in it.
+    A separator is kept only between two pieces, or the space that stood
+    between the two sides would come out doubled."""
+    out = []
+    for kind, text in line:
+        if kind in ("del", "ins") and kind != keep:
+            continue
+        if kind == "sep" and (not out or out[-1][0] == "sep"):
+            continue
+        out.append((kind, text))
+    if out and out[-1][0] == "sep":
+        out.pop()
+    return out
+
+
+def before_after(segs):
+    """Every line with a replacement in it as before/after: the old line with
+    what went marked, the new one under it with what came. Each newline keeps
+    the kind of the piece it came out of, so the rest comes back unchanged."""
+    lines = [([], None)]
+    for kind, text in segs:
+        parts = text.split("\n")
+        for n, part in enumerate(parts):
+            if part or not text:
+                lines[-1][0].append((kind, part))
+            if n < len(parts) - 1:
+                lines[-1] = (lines[-1][0], kind)
+                lines.append(([], None))
+    out = []
+    for line, newline in lines:
+        if replaces(line):
+            out.extend(version(line, "del"))
+            out.append(("plain", "\n"))
+            out.extend(version(line, "ins"))
+        else:
+            out.extend(line)
+        if newline is not None:
+            out.append((newline, "\n"))
+    return out
+
+
+def merge(segs):
+    """Neighbouring pieces of one kind as one."""
+    out = []
+    for kind, text in segs:
+        kind = "plain" if kind == "sep" else kind
+        if out and out[-1][0] == kind:
+            out[-1] = (kind, out[-1][1] + text)
+        else:
+            out.append((kind, text))
+    return out
 
 
 def shared_head(a, b):
@@ -191,30 +261,30 @@ def render(message, patch, mode):
         pieces.extend(words[cursor:])
         return " ".join(pieces)
 
-    line, cursor = Line(WRAPPER[0]), 0
+    line, cursor = Line(), 0
     for hunk in hunks(patch):
         for word in words[cursor : hunk["at"]]:
-            line.push(True, escape_html(word))
+            line.push(True, "plain", word)
         prefix, sep_after, removed, added, sep_before, suffix = refine(
             hunk["removed"] if hunk["removes"] else None,
             hunk["added"] if hunk["added_len"] else None,
         )
         sep = True
         if prefix:
-            line.push(sep, escape_html(prefix))
+            line.push(sep, "plain", prefix)
             sep = sep_after
         if removed is not None:
-            line.push(sep, f"{DEL[0]}{escape_html(removed)}{DEL[1]}")
+            line.push(sep, "del", removed)
             # Mid-word, the replacement follows the removal with no space.
             sep = sep_after and sep_before
         if added is not None:
-            line.push(sep, f"{INS[0]}{escape_html(added)}{INS[1]}")
+            line.push(sep, "ins", added)
         if suffix:
-            line.push(sep_before, escape_html(suffix))
+            line.push(sep_before, "plain", suffix)
         cursor = hunk["at"] + hunk["added_len"]
     for word in words[cursor:]:
-        line.push(True, escape_html(word))
-    return line.finish(WRAPPER[1])
+        line.push(True, "plain", word)
+    return line.finish()
 
 
 def main():

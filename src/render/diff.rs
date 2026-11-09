@@ -76,9 +76,10 @@ pub static HTML: LazyLock<Style> = LazyLock::new(|| Style {
     escape: true,
 });
 
-/// An edit as an inline diff: the message printed **once**, with only the words
-/// that changed marked -- removed struck through in red, their replacement in
-/// green, everything untouched left plain.
+/// An edit as a word diff: only the words that changed are marked -- removed
+/// struck through in red, their replacement in green. A line that only gains or
+/// loses text is printed once; a line with a replacement in it is printed as
+/// before/after, see [`before_after`].
 ///
 /// This replaced a coloured unified diff, which repeated every changed line
 /// twice and left the eye to find the one word that actually moved. The stored
@@ -86,7 +87,7 @@ pub static HTML: LazyLock<Style> = LazyLock::new(|| Style {
 /// function can never drift apart -- the boards used to word-diff in SQL.
 pub fn render_diff(original: &str, modified: &str, style: &Style) -> String {
     let (old, new) = (tokens(original), tokens(modified));
-    let mut line = Line::new(style.open);
+    let mut line = Line::new();
     let (mut removed, mut added): (Vec<&str>, Vec<&str>) = (Vec::new(), Vec::new());
 
     let diff = TextDiff::from_slices(&old, &new);
@@ -98,44 +99,137 @@ pub fn render_diff(original: &str, modified: &str, style: &Style) -> String {
             ChangeTag::Delete => removed.push(change.value()),
             ChangeTag::Insert => added.push(change.value()),
             ChangeTag::Equal => {
-                flush(&mut line, &mut removed, &mut added, style);
-                line.push(true, escape(change.value(), style));
+                flush(&mut line, &mut removed, &mut added);
+                line.push(true, Kind::Plain, change.value());
             }
         }
     }
-    flush(&mut line, &mut removed, &mut added, style);
-    line.finish(style.close)
+    flush(&mut line, &mut removed, &mut added);
+    line.finish(style)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Kind {
+    Plain,
+    /// The single space between two tokens -- plain text, but dropped where a
+    /// before/after line would otherwise get it twice.
+    Sep,
+    Del,
+    Ins,
 }
 
 /// The diff as it is put back together. A piece is normally separated from the
 /// one before it by the single space that stood between two tokens -- but a
 /// changed run can be cut open *inside* a token, at a newline, and there the
 /// whitespace is already part of the piece and no space is added.
+///
+/// The pieces are kept raw until the end, so a line with a replacement in it
+/// can be printed as its two versions instead.
 struct Line {
-    out: String,
-    empty: bool,
+    segs: Vec<(Kind, String)>,
 }
 
 impl Line {
-    fn new(open: &str) -> Self {
-        Line {
-            out: open.to_string(),
-            empty: true,
-        }
+    fn new() -> Self {
+        Line { segs: Vec::new() }
     }
 
-    fn push(&mut self, sep: bool, text: String) {
-        if sep && !self.empty {
-            self.out.push(' ');
+    fn push(&mut self, sep: bool, kind: Kind, text: &str) {
+        if sep && !self.segs.is_empty() {
+            self.segs.push((Kind::Sep, " ".to_string()));
         }
-        self.out.push_str(&text);
-        self.empty = false;
+        self.segs.push((kind, text.to_string()));
     }
 
-    fn finish(mut self, close: &str) -> String {
-        self.out.push_str(close);
-        self.out
+    fn finish(self, style: &Style) -> String {
+        let mut out = style.open.to_string();
+        for (kind, text) in merge(before_after(self.segs)) {
+            out.push_str(&match kind {
+                Kind::Plain | Kind::Sep => escape(&text, style),
+                Kind::Del => mark_text(&text, &style.del, style),
+                Kind::Ins => mark_text(&text, &style.ins, style),
+            });
+        }
+        out.push_str(style.close);
+        out
     }
+}
+
+/// Whether a line of the diff replaces something: it both loses and gains text.
+fn replaces(line: &[(Kind, String)]) -> bool {
+    let has = |kind| line.iter().any(|(k, t)| *k == kind && !t.trim().is_empty());
+    has(Kind::Del) && has(Kind::Ins)
+}
+
+/// One version of a line: the plain text with only one side's changes in it.
+/// The space that stood between the two sides would come out doubled, so a
+/// separator is kept only between two pieces of text.
+fn version(line: &[(Kind, String)], keep: Kind) -> Vec<(Kind, String)> {
+    let mut out: Vec<(Kind, String)> = Vec::new();
+    for (kind, text) in line {
+        match kind {
+            Kind::Del | Kind::Ins if *kind != keep => continue,
+            Kind::Sep if out.last().is_none_or(|(k, _)| *k == Kind::Sep) => continue,
+            _ => out.push((*kind, text.clone())),
+        }
+    }
+    if out.last().is_some_and(|(k, _)| *k == Kind::Sep) {
+        out.pop();
+    }
+    out
+}
+
+/// Every line with a replacement in it printed as before/after, the way a
+/// code review shows it: the old line with what went marked red, the new one
+/// under it with what came marked green. A line that only gains or only loses
+/// text stays inline, where it already reads as the message. Each line's
+/// newline keeps the kind of the piece it came out of, so the rest comes back
+/// exactly as it went in.
+fn before_after(segs: Vec<(Kind, String)>) -> Vec<(Kind, String)> {
+    // Each line's pieces, and the kind of the newline that ends it.
+    type Lines = Vec<(Vec<(Kind, String)>, Option<Kind>)>;
+    let mut lines: Lines = vec![(Vec::new(), None)];
+    for (kind, text) in segs {
+        let mut parts = text.split('\n').peekable();
+        while let Some(part) = parts.next() {
+            // An empty piece is kept only where the run itself was empty: it
+            // stands for a side with nothing in it, see `flush`.
+            if !part.is_empty() || text.is_empty() {
+                lines.last_mut().unwrap().0.push((kind, part.to_string()));
+            }
+            if parts.peek().is_some() {
+                lines.last_mut().unwrap().1 = Some(kind);
+                lines.push((Vec::new(), None));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (line, newline) in lines {
+        if replaces(&line) {
+            out.extend(version(&line, Kind::Del));
+            out.push((Kind::Plain, "\n".to_string()));
+            out.extend(version(&line, Kind::Ins));
+        } else {
+            out.extend(line);
+        }
+        if let Some(kind) = newline {
+            out.push((kind, "\n".to_string()));
+        }
+    }
+    out
+}
+
+/// Neighbouring pieces of one kind as one.
+fn merge(segs: Vec<(Kind, String)>) -> Vec<(Kind, String)> {
+    let mut out: Vec<(Kind, String)> = Vec::new();
+    for (kind, text) in segs {
+        let kind = if kind == Kind::Sep { Kind::Plain } else { kind };
+        match out.last_mut() {
+            Some((k, t)) if *k == kind => t.push_str(&text),
+            _ => out.push((kind, text)),
+        }
+    }
+    out
 }
 
 /// A message as the words between its single spaces. Anything else a word
@@ -164,7 +258,7 @@ pub fn html_diff(original: &str, modified: &str) -> String {
 /// One changed run, marked: one `<del>` for everything the edit removed at
 /// that point, one `<ins>` for what replaced it, rather than a pair per word --
 /// and whatever the two sides turn out to share left plain between them.
-fn flush(line: &mut Line, removed: &mut Vec<&str>, added: &mut Vec<&str>, style: &Style) {
+fn flush(line: &mut Line, removed: &mut Vec<&str>, added: &mut Vec<&str>) {
     if removed.is_empty() && added.is_empty() {
         return;
     }
@@ -179,19 +273,19 @@ fn flush(line: &mut Line, removed: &mut Vec<&str>, added: &mut Vec<&str>, style:
 
     let mut sep = true;
     if !run.prefix.is_empty() {
-        line.push(sep, escape(&run.prefix, style));
+        line.push(sep, Kind::Plain, &run.prefix);
         sep = run.sep_after_prefix;
     }
     if let Some(text) = &run.del {
-        line.push(sep, mark_text(text, &style.del, style));
+        line.push(sep, Kind::Del, text);
         // Mid-word, the replacement follows the removal with no space.
         sep = run.sep_after_prefix && run.sep_before_suffix;
     }
     if let Some(text) = &run.ins {
-        line.push(sep, mark_text(text, &style.ins, style));
+        line.push(sep, Kind::Ins, text);
     }
     if !run.suffix.is_empty() {
-        line.push(run.sep_before_suffix, escape(&run.suffix, style));
+        line.push(run.sep_before_suffix, Kind::Plain, &run.suffix);
     }
 }
 
@@ -549,7 +643,7 @@ mod tests {
     fn marks_only_the_changed_word() {
         assert_eq!(
             plain(&inline_diff("meet at wensdey", "meet at Wensdey")),
-            "meet at [-w|{+W|ensdey"
+            "meet at [-w|ensdey\nmeet at {+W|ensdey"
         );
     }
 
@@ -569,7 +663,7 @@ mod tests {
     fn keeps_line_breaks_and_unchanged_text() {
         assert_eq!(
             plain(&inline_diff("one\ntwo three", "one\ntwo four")),
-            "one\ntwo [-three| {+four|"
+            "one\ntwo [-three|\ntwo {+four|"
         );
     }
 
@@ -599,7 +693,7 @@ mod tests {
     fn html_marks_the_same_words_the_terminal_does() {
         assert_eq!(
             bare(&html_diff("meet at wensdey", "meet at Wensdey")),
-            "meet at <del>w</del><ins>W</ins>ensdey"
+            "meet at <del>w</del>ensdey\nmeet at <ins>W</ins>ensdey"
         );
     }
 
@@ -614,7 +708,7 @@ mod tests {
     fn html_escapes_the_message_and_not_its_own_tags() {
         assert_eq!(
             bare(&html_diff("<b>a</b> & c", "<b>a</b> & d")),
-            "&lt;b&gt;a&lt;/b&gt; &amp; <del>c</del> <ins>d</ins>"
+            "&lt;b&gt;a&lt;/b&gt; &amp; <del>c</del>\n&lt;b&gt;a&lt;/b&gt; &amp; <ins>d</ins>"
         );
     }
 
@@ -624,7 +718,7 @@ mod tests {
     fn html_keeps_two_changes_apart() {
         assert_eq!(
             bare(&html_diff("one two three four", "1 two three 4")),
-            "<del>one</del> <ins>1</ins> two three <del>four</del> <ins>4</ins>"
+            "<del>one</del> two three <del>four</del>\n<ins>1</ins> two three <ins>4</ins>"
         );
     }
 
@@ -751,7 +845,7 @@ mod tests {
     fn a_typo_inside_a_word_is_pared_down_to_the_letter() {
         assert_eq!(
             bare(&html_diff("a graph of cou", "a graph of cpu")),
-            "a graph of c<del>o</del><ins>p</ins>u"
+            "a graph of c<del>o</del>u\na graph of c<ins>p</ins>u"
         );
     }
 
@@ -761,7 +855,24 @@ mod tests {
     #[test]
     fn the_markup_reads_back_as_the_message() {
         for (original, modified) in ROUND_TRIP {
-            let mut out = bare(&html_diff(original, modified));
+            // A before/after pair: the old line goes, the new one stays.
+            let rendered = bare(&html_diff(original, modified));
+            let lines: Vec<&str> = rendered.split('\n').collect();
+            let mut kept = Vec::new();
+            let mut i = 0;
+            while i < lines.len() {
+                let pair = lines.get(i + 1).is_some_and(|next| {
+                    lines[i].contains("<del>")
+                        && !lines[i].contains("<ins>")
+                        && next.contains("<ins>")
+                        && !next.contains("<del>")
+                });
+                if !pair {
+                    kept.push(lines[i]);
+                }
+                i += 1;
+            }
+            let mut out = kept.join("\n");
             while let Some(at) = out.find("<del>") {
                 let mut end = out[at..].find("</del>").unwrap() + at + "</del>".len();
                 // The removal took a space with it -- the one that stood
