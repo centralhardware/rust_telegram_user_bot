@@ -84,11 +84,17 @@ pub fn proofread_outgoing(message: &Message) {
             return;
         }
         if !is_minor_fix(&text, &fixed) {
-            info!("Proofreading: rejected {}", word_diff(&text, &fixed));
+            info!(
+                "Proofreading: rejected {}",
+                crate::render::diff::inline_diff(&text, &fixed)
+            );
             return;
         }
         match message.edit(fixed.as_str()).await {
-            Ok(()) => info!("Proofreading: {}", word_diff(&text, &fixed)),
+            Ok(()) => info!(
+                "Proofreading: {}",
+                crate::render::diff::inline_diff(&text, &fixed)
+            ),
             Err(e) => warn!("Proofreading: failed to edit the message: {e}"),
         }
     });
@@ -111,78 +117,6 @@ async fn ask(cfg: &Config, text: &str) -> anyhow::Result<String> {
         .await?;
     let fixed = response.text.trim();
     Ok(if fixed.is_empty() { text } else { fixed }.to_string())
-}
-
-/// Unchanged words kept on each side of a change; longer unchanged runs fold into "…".
-const DIFF_CONTEXT: usize = 3;
-
-/// A one-line word diff for the log: `разница [-относиться-]{+относится,+} кроме`.
-/// Punctuation sticks to its word, so an added comma shows as that word replaced.
-pub fn word_diff(old: &str, new: &str) -> String {
-    use similar::{ChangeTag, TextDiff};
-    let diff = TextDiff::from_words(old, new);
-    // Group consecutive changes so a replaced word reads [-old-]{+new+}.
-    let mut out: Vec<String> = Vec::new();
-    let mut same: Vec<&str> = Vec::new();
-    let (mut del, mut ins) = (String::new(), String::new());
-    let flush_change = |out: &mut Vec<String>, del: &mut String, ins: &mut String| {
-        if !del.trim().is_empty() {
-            out.push(format!("[-{}-]", del.trim()));
-        }
-        if !ins.trim().is_empty() {
-            out.push(format!("{{+{}+}}", ins.trim()));
-        }
-        del.clear();
-        ins.clear();
-    };
-    let flush_same = |out: &mut Vec<String>, same: &mut Vec<&str>, first: bool, last: bool| {
-        let words: Vec<&str> = same
-            .iter()
-            .copied()
-            .filter(|w| !w.trim().is_empty())
-            .collect();
-        let keep_head = if first { 0 } else { DIFF_CONTEXT };
-        let keep_tail = if last { 0 } else { DIFF_CONTEXT };
-        if words.len() > keep_head + keep_tail {
-            out.extend(words[..keep_head].iter().map(|w| w.to_string()));
-            out.push("…".into());
-            out.extend(
-                words[words.len() - keep_tail..]
-                    .iter()
-                    .map(|w| w.to_string()),
-            );
-        } else {
-            out.extend(words.iter().map(|w| w.to_string()));
-        }
-        same.clear();
-    };
-    let mut first = true;
-    for change in diff.iter_all_changes() {
-        match change.tag() {
-            ChangeTag::Equal => {
-                if !del.is_empty() || !ins.is_empty() {
-                    flush_change(&mut out, &mut del, &mut ins);
-                }
-                same.push(change.value());
-            }
-            tag => {
-                if !same.is_empty() {
-                    flush_same(&mut out, &mut same, first, false);
-                }
-                first = false;
-                if tag == ChangeTag::Delete {
-                    del.push_str(change.value())
-                } else {
-                    ins.push_str(change.value())
-                }
-            }
-        }
-    }
-    flush_change(&mut out, &mut del, &mut ins);
-    if !same.is_empty() {
-        flush_same(&mut out, &mut same, first, true);
-    }
-    out.join(" ")
 }
 
 /// The word in a token, without the punctuation around or inside it.
@@ -247,22 +181,7 @@ fn distance(a: &[char], b: &[char]) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_minor_fix, word_diff};
-
-    #[test]
-    fn log_diff() {
-        assert_eq!(
-            word_diff(
-                "Какая вам лично разница кто куда формально относиться кроме еще одного повода чувствовать гордость",
-                "Какая вам лично разница, кто куда формально относится, кроме еще одного повода чувствовать гордость"
-            ),
-            "Какая вам лично [-разница-] {+разница,+} кто куда формально [-относиться-] {+относится,+} кроме еще одного …"
-        );
-        assert_eq!(
-            word_diff("првиет мир", "привет мир"),
-            "[-првиет-] {+привет+} мир"
-        );
-    }
+    use super::is_minor_fix;
 
     #[test]
     fn accepts_typos_and_punctuation() {

@@ -20,9 +20,7 @@ pub struct Style {
 /// the HTML one is an element opened and closed around the run.
 enum Mark {
     Ansi(Ansi),
-    /// Only the tests build one: at runtime the row stores a patch and the
-    /// markup is put together by ClickHouse.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Text wrapped around the run: HTML elements, or the plain-text markers.
     Tag(&'static str, &'static str),
 }
 
@@ -46,6 +44,17 @@ pub static ANSI: LazyLock<Style> = LazyLock::new(|| Style {
             .on_color256(22)
             .force_styling(true),
     ),
+    open: "",
+    close: "",
+    escape: false,
+});
+
+/// Plain text, for anywhere colour and markup cannot go (stored text, a
+/// log read without a terminal): `[-removed-]{+added+}`, the `git diff
+/// --word-diff` convention.
+pub static PLAIN: LazyLock<Style> = LazyLock::new(|| Style {
+    del: Mark::Tag("[-", "-]"),
+    ins: Mark::Tag("{+", "+}"),
     open: "",
     close: "",
     escape: false,
@@ -244,6 +253,11 @@ fn tokens(s: &str) -> Vec<&str> {
 /// The terminal rendering, for the console log.
 pub fn inline_diff(original: &str, modified: &str) -> String {
     render_diff(original, modified, &ANSI)
+}
+
+/// The plain-text rendering, see [`PLAIN`].
+pub fn plain_diff(original: &str, modified: &str) -> String {
+    render_diff(original, modified, &PLAIN)
 }
 
 /// The rendering the boards print. Not called at runtime -- the row stores a
@@ -928,5 +942,21 @@ mod tests {
             })
             .collect();
         serde_json::to_string_pretty(&cases).unwrap() + "\n"
+    }
+}
+
+#[cfg(test)]
+mod plain_tests {
+    use super::plain_diff;
+
+    #[test]
+    fn plain_markers() {
+        assert_eq!(
+            plain_diff(
+                "кто куда формально относиться кроме",
+                "кто куда формально относится, кроме"
+            ),
+            "кто куда формально относит[-ься-] кроме\nкто куда формально относит{+ся,+} кроме"
+        );
     }
 }
