@@ -544,14 +544,10 @@ fn format_log_output(
             if prev == new {
                 return String::new();
             }
-            let diff = similar::TextDiff::from_lines(&prev, &new)
-                .unified_diff()
-                .missing_newline_hint(false)
-                .to_string();
             if colorize {
                 crate::render::diff::inline_diff(&prev, &new)
             } else {
-                diff.trim_end().to_string()
+                crate::render::diff::plain_diff(&prev, &new)
             }
         }
         DeleteMessage(a) => message_text(&a.message),

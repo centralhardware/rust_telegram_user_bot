@@ -84,11 +84,17 @@ pub fn proofread_outgoing(message: &Message) {
             return;
         }
         if !is_minor_fix(&text, &fixed) {
-            info!("Proofreading: rejected a rewrite of {text:?} into {fixed:?}");
+            info!(
+                "Proofreading: rejected {}",
+                crate::render::diff::inline_diff(&text, &fixed)
+            );
             return;
         }
         match message.edit(fixed.as_str()).await {
-            Ok(()) => info!("Proofreading: {text:?} -> {fixed:?}"),
+            Ok(()) => info!(
+                "Proofreading: {}",
+                crate::render::diff::inline_diff(&text, &fixed)
+            ),
             Err(e) => warn!("Proofreading: failed to edit the message: {e}"),
         }
     });
