@@ -17,10 +17,10 @@ clickhouse = "0.15"
 aws-sdk-s3 = "1"
 serde = { version = "1.0.229", features = ["derive"] }
 sha2 = "0.11"
-similar = "3.1"
+similar = "3.2"
 console = "0.16"
 dialoguer = "0.12"
 futures-core = "0.3"
 async-trait = "0.1"
 anyhow = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
