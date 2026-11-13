@@ -23,4 +23,4 @@ dialoguer = "0.12"
 futures-core = "0.3"
 async-trait = "0.1"
 anyhow = "1"
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "query"] }
