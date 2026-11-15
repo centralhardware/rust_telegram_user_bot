@@ -74,7 +74,11 @@ fn format_button(button: &tl::enums::KeyboardInlineButton) -> String {
         T::UrlAuth(t) => format!("[{} → auth:{}]", b.text, t.url),
         T::InputInlineButtonTypeUrlAuth(t) => format!("[{} → auth:{}]", b.text, t.url),
         T::WebView(t) => format!("[{} → webview:{}]", b.text, t.url),
-        T::Callback(_) => format!("[{} → cb]", b.text),
+        T::Callback(t) => format!(
+            "[{} → {}]",
+            b.text,
+            crate::telegram::entities::callback_data(&t.data)
+        ),
         T::Game => format!("[{} → game]", b.text),
         T::Buy => format!("[{} → buy]", b.text),
         T::SwitchInline(t) => {

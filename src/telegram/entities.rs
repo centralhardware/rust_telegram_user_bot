@@ -145,6 +145,18 @@ pub fn keyboard_of_raw(msg: &tl::enums::Message) -> Vec<Button> {
     }
 }
 
+/// A callback button's data as text: the UTF-8 string when it is one with no
+/// control characters, otherwise `0x` + hex of the raw bytes.
+pub fn callback_data(data: &[u8]) -> String {
+    match std::str::from_utf8(data) {
+        Ok(s) if !s.chars().any(char::is_control) => s.to_string(),
+        _ => {
+            let hex: String = data.iter().map(|b| format!("{b:02x}")).collect();
+            format!("0x{hex}")
+        }
+    }
+}
+
 fn button_kind(kind: &tl::enums::InlineButtonType) -> (&'static str, String) {
     use tl::enums::InlineButtonType as T;
     match kind {
@@ -152,7 +164,7 @@ fn button_kind(kind: &tl::enums::InlineButtonType) -> (&'static str, String) {
         T::UrlAuth(t) => ("login_url", t.url.clone()),
         T::InputInlineButtonTypeUrlAuth(t) => ("login_url", t.url.clone()),
         T::WebView(t) => ("web_app", t.url.clone()),
-        T::Callback(_) => ("callback", String::new()),
+        T::Callback(t) => ("callback", callback_data(&t.data)),
         T::Game => ("game", String::new()),
         T::Buy => ("buy", String::new()),
         T::SwitchInline(t) => ("switch_inline", t.query.clone()),
@@ -267,7 +279,12 @@ mod tests {
                     "url".to_string(),
                     "https://example.com".to_string()
                 ),
-                (1, "Nope".to_string(), "callback".to_string(), String::new()),
+                (
+                    1,
+                    "Nope".to_string(),
+                    "callback".to_string(),
+                    "0x01".to_string()
+                ),
             ]
         );
     }
@@ -324,5 +341,12 @@ mod to_tl_tests {
             "[KL bird park](https://x.y) #Malaysia"
         );
         assert_eq!(entities(Some(&tl)), stored);
+    }
+
+    #[test]
+    fn callback_data_is_text_or_hex() {
+        assert_eq!(callback_data(b"vote:yes"), "vote:yes");
+        assert_eq!(callback_data(&[0xff, 0x01]), "0xff01");
+        assert_eq!(callback_data(b""), "");
     }
 }
