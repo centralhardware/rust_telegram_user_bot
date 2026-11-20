@@ -14,7 +14,7 @@ use crate::events::ViewsEvent;
 use crate::state::peer_names::title_of;
 
 pub async fn save_views(app: &App, channel_id: i64, message_id: i32, views: u32, forwards: u32) {
-    if !app.is_log_ignored(channel_id) {
+    if app.prints(channel_id) {
         // The post itself: an update names nothing but the counter, so what the
         // counter is counting is read back from the message's send row.
         let post = app.db.find_message(channel_id, message_id as i64).await;

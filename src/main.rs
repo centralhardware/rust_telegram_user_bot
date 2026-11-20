@@ -74,7 +74,7 @@ async fn main() -> Result<()> {
     // One checker for every account: the spam banlist is about users, not
     // about whichever account saw them.
     let lols = lols::Lols::start(Arc::clone(&db));
-    let first = connect_account(&db, "", &ignored, &claims, &lols).await?;
+    let first = connect_account(&db, "", true, &ignored, &claims, &lols).await?;
     spawn_account(first, failed.clone());
     tokio::spawn(watch_accounts(
         Arc::clone(&db),
@@ -109,6 +109,7 @@ async fn main() -> Result<()> {
 async fn connect_account(
     db: &db::ch::ClickhouseDb,
     name: &str,
+    console: bool,
     ignored: &Arc<state::log_ignore::LogIgnore>,
     claims: &Arc<state::claims::Claims>,
     lols: &Arc<lols::Lols>,
@@ -134,7 +135,8 @@ async fn connect_account(
             Arc::clone(ignored),
             Arc::clone(claims),
         )
-        .with_lols(Arc::clone(lols)),
+        .with_lols(Arc::clone(lols))
+        .with_console(console),
     );
     handlers::start_media(Arc::clone(&app));
     // Before any update is handled: until the admin chats are known, media
@@ -167,9 +169,9 @@ async fn watch_accounts(
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
     loop {
         interval.tick().await;
-        let names: Vec<String> = match db
+        let names: Vec<(String, bool)> = match db
             .client()
-            .query("SELECT DISTINCT name FROM accounts")
+            .query("SELECT name, argMax(log, added_at) FROM accounts GROUP BY name")
             .fetch_all()
             .await
         {
@@ -179,11 +181,11 @@ async fn watch_accounts(
                 continue;
             }
         };
-        for name in names {
+        for (name, console) in names {
             if running.contains(&name) || !setup::valid_name(&name) {
                 continue;
             }
-            match connect_account(&db, &name, &ignored, &claims, &lols).await {
+            match connect_account(&db, &name, console, &ignored, &claims, &lols).await {
                 Ok(account) => {
                     spawn_account(account, failed.clone());
                     running.insert(name);

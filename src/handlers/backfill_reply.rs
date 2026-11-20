@@ -31,7 +31,7 @@ pub async fn backfill_reply(app: &App, message: &Message) -> anyhow::Result<()> 
         return Ok(());
     }
 
-    if !app.is_log_ignored(chat_id) {
+    if app.prints(chat_id) {
         debug!("backfill reply_to {} in chat {}", reply_id, chat_id);
     }
 
@@ -62,7 +62,7 @@ pub async fn backfill_reply(app: &App, message: &Message) -> anyhow::Result<()> 
         .log_event(crate::telegram::event_of::event_of(app, &reply).await)
         .await;
 
-    if !app.is_log_ignored(chat_id) {
+    if app.prints(chat_id) {
         LogLine::new(Tone::Info, "backfill", reply_id)
             .body("backfilled reply_to message")
             .print();

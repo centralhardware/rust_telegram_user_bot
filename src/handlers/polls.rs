@@ -93,7 +93,7 @@ pub async fn save_poll(app: &App, update: &tl::types::UpdateMessagePoll) {
         chat_title = info.chat_title;
     }
 
-    if !app.is_log_ignored(chat_id) {
+    if app.prints(chat_id) {
         let title = match &peer {
             Some(p) => title_of(app, p.bot_api_dialog_id_unchecked()).await,
             None => String::new(),

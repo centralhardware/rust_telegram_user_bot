@@ -20,7 +20,7 @@ pub async fn save_pinned(app: &App, chat_id: i64, dialog_id: i64, messages: &[i3
     let date_time = chrono::Utc::now().timestamp() as u32;
     let name = if pinned { "pin" } else { "unpin" };
 
-    if !app.is_log_ignored(chat_id) {
+    if app.prints(chat_id) {
         let chat = title_of(app, dialog_id).await;
         for id in messages {
             LogLine::new(Tone::Info, name, id).chat(&chat).print();
