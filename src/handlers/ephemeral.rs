@@ -43,7 +43,7 @@ pub async fn save_ephemeral(app: &App, message: &tl::enums::EphemeralMessage, ev
     let stored = stored_body(msg);
     let (reply_to, reply_to_ephemeral) = reply(msg);
 
-    if !app.is_log_ignored(chat_id) {
+    if app.prints(chat_id) {
         let kind = format!("eph {event}");
         LogLine::new(Tone::Ephemeral, &kind, msg.id)
             .chat(&chat_title)
@@ -87,7 +87,7 @@ pub async fn save_ephemeral_deleted(app: &App, peer: &tl::enums::Peer, ids: &[i3
     let chat_title = title_of(app, peer.bot_api_dialog_id_unchecked()).await;
     let date_time = chrono::Utc::now().timestamp() as u32;
 
-    if !app.is_log_ignored(chat_id) {
+    if app.prints(chat_id) {
         for id in ids {
             LogLine::new(Tone::Ephemeral, "eph del", id)
                 .chat(&chat_title)

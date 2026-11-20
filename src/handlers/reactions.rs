@@ -37,7 +37,7 @@ pub async fn save_reactions(app: &App, update: &tl::types::UpdateMessageReaction
         .map(|names| names.title)
         .unwrap_or_default();
 
-    if !app.is_log_ignored(chat_id) {
+    if app.prints(chat_id) {
         let rendered = counts
             .iter()
             .map(|(name, count)| format!("{name}×{count}"))

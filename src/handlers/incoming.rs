@@ -24,7 +24,7 @@ pub async fn save_incoming(app: &App, message: &Message) -> anyhow::Result<Event
     )
     .await;
 
-    if !app.is_log_ignored(chat_id) {
+    if app.prints(chat_id) {
         super::send::print(
             app,
             message,

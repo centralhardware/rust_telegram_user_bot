@@ -44,7 +44,7 @@ pub async fn save_service(app: &App, message: &Message) -> bool {
         }))
         .await;
 
-    if !app.is_log_ignored(chat_id) {
+    if app.prints(chat_id) {
         let chat = crate::state::peer_info::chat_info(app, message).await;
         let sender = message
             .sender()

@@ -32,9 +32,7 @@ pub async fn save_deleted(app: &App, deletion: &MessageDeletion) -> anyhow::Resu
     // A message the log never saw brings no title with it, but Telegram named
     // the chat: its stored name stands in, read once for the whole deletion.
     let channel_title = match channel {
-        Some(chat_id) if !app.is_log_ignored(chat_id) => {
-            title_of(app, -1_000_000_000_000 - chat_id).await
-        }
+        Some(chat_id) if app.prints(chat_id) => title_of(app, -1_000_000_000_000 - chat_id).await,
         _ => String::new(),
     };
 
@@ -45,7 +43,7 @@ pub async fn save_deleted(app: &App, deletion: &MessageDeletion) -> anyhow::Resu
             continue;
         };
 
-        if !app.is_log_ignored(chat_id) {
+        if app.prints(chat_id) {
             let (message, sender, title) = m.map_or(("", "", ""), |m| {
                 (
                     m.message.as_str(),

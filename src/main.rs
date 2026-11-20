@@ -109,19 +109,14 @@ async fn main() -> Result<()> {
 async fn connect_account(
     db: &db::ch::ClickhouseDb,
     name: &str,
-    logs: bool,
+    console: bool,
     ignored: &Arc<state::log_ignore::LogIgnore>,
     claims: &Arc<state::claims::Claims>,
     lols: &Arc<lols::Lols>,
-) -> Result<(Arc<App>, grammers_client::client::UpdateStream, bool)> {
+) -> Result<(Arc<App>, grammers_client::client::UpdateStream)> {
     let (client, session, updates) = session::connect(db.client().clone(), name).await?;
     let me = client.get_me().await?.id().bare_id().unwrap() as u64;
-    // An account with `accounts.log` off stays connected but writes nothing,
-    // and is never registered for claims, so a logging account writes
-    // everything in a chat they share -- the silent account's own messages too.
-    if logs {
-        claims.register(me);
-    }
+    claims.register(me);
     log::info!(
         "Listening for messages on {}...",
         if name.is_empty() {
@@ -140,23 +135,22 @@ async fn connect_account(
             Arc::clone(ignored),
             Arc::clone(claims),
         )
-        .with_lols(Arc::clone(lols)),
+        .with_lols(Arc::clone(lols))
+        .with_console(console),
     );
-    if logs {
-        handlers::start_media(Arc::clone(&app));
-        // Before any update is handled: until the admin chats are known, media
-        // posted in them would not be archived, and nothing catches up on it.
-        schedulers::start(Arc::clone(&app)).await;
-    }
-    Ok((app, updates, logs))
+    handlers::start_media(Arc::clone(&app));
+    // Before any update is handled: until the admin chats are known, media
+    // posted in them would not be archived, and nothing catches up on it.
+    schedulers::start(Arc::clone(&app)).await;
+    Ok((app, updates))
 }
 
 fn spawn_account(
-    (app, updates, logs): (Arc<App>, grammers_client::client::UpdateStream, bool),
+    (app, updates): (Arc<App>, grammers_client::client::UpdateStream),
     failed: mpsc::Sender<anyhow::Error>,
 ) {
     tokio::spawn(async move {
-        if let Err(e) = receive(app, updates, logs).await {
+        if let Err(e) = receive(app, updates).await {
             let _ = failed.send(e).await;
         }
     });
@@ -187,11 +181,11 @@ async fn watch_accounts(
                 continue;
             }
         };
-        for (name, logs) in names {
+        for (name, console) in names {
             if running.contains(&name) || !setup::valid_name(&name) {
                 continue;
             }
-            match connect_account(&db, &name, logs, &ignored, &claims, &lols).await {
+            match connect_account(&db, &name, console, &ignored, &claims, &lols).await {
                 Ok(account) => {
                     spawn_account(account, failed.clone());
                     running.insert(name);
@@ -203,12 +197,7 @@ async fn watch_accounts(
 }
 
 /// Hand one account's updates to its workers until the stream fails for good.
-/// An account that does not log still drains its stream, to stay connected.
-async fn receive(
-    app: Arc<App>,
-    mut updates: grammers_client::client::UpdateStream,
-    logs: bool,
-) -> Result<()> {
+async fn receive(app: Arc<App>, mut updates: grammers_client::client::UpdateStream) -> Result<()> {
     // Updates for one chat are handled in order — an edit must find the send
     // row it amends — but chats no longer wait on each other: each chat hashes
     // to one of a fixed set of workers, so a slow ClickHouse round-trip for one
@@ -246,9 +235,6 @@ async fn receive(
                 continue;
             }
         };
-        if !logs {
-            continue;
-        }
         let shard = (chat_of(&update).unsigned_abs() % WORKERS as u64) as usize;
         if workers[shard].send(update).await.is_err() {
             // A worker only ends by panicking; without it a whole share of

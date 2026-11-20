@@ -28,7 +28,7 @@ pub async fn save_edited(app: &App, message: &Message) -> anyhow::Result<()> {
                 action: kind,
             }))
             .await;
-        if !app.is_log_ignored(chat_id) {
+        if app.prints(chat_id) {
             let chat = crate::state::peer_info::chat_info(app, message).await;
             LogLine::new(Tone::Action, "cleared", msg_id)
                 .chat(&chat.chat_title)
@@ -46,7 +46,7 @@ pub async fn save_edited(app: &App, message: &Message) -> anyhow::Result<()> {
         && (meta.lat, meta.lon) != (0.0, 0.0)
     {
         let sender = crate::state::peer_info::sender_info(app, message).await;
-        if !app.is_log_ignored(chat_id) {
+        if app.prints(chat_id) {
             let chat = crate::state::peer_info::chat_info(app, message).await;
             LogLine::new(Tone::Info, "location", msg_id)
                 .chat(&chat.chat_title)
@@ -109,7 +109,7 @@ pub async fn save_edited(app: &App, message: &Message) -> anyhow::Result<()> {
     } else {
         format!("{} {}", sender.first_name, sender.second_name)
     };
-    if !app.is_log_ignored(chat_id) {
+    if app.prints(chat_id) {
         // Both sides are drawn with their formatting, so a link or a bold word
         // added by the edit shows up in the diff like any changed word.
         let before_entities = if before == Some("") {

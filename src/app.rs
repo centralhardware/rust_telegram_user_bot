@@ -36,6 +36,9 @@ pub struct App {
     pub ignored: Arc<LogIgnore>,
     /// Which account writes an event every account sees. Shared by all of them.
     pub claims: Arc<Claims>,
+    /// Whether this account prints events to the console (`accounts.log`).
+    /// Off only mutes stdout; everything is still written and handled.
+    pub console: bool,
     /// The lols.bot spam check of message senders. Shared by all of them.
     pub lols: Arc<Lols>,
     pub admin_chats: AdminChats,
@@ -64,6 +67,7 @@ impl App {
             me,
             ignored,
             claims,
+            console: true,
             lols: Arc::new(Lols::disabled()),
             admin_chats: AdminChats::default(),
             media: MediaQueue::default(),
@@ -79,6 +83,17 @@ impl App {
     pub fn with_lols(mut self, lols: Arc<Lols>) -> Self {
         self.lols = lols;
         self
+    }
+
+    /// Mute this account's console output, or not.
+    pub fn with_console(mut self, console: bool) -> Self {
+        self.console = console;
+        self
+    }
+
+    /// Whether an event in a chat is printed to the console.
+    pub fn prints(&self, chat_id: i64) -> bool {
+        self.console && !self.is_log_ignored(chat_id)
     }
 
     /// Whether a chat is kept out of the console.
