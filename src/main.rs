@@ -74,7 +74,7 @@ async fn main() -> Result<()> {
     // One checker for every account: the spam banlist is about users, not
     // about whichever account saw them.
     let lols = lols::Lols::start(Arc::clone(&db));
-    let first = connect_account(&db, "", &ignored, &claims, &lols).await?;
+    let first = connect_account(&db, "", true, &ignored, &claims, &lols).await?;
     spawn_account(first, failed.clone());
     tokio::spawn(watch_accounts(
         Arc::clone(&db),
@@ -109,16 +109,16 @@ async fn main() -> Result<()> {
 async fn connect_account(
     db: &db::ch::ClickhouseDb,
     name: &str,
+    logs: bool,
     ignored: &Arc<state::log_ignore::LogIgnore>,
     claims: &Arc<state::claims::Claims>,
     lols: &Arc<lols::Lols>,
 ) -> Result<(Arc<App>, grammers_client::client::UpdateStream, bool)> {
     let (client, session, updates) = session::connect(db.client().clone(), name).await?;
     let me = client.get_me().await?.id().bare_id().unwrap() as u64;
-    // Only the first account logs. A further one stays connected but writes
-    // nothing, and is never registered for claims, so the first account logs
-    // everything in a chat they share -- the further account's own messages too.
-    let logs = name.is_empty();
+    // An account with `accounts.log` off stays connected but writes nothing,
+    // and is never registered for claims, so a logging account writes
+    // everything in a chat they share -- the silent account's own messages too.
     if logs {
         claims.register(me);
     }
@@ -175,9 +175,9 @@ async fn watch_accounts(
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
     loop {
         interval.tick().await;
-        let names: Vec<String> = match db
+        let names: Vec<(String, bool)> = match db
             .client()
-            .query("SELECT DISTINCT name FROM accounts")
+            .query("SELECT name, argMax(log, added_at) FROM accounts GROUP BY name")
             .fetch_all()
             .await
         {
@@ -187,11 +187,11 @@ async fn watch_accounts(
                 continue;
             }
         };
-        for name in names {
+        for (name, logs) in names {
             if running.contains(&name) || !setup::valid_name(&name) {
                 continue;
             }
-            match connect_account(&db, &name, &ignored, &claims, &lols).await {
+            match connect_account(&db, &name, logs, &ignored, &claims, &lols).await {
                 Ok(account) => {
                     spawn_account(account, failed.clone());
                     running.insert(name);
