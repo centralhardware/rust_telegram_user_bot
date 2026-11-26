@@ -186,8 +186,9 @@ impl Lols {
     }
 
     /// What lols.bot says about `user_id`. 0 is no user (a channel post, an
-    /// anonymous admin) and is never checked.
-    pub async fn check(&self, user_id: u64) -> Verdict {
+    /// anonymous admin) and is never checked. `who` (name, @username, chat)
+    /// only goes into the log line when the API reports a ban.
+    pub async fn check(&self, user_id: u64, who: &str) -> Verdict {
         let Ok(user_id) = i64::try_from(user_id) else {
             return Verdict::default();
         };
@@ -221,7 +222,12 @@ impl Lols {
         match result {
             Ok(verdict) => {
                 if verdict.banned {
-                    info!("lols: {user_id} is on the spam banlist (api)");
+                    info!(
+                        "lols: {user_id} ({who}) is on the spam banlist (api): offenses={}, spam_factor={}%, scammer={}",
+                        verdict.offenses.map_or("?".into(), |o| o.to_string()),
+                        verdict.spam_factor.map_or("?".into(), |f| f.to_string()),
+                        verdict.scammer,
+                    );
                 }
                 let mut cache = self.cache.lock().unwrap();
                 if cache.len() >= CACHE_LIMIT {
@@ -369,7 +375,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_disabled_checker_checks_nothing() {
-        assert_eq!(Lols::disabled().check(42).await, Verdict::default());
+        assert_eq!(Lols::disabled().check(42, "").await, Verdict::default());
     }
 
     #[test]
