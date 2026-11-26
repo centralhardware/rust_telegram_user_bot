@@ -339,6 +339,8 @@ pub fn format(
             None => "[community changed]".into(),
         },
         MessageAction::NoPaidMessagesTokenUsed => "[no-paid-messages token used]".into(),
+        MessageAction::StarGiftOnchainOffer(_) => "[star gift on-chain offer]".into(),
+        MessageAction::BotInvite(_) => "[bot invited]".into(),
     }
 }
 
