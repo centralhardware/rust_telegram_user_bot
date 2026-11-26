@@ -36,7 +36,9 @@ pub async fn save_incoming(app: &App, message: &Message) -> anyhow::Result<Event
         .await;
     }
 
-    let lols = app.lols.check(sender.user_id).await;
+    let handles: String = sender.username.iter().map(|u| format!(" @{u}")).collect();
+    let who = format!("{sender_display}{handles}, in {}", chat.chat_title);
+    let lols = app.lols.check(sender.user_id, &who).await;
     let sender_dc_id = message.sender().map(avatar_dc).unwrap_or(0);
     let event = Event {
         sender_dc_id,
